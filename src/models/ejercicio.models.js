@@ -17,7 +17,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: false
     },
-    enunciado_ejercicio: {
+    resultado_ejercicio: {
       type: DataTypes.TEXT,
       allowNull: false
     }
