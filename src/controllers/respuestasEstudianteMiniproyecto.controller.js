@@ -1,0 +1,104 @@
+import RespuestaEstudianteMiniproyecto from "../models/respuestaEstudianteMiniproyecto.model.js";
+
+/* CREAR RESPUESTA */
+export const crearRespuestaMiniproyecto = async (req, res) => {
+  try {
+    const {
+      respuesta,
+      estudiante_id,
+      miniproyecto_id,
+      estado,
+    } = req.body;
+
+    const nuevaRespuesta = await RespuestaEstudianteMiniproyecto.create({
+      respuesta,
+      estudiante_id,
+      miniproyecto_id,
+      estado,
+    });
+
+    res.status(201).json(nuevaRespuesta);
+  } catch (error) {
+    res.status(500).json({
+      mensaje: "Error al crear la respuesta del miniproyecto",
+      error: error.message,
+    });
+  }
+};
+
+/* OBTENER TODAS LAS RESPUESTAS */
+export const obtenerRespuestasMiniproyecto = async (req, res) => {
+  try {
+    const respuestas = await RespuestaEstudianteMiniproyecto.findAll();
+    res.json(respuestas);
+  } catch (error) {
+    res.status(500).json({
+      mensaje: "Error al obtener respuestas del miniproyecto",
+    });
+  }
+};
+
+/* OBTENER RESPUESTA POR ID */
+export const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
+
+    if (!respuesta) {
+      return res.status(404).json({
+        mensaje: "Respuesta de miniproyecto no encontrada",
+      });
+    }
+
+    res.json(respuesta);
+  } catch (error) {
+    res.status(500).json({
+      mensaje: "Error al obtener la respuesta del miniproyecto",
+    });
+  }
+};
+
+/* ACTUALIZAR RESPUESTA */
+export const actualizarRespuestaMiniproyecto = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
+    if (!respuesta) {
+      return res.status(404).json({
+        mensaje: "Respuesta de miniproyecto no encontrada",
+      });
+    }
+
+    await respuesta.update(req.body);
+    res.json(respuesta);
+  } catch (error) {
+    res.status(500).json({
+      mensaje: "Error al actualizar la respuesta del miniproyecto",
+    });
+  }
+};
+
+/* ELIMINAR RESPUESTA */
+export const eliminarRespuestaMiniproyecto = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
+    if (!respuesta) {
+      return res.status(404).json({
+        mensaje: "Respuesta de miniproyecto no encontrada",
+      });
+    }
+
+    await respuesta.destroy();
+    res.json({
+      mensaje: "Respuesta de miniproyecto eliminada correctamente",
+    });
+  } catch (error) {
+    res.status(500).json({
+      mensaje: "Error al eliminar la respuesta del miniproyecto",
+    });
+  }
+};
