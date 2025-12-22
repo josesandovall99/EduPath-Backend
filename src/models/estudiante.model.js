@@ -1,6 +1,5 @@
-import { DataTypes } from "sequelize";
-import sequelize from "../config/sequelize.js";
-import Persona from "./persona.model.js";
+const { DataTypes } = require("sequelize");
+const sequelize = require("../config/database");
 
 const Estudiante = sequelize.define(
   "Estudiante",

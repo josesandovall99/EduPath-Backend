@@ -1,28 +1,28 @@
-import sequelize from "../config/sequelize.js";
-import Persona from "../models/persona.model.js";
-import Administrador from "../models/administrador.model.js";
+const sequelize = require("../config/database");
+const Persona = require("../models/persona.model");
+const Administrador = require("../models/administrador.model");
 
 /* CREAR ADMINISTRADOR */
-export const crearAdministrador = async (req, res) => {
+const crearAdministrador = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
     const {
       nombre,
       email,
-      codigo_acceso,
+      codigoAcceso,
       contraseña,
       cargo,
-      nivel_acceso,
+      nivelAcceso,
     } = req.body;
 
     const persona = await Persona.create(
       {
         nombre,
         email,
-        codigo_acceso,
+        codigoAcceso,
         contraseña,
-        tipo_usuario: "ADMINISTRADOR",
+        tipoUsuario: "ADMINISTRADOR",
       },
       { transaction }
     );
@@ -31,7 +31,7 @@ export const crearAdministrador = async (req, res) => {
       {
         id: persona.id,
         cargo,
-        nivel_acceso,
+        nivelAcceso,
       },
       { transaction }
     );
@@ -51,8 +51,8 @@ export const crearAdministrador = async (req, res) => {
   }
 };
 
-/* OBTENER TODOS LOS ADMINISTRADORES */
-export const obtenerAdministradores = async (req, res) => {
+/* OBTENER TODOS */
+const obtenerAdministradores = async (req, res) => {
   try {
     const administradores = await Administrador.findAll({
       include: Persona,
@@ -60,12 +60,14 @@ export const obtenerAdministradores = async (req, res) => {
 
     res.json(administradores);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al obtener administradores" });
+    res.status(500).json({
+      mensaje: "Error al obtener administradores",
+    });
   }
 };
 
-/* OBTENER ADMINISTRADOR POR ID */
-export const obtenerAdministradorPorId = async (req, res) => {
+/* OBTENER POR ID */
+const obtenerAdministradorPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -74,17 +76,21 @@ export const obtenerAdministradorPorId = async (req, res) => {
     });
 
     if (!administrador) {
-      return res.status(404).json({ mensaje: "Administrador no encontrado" });
+      return res.status(404).json({
+        mensaje: "Administrador no encontrado",
+      });
     }
 
     res.json(administrador);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al obtener administrador" });
+    res.status(500).json({
+      mensaje: "Error al obtener administrador",
+    });
   }
 };
 
-/* ACTUALIZAR ADMINISTRADOR */
-export const actualizarAdministrador = async (req, res) => {
+/* ACTUALIZAR */
+const actualizarAdministrador = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
@@ -95,25 +101,27 @@ export const actualizarAdministrador = async (req, res) => {
     });
 
     if (!administrador) {
-      return res.status(404).json({ mensaje: "Administrador no encontrado" });
+      return res.status(404).json({
+        mensaje: "Administrador no encontrado",
+      });
     }
 
     const {
       nombre,
       email,
-      codigo_acceso,
+      codigoAcceso,
       contraseña,
       cargo,
-      nivel_acceso,
+      nivelAcceso,
     } = req.body;
 
     await administrador.Persona.update(
-      { nombre, email, codigo_acceso, contraseña },
+      { nombre, email, codigoAcceso, contraseña },
       { transaction }
     );
 
     await administrador.update(
-      { cargo, nivel_acceso },
+      { cargo, nivelAcceso },
       { transaction }
     );
 
@@ -122,12 +130,14 @@ export const actualizarAdministrador = async (req, res) => {
     res.json(administrador);
   } catch (error) {
     await transaction.rollback();
-    res.status(500).json({ mensaje: "Error al actualizar administrador" });
+    res.status(500).json({
+      mensaje: "Error al actualizar administrador",
+    });
   }
 };
 
-/* ELIMINAR ADMINISTRADOR */
-export const eliminarAdministrador = async (req, res) => {
+/* ELIMINAR */
+const eliminarAdministrador = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
@@ -138,7 +148,9 @@ export const eliminarAdministrador = async (req, res) => {
     });
 
     if (!administrador) {
-      return res.status(404).json({ mensaje: "Administrador no encontrado" });
+      return res.status(404).json({
+        mensaje: "Administrador no encontrado",
+      });
     }
 
     await administrador.destroy({ transaction });
@@ -146,9 +158,21 @@ export const eliminarAdministrador = async (req, res) => {
 
     await transaction.commit();
 
-    res.json({ mensaje: "Administrador eliminado correctamente" });
+    res.json({
+      mensaje: "Administrador eliminado correctamente",
+    });
   } catch (error) {
     await transaction.rollback();
-    res.status(500).json({ mensaje: "Error al eliminar administrador" });
+    res.status(500).json({
+      mensaje: "Error al eliminar administrador",
+    });
   }
+};
+
+module.exports = {
+  crearAdministrador,
+  obtenerAdministradores,
+  obtenerAdministradorPorId,
+  actualizarAdministrador,
+  eliminarAdministrador,
 };

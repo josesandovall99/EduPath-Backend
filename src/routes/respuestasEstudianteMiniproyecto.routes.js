@@ -1,11 +1,13 @@
-import express from "express";
-import {
+const express = require("express");
+const {
   crearRespuestaMiniproyecto,
   obtenerRespuestasMiniproyecto,
   obtenerRespuestaMiniproyectoPorId,
   actualizarRespuestaMiniproyecto,
   eliminarRespuestaMiniproyecto,
-} from "../controllers/respuestaEstudianteMiniproyecto.controller.js";
+} = require(
+  "../controllers/respuestaEstudianteMiniproyecto.controller"
+);
 
 const router = express.Router();
 
@@ -15,4 +17,4 @@ router.get("/:id", obtenerRespuestaMiniproyectoPorId);
 router.put("/:id", actualizarRespuestaMiniproyecto);
 router.delete("/:id", eliminarRespuestaMiniproyecto);
 
-export default router;
+module.exports = router;

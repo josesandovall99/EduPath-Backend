@@ -1,34 +1,35 @@
-import Persona from "../models/persona.model.js";
+const Persona = require("../models/persona.model");
 
-export const crearPersona = async (req, res) => {
+/* CREAR PERSONA */
+const crearPersona = async (req, res) => {
   try {
-    const { nombre, email, codigoAcceso, contraseña, tipoUsuario,  fechaRegistro} = req.body;
-
-    if (!nombre || !email || !codigoAcceso || !contraseña || !tipoUsuario || !fechaRegistro) {
-      return res.status(400).json({
-        mensaje: "Todos los campos son obligatorios",
-      });
-    }
+    const {
+      nombre,
+      email,
+      codigo_acceso,
+      contraseña,
+      tipo_usuario,
+    } = req.body;
 
     const persona = await Persona.create({
       nombre,
       email,
-      codigoAcceso,
+      codigo_acceso,
       contraseña,
-      tipoUsuario,
-      fechaRegistro,
+      tipo_usuario,
     });
 
     res.status(201).json(persona);
   } catch (error) {
-    console.error("Error al crear persona:", error);
     res.status(500).json({
-      mensaje: "Error al crear la persona",
+      mensaje: "Error al crear persona",
+      error: error.message,
     });
   }
 };
 
-export const obtenerPersonas = async (req, res) => {
+/* OBTENER TODAS */
+const obtenerPersonas = async (req, res) => {
   try {
     const personas = await Persona.findAll();
     res.json(personas);
@@ -37,12 +38,12 @@ export const obtenerPersonas = async (req, res) => {
   }
 };
 
-export const obtenerPersonaPorId = async (req, res) => {
+/* OBTENER POR ID */
+const obtenerPersonaPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
     const persona = await Persona.findByPk(id);
-
     if (!persona) {
       return res.status(404).json({ mensaje: "Persona no encontrada" });
     }
@@ -53,9 +54,12 @@ export const obtenerPersonaPorId = async (req, res) => {
   }
 };
 
-export const actualizarPersona = async (req, res) => {
+/* ACTUALIZAR */
+const actualizarPersona = async (req, res) => {
   try {
     const { id } = req.params;
+
+    delete req.body.fecha_registro;
 
     const persona = await Persona.findByPk(id);
     if (!persona) {
@@ -69,7 +73,8 @@ export const actualizarPersona = async (req, res) => {
   }
 };
 
-export const eliminarPersona = async (req, res) => {
+/* ELIMINAR */
+const eliminarPersona = async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -83,4 +88,12 @@ export const eliminarPersona = async (req, res) => {
   } catch (error) {
     res.status(500).json({ mensaje: "Error al eliminar persona" });
   }
+};
+
+module.exports = {
+  crearPersona,
+  obtenerPersonas,
+  obtenerPersonaPorId,
+  actualizarPersona,
+  eliminarPersona,
 };

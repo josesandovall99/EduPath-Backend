@@ -1,6 +1,6 @@
-import { DataTypes } from "sequelize";
-import sequelize from "../config/sequelize.js";
-import Persona from "./persona.model.js";
+const { DataTypes } = require("sequelize");
+const sequelize = require("../config/database");
+const Persona = require("./persona.model");
 
 const Administrador = sequelize.define(
   "Administrador",
@@ -19,7 +19,7 @@ const Administrador = sequelize.define(
       allowNull: false,
     },
 
-    nivel_acceso: {
+    nivelAcceso: {
       type: DataTypes.STRING,
       allowNull: false,
     },
@@ -30,8 +30,8 @@ const Administrador = sequelize.define(
   }
 );
 
-/* RELACIÓN 1 A 1 (HERENCIA) */
+/* HERENCIA 1 A 1 */
 Persona.hasOne(Administrador, { foreignKey: "id" });
 Administrador.belongsTo(Persona, { foreignKey: "id" });
 
-export default Administrador;
+module.exports = Administrador;

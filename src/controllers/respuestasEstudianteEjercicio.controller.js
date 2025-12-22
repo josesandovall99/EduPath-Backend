@@ -1,9 +1,16 @@
-import RespuestaEstudianteEjercicio from "../models/respuestaEstudianteEjercicio.model.js";
+const RespuestaEstudianteEjercicio = require(
+  "../models/respuestaEstudianteEjercicio.model"
+);
 
 /* CREAR RESPUESTA */
-export const crearRespuesta = async (req, res) => {
+const crearRespuestaEjercicio = async (req, res) => {
   try {
-    const { respuesta, estudiante_id, ejercicio_id, estado } = req.body;
+    const {
+      respuesta,
+      estudiante_id,
+      ejercicio_id,
+      estado,
+    } = req.body;
 
     const nuevaRespuesta = await RespuestaEstudianteEjercicio.create({
       respuesta,
@@ -15,75 +22,99 @@ export const crearRespuesta = async (req, res) => {
     res.status(201).json(nuevaRespuesta);
   } catch (error) {
     res.status(500).json({
-      mensaje: "Error al crear la respuesta",
+      mensaje: "Error al crear la respuesta del ejercicio",
       error: error.message,
     });
   }
 };
 
-/* OBTENER TODAS LAS RESPUESTAS */
-export const obtenerRespuestas = async (req, res) => {
+/* OBTENER TODAS */
+const obtenerRespuestasEjercicio = async (req, res) => {
   try {
-    const respuestas = await RespuestaEstudianteEjercicio.findAll();
+    const respuestas =
+      await RespuestaEstudianteEjercicio.findAll();
     res.json(respuestas);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al obtener respuestas" });
+    res.status(500).json({
+      mensaje: "Error al obtener respuestas del ejercicio",
+    });
   }
 };
 
-/* OBTENER RESPUESTA POR ID */
-export const obtenerRespuestaPorId = async (req, res) => {
+/* OBTENER POR ID */
+const obtenerRespuestaEjercicioPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
+    const respuesta =
+      await RespuestaEstudianteEjercicio.findByPk(id);
 
     if (!respuesta) {
-      return res
-        .status(404)
-        .json({ mensaje: "Respuesta no encontrada" });
+      return res.status(404).json({
+        mensaje: "Respuesta de ejercicio no encontrada",
+      });
     }
 
     res.json(respuesta);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al obtener respuesta" });
+    res.status(500).json({
+      mensaje: "Error al obtener la respuesta del ejercicio",
+    });
   }
 };
 
-/* ACTUALIZAR RESPUESTA */
-export const actualizarRespuesta = async (req, res) => {
+/* ACTUALIZAR */
+const actualizarRespuestaEjercicio = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
+    const respuesta =
+      await RespuestaEstudianteEjercicio.findByPk(id);
+
     if (!respuesta) {
-      return res
-        .status(404)
-        .json({ mensaje: "Respuesta no encontrada" });
+      return res.status(404).json({
+        mensaje: "Respuesta de ejercicio no encontrada",
+      });
     }
 
     await respuesta.update(req.body);
     res.json(respuesta);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al actualizar respuesta" });
+    res.status(500).json({
+      mensaje: "Error al actualizar la respuesta del ejercicio",
+    });
   }
 };
 
-/* ELIMINAR RESPUESTA */
-export const eliminarRespuesta = async (req, res) => {
+/* ELIMINAR */
+const eliminarRespuestaEjercicio = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
+    const respuesta =
+      await RespuestaEstudianteEjercicio.findByPk(id);
+
     if (!respuesta) {
-      return res
-        .status(404)
-        .json({ mensaje: "Respuesta no encontrada" });
+      return res.status(404).json({
+        mensaje: "Respuesta de ejercicio no encontrada",
+      });
     }
 
     await respuesta.destroy();
-    res.json({ mensaje: "Respuesta eliminada correctamente" });
+    res.json({
+      mensaje: "Respuesta de ejercicio eliminada correctamente",
+    });
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al eliminar respuesta" });
+    res.status(500).json({
+      mensaje: "Error al eliminar la respuesta del ejercicio",
+    });
   }
+};
+
+module.exports = {
+  crearRespuestaEjercicio,
+  obtenerRespuestasEjercicio,
+  obtenerRespuestaEjercicioPorId,
+  actualizarRespuestaEjercicio,
+  eliminarRespuestaEjercicio,
 };

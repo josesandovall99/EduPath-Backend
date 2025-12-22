@@ -1,11 +1,11 @@
-import express from "express";
-import {
+const express = require("express");
+const {
   crearAdministrador,
   obtenerAdministradores,
   obtenerAdministradorPorId,
   actualizarAdministrador,
   eliminarAdministrador,
-} from "../controllers/administrador.controller.js";
+} = require("../controllers/administrador.controller");
 
 const router = express.Router();
 
@@ -15,4 +15,4 @@ router.get("/:id", obtenerAdministradorPorId);
 router.put("/:id", actualizarAdministrador);
 router.delete("/:id", eliminarAdministrador);
 
-export default router;
+module.exports = router;
