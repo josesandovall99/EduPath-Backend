@@ -8,11 +8,16 @@ const evaluacion = require('./evaluacion')(sequelize, DataTypes);
 const progreso = require('./tipoactividad.model')(sequelize, DataTypes);
 
 
+const area = require('./area.model')(sequelize, DataTypes);
+
+
 module.exports = {
   sequelize,
   Miniproyecto,
   TipoActividad,
   actividad,
   evaluacion,
-  progreso
+  progreso,
+
+  area
 };
