@@ -1,8 +1,9 @@
 const sequelize = require("../config/database");
-const Persona = require("../models/persona.model");
-const Administrador = require("../models/administrador.model");
+const { Persona, Administrador } = require("../models");
 
-/* CREAR ADMINISTRADOR */
+/* =========================
+   CREAR ADMINISTRADOR
+========================= */
 const crearAdministrador = async (req, res) => {
   const transaction = await sequelize.transaction();
 
@@ -16,6 +17,7 @@ const crearAdministrador = async (req, res) => {
       nivelAcceso,
     } = req.body;
 
+    // 1️⃣ Crear Persona
     const persona = await Persona.create(
       {
         nombre,
@@ -27,9 +29,10 @@ const crearAdministrador = async (req, res) => {
       { transaction }
     );
 
+    // 2️⃣ Crear Administrador
     const administrador = await Administrador.create(
       {
-        id: persona.id,
+        persona_id: persona.id, // 🔥 FK correcta
         cargo,
         nivelAcceso,
       },
@@ -51,28 +54,39 @@ const crearAdministrador = async (req, res) => {
   }
 };
 
-/* OBTENER TODOS */
+/* =========================
+   OBTENER TODOS
+========================= */
 const obtenerAdministradores = async (req, res) => {
   try {
     const administradores = await Administrador.findAll({
-      include: Persona,
+      include: {
+        model: Persona,
+        as: "persona",
+      },
     });
 
     res.json(administradores);
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener administradores",
+      error: error.message,
     });
   }
 };
 
-/* OBTENER POR ID */
+/* =========================
+   OBTENER POR ID
+========================= */
 const obtenerAdministradorPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
     const administrador = await Administrador.findByPk(id, {
-      include: Persona,
+      include: {
+        model: Persona,
+        as: "persona",
+      },
     });
 
     if (!administrador) {
@@ -85,11 +99,14 @@ const obtenerAdministradorPorId = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener administrador",
+      error: error.message,
     });
   }
 };
 
-/* ACTUALIZAR */
+/* =========================
+   ACTUALIZAR
+========================= */
 const actualizarAdministrador = async (req, res) => {
   const transaction = await sequelize.transaction();
 
@@ -97,7 +114,10 @@ const actualizarAdministrador = async (req, res) => {
     const { id } = req.params;
 
     const administrador = await Administrador.findByPk(id, {
-      include: Persona,
+      include: {
+        model: Persona,
+        as: "persona",
+      },
     });
 
     if (!administrador) {
@@ -115,11 +135,13 @@ const actualizarAdministrador = async (req, res) => {
       nivelAcceso,
     } = req.body;
 
-    await administrador.Persona.update(
+    // 1️⃣ Actualizar Persona
+    await administrador.persona.update(
       { nombre, email, codigoAcceso, contraseña },
       { transaction }
     );
 
+    // 2️⃣ Actualizar Administrador
     await administrador.update(
       { cargo, nivelAcceso },
       { transaction }
@@ -127,16 +149,22 @@ const actualizarAdministrador = async (req, res) => {
 
     await transaction.commit();
 
-    res.json(administrador);
+    res.json({
+      mensaje: "Administrador actualizado correctamente",
+      administrador,
+    });
   } catch (error) {
     await transaction.rollback();
     res.status(500).json({
       mensaje: "Error al actualizar administrador",
+      error: error.message,
     });
   }
 };
 
-/* ELIMINAR */
+/* =========================
+   ELIMINAR
+========================= */
 const eliminarAdministrador = async (req, res) => {
   const transaction = await sequelize.transaction();
 
@@ -144,7 +172,10 @@ const eliminarAdministrador = async (req, res) => {
     const { id } = req.params;
 
     const administrador = await Administrador.findByPk(id, {
-      include: Persona,
+      include: {
+        model: Persona,
+        as: "persona",
+      },
     });
 
     if (!administrador) {
@@ -153,8 +184,10 @@ const eliminarAdministrador = async (req, res) => {
       });
     }
 
+    // Primero el hijo
     await administrador.destroy({ transaction });
-    await administrador.Persona.destroy({ transaction });
+    // Luego el padre
+    await administrador.persona.destroy({ transaction });
 
     await transaction.commit();
 
@@ -165,10 +198,14 @@ const eliminarAdministrador = async (req, res) => {
     await transaction.rollback();
     res.status(500).json({
       mensaje: "Error al eliminar administrador",
+      error: error.message,
     });
   }
 };
 
+/* =========================
+   EXPORTS
+========================= */
 module.exports = {
   crearAdministrador,
   obtenerAdministradores,

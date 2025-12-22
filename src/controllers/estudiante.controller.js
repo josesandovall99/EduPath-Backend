@@ -1,8 +1,9 @@
 const sequelize = require("../config/database");
-const Persona = require("../models/persona.model");
-const Estudiante = require("../models/estudiante.model");
+const { Persona, Estudiante } = require("../models");
 
-/* CREAR ESTUDIANTE */
+/* =========================
+   CREAR ESTUDIANTE
+========================= */
 const crearEstudiante = async (req, res) => {
   const transaction = await sequelize.transaction();
 
@@ -12,8 +13,9 @@ const crearEstudiante = async (req, res) => {
       email,
       codigoAcceso,
       contraseña,
+      codigoEstudiantil,
       programa,
-      semestre,
+      semestre
     } = req.body;
 
     const persona = await Persona.create(
@@ -28,13 +30,15 @@ const crearEstudiante = async (req, res) => {
     );
 
     const estudiante = await Estudiante.create(
-      {
-        id: persona.id,
-        programa,
-        semestre,
-      },
-      { transaction }
-    );
+  {
+    persona_id: persona.id, // 🔥 CLAVE
+    codigoEstudiantil,
+    programa,
+    semestre,
+  },
+  { transaction }
+);
+
 
     await transaction.commit();
 
@@ -51,26 +55,40 @@ const crearEstudiante = async (req, res) => {
   }
 };
 
-/* OBTENER TODOS */
+
+/* =========================
+   OBTENER TODOS
+========================= */
 const obtenerEstudiantes = async (req, res) => {
   try {
     const estudiantes = await Estudiante.findAll({
-      include: Persona,
+      include: {
+        model: Persona,
+        as: "persona",
+      }
     });
 
     res.json(estudiantes);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al obtener estudiantes" });
+    res.status(500).json({
+      mensaje: "Error al obtener estudiantes",
+      error: error.message,
+    });
   }
 };
 
-/* OBTENER POR ID */
+/* =========================
+   OBTENER POR ID
+========================= */
 const obtenerEstudiantePorId = async (req, res) => {
   try {
     const { id } = req.params;
 
     const estudiante = await Estudiante.findByPk(id, {
-      include: Persona,
+      include: {
+        model: Persona,
+        as: "persona",
+      }
     });
 
     if (!estudiante) {
@@ -83,11 +101,14 @@ const obtenerEstudiantePorId = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener estudiante",
+      error: error.message,
     });
   }
 };
 
-/* ACTUALIZAR */
+/* =========================
+   ACTUALIZAR
+========================= */
 const actualizarEstudiante = async (req, res) => {
   const transaction = await sequelize.transaction();
 
@@ -95,7 +116,10 @@ const actualizarEstudiante = async (req, res) => {
     const { id } = req.params;
 
     const estudiante = await Estudiante.findByPk(id, {
-      include: Persona,
+      include: {
+        model: Persona,
+        as: "persona",
+      }
     });
 
     if (!estudiante) {
@@ -125,16 +149,22 @@ const actualizarEstudiante = async (req, res) => {
 
     await transaction.commit();
 
-    res.json(estudiante);
+    res.json({
+      mensaje: "Estudiante actualizado correctamente",
+      estudiante,
+    });
   } catch (error) {
     await transaction.rollback();
     res.status(500).json({
       mensaje: "Error al actualizar estudiante",
+      error: error.message,
     });
   }
 };
 
-/* ELIMINAR */
+/* =========================
+   ELIMINAR
+========================= */
 const eliminarEstudiante = async (req, res) => {
   const transaction = await sequelize.transaction();
 
@@ -142,7 +172,10 @@ const eliminarEstudiante = async (req, res) => {
     const { id } = req.params;
 
     const estudiante = await Estudiante.findByPk(id, {
-      include: Persona,
+      include: {
+        model: Persona,
+        as: "persona",
+      }
     });
 
     if (!estudiante) {
@@ -151,7 +184,9 @@ const eliminarEstudiante = async (req, res) => {
       });
     }
 
+    // Primero el hijo
     await estudiante.destroy({ transaction });
+    // Luego el padre
     await estudiante.Persona.destroy({ transaction });
 
     await transaction.commit();
@@ -163,10 +198,14 @@ const eliminarEstudiante = async (req, res) => {
     await transaction.rollback();
     res.status(500).json({
       mensaje: "Error al eliminar estudiante",
+      error: error.message,
     });
   }
 };
 
+/* =========================
+   EXPORTS
+========================= */
 module.exports = {
   crearEstudiante,
   obtenerEstudiantes,

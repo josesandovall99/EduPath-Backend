@@ -1,8 +1,8 @@
-const RespuestaEstudianteMiniproyecto = require(
-  "../models/respuestasEstudianteMiniproyecto.model"
-);
+const { RespuestasEstudianteMiniproyecto } = require("../models");
 
-/* CREAR RESPUESTA */
+/* =========================
+   CREAR RESPUESTA
+========================= */
 const crearRespuestaMiniproyecto = async (req, res) => {
   try {
     const {
@@ -12,7 +12,7 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       estado,
     } = req.body;
 
-    const nuevaRespuesta = await RespuestaEstudianteMiniproyecto.create({
+    const nuevaRespuesta = await RespuestasEstudianteMiniproyecto.create({
       respuesta,
       estudiante_id,
       miniproyecto_id,
@@ -28,26 +28,29 @@ const crearRespuestaMiniproyecto = async (req, res) => {
   }
 };
 
-/* OBTENER TODAS */
+/* =========================
+   OBTENER TODAS
+========================= */
 const obtenerRespuestasMiniproyecto = async (req, res) => {
   try {
-    const respuestas =
-      await RespuestaEstudianteMiniproyecto.findAll();
+    const respuestas = await RespuestasEstudianteMiniproyecto.findAll();
     res.json(respuestas);
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener respuestas del miniproyecto",
+      error: error.message,
     });
   }
 };
 
-/* OBTENER POR ID */
+/* =========================
+   OBTENER POR ID
+========================= */
 const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta =
-      await RespuestaEstudianteMiniproyecto.findByPk(id);
+    const respuesta = await RespuestasEstudianteMiniproyecto.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -59,17 +62,19 @@ const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener la respuesta del miniproyecto",
+      error: error.message,
     });
   }
 };
 
-/* ACTUALIZAR */
+/* =========================
+   ACTUALIZAR
+========================= */
 const actualizarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta =
-      await RespuestaEstudianteMiniproyecto.findByPk(id);
+    const respuesta = await RespuestasEstudianteMiniproyecto.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -78,21 +83,27 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
     }
 
     await respuesta.update(req.body);
-    res.json(respuesta);
+
+    res.json({
+      mensaje: "Respuesta actualizada correctamente",
+      respuesta,
+    });
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al actualizar la respuesta del miniproyecto",
+      error: error.message,
     });
   }
 };
 
-/* ELIMINAR */
+/* =========================
+   ELIMINAR
+========================= */
 const eliminarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta =
-      await RespuestaEstudianteMiniproyecto.findByPk(id);
+    const respuesta = await RespuestasEstudianteMiniproyecto.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -101,16 +112,21 @@ const eliminarRespuestaMiniproyecto = async (req, res) => {
     }
 
     await respuesta.destroy();
+
     res.json({
       mensaje: "Respuesta de miniproyecto eliminada correctamente",
     });
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al eliminar la respuesta del miniproyecto",
+      error: error.message,
     });
   }
 };
 
+/* =========================
+   EXPORTS
+========================= */
 module.exports = {
   crearRespuestaMiniproyecto,
   obtenerRespuestasMiniproyecto,

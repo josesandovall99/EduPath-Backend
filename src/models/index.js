@@ -20,6 +20,32 @@ const Subtema = require('./subtema.models')(sequelize, DataTypes);
 const Contenido = require('./contenido.models')(sequelize, DataTypes);
 const Ejercicio = require('./ejercicio.models')(sequelize, DataTypes);
 
+// =======================
+// ASOCIACIONES
+// =======================
+
+// Persona <-> Estudiante (1 a 1)
+Persona.hasOne(Estudiante, {
+  foreignKey: "id",
+  as: "estudiante",
+});
+
+Estudiante.belongsTo(Persona, {
+  foreignKey: "id",
+  as: "persona",
+});
+
+// Persona <-> Administrador (1 a 1)
+Persona.hasOne(Administrador, {
+  foreignKey: "id",
+  as: "administrador",
+});
+
+Administrador.belongsTo(Persona, {
+  foreignKey: "id",
+  as: "persona",
+});
+
 
 module.exports = {
   sequelize,

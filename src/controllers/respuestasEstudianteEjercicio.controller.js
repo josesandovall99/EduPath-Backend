@@ -1,8 +1,8 @@
-const RespuestasEstudianteEjercicio = require(
-  "../models/respuestasEstudianteEjercicio.model"
-);
+const { RespuestaEstudianteEjercicio } = require("../models");
 
-/* CREAR RESPUESTA */
+/* =========================
+   CREAR RESPUESTA
+========================= */
 const crearRespuestaEjercicio = async (req, res) => {
   try {
     const {
@@ -12,7 +12,7 @@ const crearRespuestaEjercicio = async (req, res) => {
       estado,
     } = req.body;
 
-    const nuevaRespuesta = await RespuestasEstudianteEjercicio.create({
+    const nuevaRespuesta = await RespuestaEstudianteEjercicio.create({
       respuesta,
       estudiante_id,
       ejercicio_id,
@@ -28,26 +28,29 @@ const crearRespuestaEjercicio = async (req, res) => {
   }
 };
 
-/* OBTENER TODAS */
+/* =========================
+   OBTENER TODAS
+========================= */
 const obtenerRespuestasEjercicio = async (req, res) => {
   try {
-    const respuestas =
-      await RespuestaEstudianteEjercicio.findAll();
+    const respuestas = await RespuestaEstudianteEjercicio.findAll();
     res.json(respuestas);
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener respuestas del ejercicio",
+      error: error.message,
     });
   }
 };
 
-/* OBTENER POR ID */
+/* =========================
+   OBTENER POR ID
+========================= */
 const obtenerRespuestaEjercicioPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta =
-      await RespuestaEstudianteEjercicio.findByPk(id);
+    const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -59,17 +62,19 @@ const obtenerRespuestaEjercicioPorId = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener la respuesta del ejercicio",
+      error: error.message,
     });
   }
 };
 
-/* ACTUALIZAR */
+/* =========================
+   ACTUALIZAR
+========================= */
 const actualizarRespuestaEjercicio = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta =
-      await RespuestaEstudianteEjercicio.findByPk(id);
+    const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -82,17 +87,19 @@ const actualizarRespuestaEjercicio = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al actualizar la respuesta del ejercicio",
+      error: error.message,
     });
   }
 };
 
-/* ELIMINAR */
+/* =========================
+   ELIMINAR
+========================= */
 const eliminarRespuestaEjercicio = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta =
-      await RespuestasEstudianteEjercicio.findByPk(id);
+    const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -107,6 +114,7 @@ const eliminarRespuestaEjercicio = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al eliminar la respuesta del ejercicio",
+      error: error.message,
     });
   }
 };
