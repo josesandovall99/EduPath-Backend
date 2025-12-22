@@ -6,6 +6,15 @@ const TipoActividad = require('./tipoactividad.model')(sequelize, DataTypes);
 const actividad = require('./actividad.model')(sequelize, DataTypes);
 const evaluacion = require('./evaluacion.model')(sequelize, DataTypes);
 const progreso = require('./tipoactividad.model')(sequelize, DataTypes);
+const Persona = require('./persona.model')(sequelize, DataTypes);
+const Estudiante = require('./estudiante.model')(sequelize, DataTypes);
+const Administrador = require('./administrador.model')(sequelize, DataTypes);
+const RespuestaEstudianteMiniproyecto = require('./respuestaEstudianteMiniproyecto.model')(sequelize, DataTypes);
+const RespuestaEstudianteEjercicio = require('./respuestaEstudianteEjercicio.model')(sequelize, DataTypes);
+
+
+
+const area = require('./area.model')(sequelize, DataTypes);
 
 
 module.exports = {
@@ -14,5 +23,12 @@ module.exports = {
   TipoActividad,
   actividad,
   evaluacion,
-  progreso
+  progreso,
+  Persona,
+  Estudiante,
+  Administrador,
+  RespuestaEstudianteMiniproyecto,
+  RespuestaEstudianteEjercicio,
+
+  area
 };

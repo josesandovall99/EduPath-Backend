@@ -26,6 +26,12 @@ app.use('/subtemas', require('./routes/subtema.routes'));
 app.use('/contenidos', require('./routes/contenido.routes'));
 app.use('/ejercicios', require('./routes/ejercicio.routes'));
 
+app.use('/persona', require('./routes/persona.routes'));
+app.use('/estudiante', require('./routes/estudiante.routes'));
+app.use('/administrador', require('./routes/administrador.routes'));
+app.use('/respuestaEstudianteEjercicio', require('./routes/respuestaEstudianteEjercicio.routes'));
+app.use('/respuestaEstudianteMiniproyecto', require('./routes/respuestaEstudianteMiniproyecto.routes'));
+
 
 app.listen(3000, () => {
     console.log('Servidor corriendo en el puerto 3000');
