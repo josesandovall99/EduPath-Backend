@@ -29,6 +29,5 @@ module.exports = {
   Administrador,
   RespuestaEstudianteMiniproyecto,
   RespuestaEstudianteEjercicio,
-
   area
 };
