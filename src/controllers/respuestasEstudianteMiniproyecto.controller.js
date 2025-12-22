@@ -1,18 +1,13 @@
-const { RespuestasEstudianteMiniproyecto } = require("../models");
+const { RespuestaEstudianteMiniproyecto } = require("../models");
 
 /* =========================
    CREAR RESPUESTA
 ========================= */
 const crearRespuestaMiniproyecto = async (req, res) => {
   try {
-    const {
-      respuesta,
-      estudiante_id,
-      miniproyecto_id,
-      estado,
-    } = req.body;
+    const { respuesta, estudiante_id, miniproyecto_id, estado } = req.body;
 
-    const nuevaRespuesta = await RespuestasEstudianteMiniproyecto.create({
+    const nuevaRespuesta = await RespuestaEstudianteMiniproyecto.create({
       respuesta,
       estudiante_id,
       miniproyecto_id,
@@ -33,7 +28,7 @@ const crearRespuestaMiniproyecto = async (req, res) => {
 ========================= */
 const obtenerRespuestasMiniproyecto = async (req, res) => {
   try {
-    const respuestas = await RespuestasEstudianteMiniproyecto.findAll();
+    const respuestas = await RespuestaEstudianteMiniproyecto.findAll();
     res.json(respuestas);
   } catch (error) {
     res.status(500).json({
@@ -50,7 +45,7 @@ const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestasEstudianteMiniproyecto.findByPk(id);
+    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -74,7 +69,7 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestasEstudianteMiniproyecto.findByPk(id);
+    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -103,7 +98,7 @@ const eliminarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestasEstudianteMiniproyecto.findByPk(id);
+    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -124,9 +119,6 @@ const eliminarRespuestaMiniproyecto = async (req, res) => {
   }
 };
 
-/* =========================
-   EXPORTS
-========================= */
 module.exports = {
   crearRespuestaMiniproyecto,
   obtenerRespuestasMiniproyecto,
