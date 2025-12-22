@@ -14,10 +14,12 @@ db.sequelize.sync({ alter: false })
     .then(() => console.log('Modelos sincronizados 📦'))
     .catch(err => console.error('Error sincronizando ❌', err));
 
-app.use(
-    '/miniproyectos',
-    require('./routes/miniproyecto.routes')
-);
+app.use('/miniproyectos', require('./routes/miniproyecto.routes'));
+app.use('/evaluaciones', require('./routes/evaluacion.routes'));
+app.use('/tipo-actividades', require('./routes/tipoactividad.routes'));
+app.use('/actividades', require('./routes/actividad.routes'));
+app.use('/progresos', require('./routes/progreso.routes'));
+
 
 
 app.listen(3000, () => {
