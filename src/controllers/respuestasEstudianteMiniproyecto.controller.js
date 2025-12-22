@@ -1,7 +1,9 @@
-import RespuestaEstudianteMiniproyecto from "../models/respuestaEstudianteMiniproyecto.model.js";
+const RespuestaEstudianteMiniproyecto = require(
+  "../models/respuestaEstudianteMiniproyecto.model"
+);
 
 /* CREAR RESPUESTA */
-export const crearRespuestaMiniproyecto = async (req, res) => {
+const crearRespuestaMiniproyecto = async (req, res) => {
   try {
     const {
       respuesta,
@@ -26,10 +28,11 @@ export const crearRespuestaMiniproyecto = async (req, res) => {
   }
 };
 
-/* OBTENER TODAS LAS RESPUESTAS */
-export const obtenerRespuestasMiniproyecto = async (req, res) => {
+/* OBTENER TODAS */
+const obtenerRespuestasMiniproyecto = async (req, res) => {
   try {
-    const respuestas = await RespuestaEstudianteMiniproyecto.findAll();
+    const respuestas =
+      await RespuestaEstudianteMiniproyecto.findAll();
     res.json(respuestas);
   } catch (error) {
     res.status(500).json({
@@ -38,12 +41,13 @@ export const obtenerRespuestasMiniproyecto = async (req, res) => {
   }
 };
 
-/* OBTENER RESPUESTA POR ID */
-export const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
+/* OBTENER POR ID */
+const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
+    const respuesta =
+      await RespuestaEstudianteMiniproyecto.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({
@@ -59,12 +63,14 @@ export const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
   }
 };
 
-/* ACTUALIZAR RESPUESTA */
-export const actualizarRespuestaMiniproyecto = async (req, res) => {
+/* ACTUALIZAR */
+const actualizarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
+    const respuesta =
+      await RespuestaEstudianteMiniproyecto.findByPk(id);
+
     if (!respuesta) {
       return res.status(404).json({
         mensaje: "Respuesta de miniproyecto no encontrada",
@@ -80,12 +86,14 @@ export const actualizarRespuestaMiniproyecto = async (req, res) => {
   }
 };
 
-/* ELIMINAR RESPUESTA */
-export const eliminarRespuestaMiniproyecto = async (req, res) => {
+/* ELIMINAR */
+const eliminarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
+    const respuesta =
+      await RespuestaEstudianteMiniproyecto.findByPk(id);
+
     if (!respuesta) {
       return res.status(404).json({
         mensaje: "Respuesta de miniproyecto no encontrada",
@@ -101,4 +109,12 @@ export const eliminarRespuestaMiniproyecto = async (req, res) => {
       mensaje: "Error al eliminar la respuesta del miniproyecto",
     });
   }
+};
+
+module.exports = {
+  crearRespuestaMiniproyecto,
+  obtenerRespuestasMiniproyecto,
+  obtenerRespuestaMiniproyectoPorId,
+  actualizarRespuestaMiniproyecto,
+  eliminarRespuestaMiniproyecto,
 };

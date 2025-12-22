@@ -1,11 +1,11 @@
-import { DataTypes } from "sequelize";
-import sequelize from "../config/sequelize.js";
+const { DataTypes } = require("sequelize");
+const sequelize = require("../config/database");
 
 const Persona = sequelize.define(
   "Persona",
   {
     id: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.BIGINT,
       primaryKey: true,
       autoIncrement: true,
     },
@@ -21,7 +21,7 @@ const Persona = sequelize.define(
       unique: true,
     },
 
-    codigoAcceso: {
+    codigo_acceso: {
       type: DataTypes.STRING,
       allowNull: false,
     },
@@ -31,20 +31,21 @@ const Persona = sequelize.define(
       allowNull: false,
     },
 
-    tipoUsuario: {
-      type: DataTypes.ENUM("ESTUDIANTE", "ADMINISTRADOR"),
+    tipo_usuario: {
+      type: DataTypes.STRING,
       allowNull: false,
     },
-    fechaRegistro: {
-        type: DataTypes.DATE,
-        allowNull: false,
-        defaultValue: DataTypes.NOW,
-    }
+
+    fecha_registro: {
+      type: DataTypes.DATE,
+      allowNull: false,
+      defaultValue: DataTypes.NOW,
+    },
   },
   {
-    tableName: "personas",
-    timestamps: true,
+    tableName: "persona",
+    timestamps: false,
   }
 );
 
-export default Persona;
+module.exports = Persona;

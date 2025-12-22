@@ -1,18 +1,20 @@
-import express from "express";
-import {
-  crearRespuesta,
-  obtenerRespuestas,
-  obtenerRespuestaPorId,
-  actualizarRespuesta,
-  eliminarRespuesta,
-} from "../controllers/respuestaEstudianteEjercicio.controller.js";
+const express = require("express");
+const {
+  crearRespuestaEjercicio,
+  obtenerRespuestasEjercicio,
+  obtenerRespuestaEjercicioPorId,
+  actualizarRespuestaEjercicio,
+  eliminarRespuestaEjercicio,
+} = require(
+  "../controllers/respuestaEstudianteEjercicio.controller"
+);
 
 const router = express.Router();
 
-router.post("/", crearRespuesta);
-router.get("/", obtenerRespuestas);
-router.get("/:id", obtenerRespuestaPorId);
-router.put("/:id", actualizarRespuesta);
-router.delete("/:id", eliminarRespuesta);
+router.post("/", crearRespuestaEjercicio);
+router.get("/", obtenerRespuestasEjercicio);
+router.get("/:id", obtenerRespuestaEjercicioPorId);
+router.put("/:id", actualizarRespuestaEjercicio);
+router.delete("/:id", eliminarRespuestaEjercicio);
 
-export default router;
+module.exports = router;

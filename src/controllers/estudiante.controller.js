@@ -1,16 +1,16 @@
-import sequelize from "../config/sequelize.js";
-import Persona from "../models/persona.model.js";
-import Estudiante from "../models/estudiante.model.js";
+const sequelize = require("../config/database");
+const Persona = require("../models/persona.model");
+const Estudiante = require("../models/estudiante.model");
 
-/* CREAR ESTUDIANTE (Persona + Estudiante) */
-export const crearEstudiante = async (req, res) => {
+/* CREAR ESTUDIANTE */
+const crearEstudiante = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
     const {
       nombre,
       email,
-      codigo_acceso,
+      codigoAcceso,
       contraseña,
       programa,
       semestre,
@@ -20,9 +20,9 @@ export const crearEstudiante = async (req, res) => {
       {
         nombre,
         email,
-        codigo_acceso,
+        codigoAcceso,
         contraseña,
-        tipo_usuario: "ESTUDIANTE",
+        tipoUsuario: "ESTUDIANTE",
       },
       { transaction }
     );
@@ -51,8 +51,8 @@ export const crearEstudiante = async (req, res) => {
   }
 };
 
-/* OBTENER TODOS LOS ESTUDIANTES */
-export const obtenerEstudiantes = async (req, res) => {
+/* OBTENER TODOS */
+const obtenerEstudiantes = async (req, res) => {
   try {
     const estudiantes = await Estudiante.findAll({
       include: Persona,
@@ -64,8 +64,8 @@ export const obtenerEstudiantes = async (req, res) => {
   }
 };
 
-/* OBTENER ESTUDIANTE POR ID */
-export const obtenerEstudiantePorId = async (req, res) => {
+/* OBTENER POR ID */
+const obtenerEstudiantePorId = async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -74,17 +74,21 @@ export const obtenerEstudiantePorId = async (req, res) => {
     });
 
     if (!estudiante) {
-      return res.status(404).json({ mensaje: "Estudiante no encontrado" });
+      return res.status(404).json({
+        mensaje: "Estudiante no encontrado",
+      });
     }
 
     res.json(estudiante);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al obtener estudiante" });
+    res.status(500).json({
+      mensaje: "Error al obtener estudiante",
+    });
   }
 };
 
-/* ACTUALIZAR ESTUDIANTE */
-export const actualizarEstudiante = async (req, res) => {
+/* ACTUALIZAR */
+const actualizarEstudiante = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
@@ -95,20 +99,22 @@ export const actualizarEstudiante = async (req, res) => {
     });
 
     if (!estudiante) {
-      return res.status(404).json({ mensaje: "Estudiante no encontrado" });
+      return res.status(404).json({
+        mensaje: "Estudiante no encontrado",
+      });
     }
 
     const {
       nombre,
       email,
-      codigo_acceso,
+      codigoAcceso,
       contraseña,
       programa,
       semestre,
     } = req.body;
 
     await estudiante.Persona.update(
-      { nombre, email, codigo_acceso, contraseña },
+      { nombre, email, codigoAcceso, contraseña },
       { transaction }
     );
 
@@ -122,12 +128,14 @@ export const actualizarEstudiante = async (req, res) => {
     res.json(estudiante);
   } catch (error) {
     await transaction.rollback();
-    res.status(500).json({ mensaje: "Error al actualizar estudiante" });
+    res.status(500).json({
+      mensaje: "Error al actualizar estudiante",
+    });
   }
 };
 
-/* ELIMINAR ESTUDIANTE */
-export const eliminarEstudiante = async (req, res) => {
+/* ELIMINAR */
+const eliminarEstudiante = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
@@ -138,7 +146,9 @@ export const eliminarEstudiante = async (req, res) => {
     });
 
     if (!estudiante) {
-      return res.status(404).json({ mensaje: "Estudiante no encontrado" });
+      return res.status(404).json({
+        mensaje: "Estudiante no encontrado",
+      });
     }
 
     await estudiante.destroy({ transaction });
@@ -146,9 +156,21 @@ export const eliminarEstudiante = async (req, res) => {
 
     await transaction.commit();
 
-    res.json({ mensaje: "Estudiante eliminado correctamente" });
+    res.json({
+      mensaje: "Estudiante eliminado correctamente",
+    });
   } catch (error) {
     await transaction.rollback();
-    res.status(500).json({ mensaje: "Error al eliminar estudiante" });
+    res.status(500).json({
+      mensaje: "Error al eliminar estudiante",
+    });
   }
+};
+
+module.exports = {
+  crearEstudiante,
+  obtenerEstudiantes,
+  obtenerEstudiantePorId,
+  actualizarEstudiante,
+  eliminarEstudiante,
 };

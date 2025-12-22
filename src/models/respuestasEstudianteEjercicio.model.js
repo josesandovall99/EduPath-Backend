@@ -1,6 +1,6 @@
-import { DataTypes } from "sequelize";
-import sequelize from "../config/sequelize.js";
-import Estudiante from "./estudiante.model.js";
+const { DataTypes } = require("sequelize");
+const sequelize = require("../config/database");
+const Estudiante = require("./estudiante.model");
 
 const RespuestaEstudianteEjercicio = sequelize.define(
   "RespuestaEstudianteEjercicio",
@@ -47,7 +47,7 @@ const RespuestaEstudianteEjercicio = sequelize.define(
   }
 );
 
-/* RELACIONES */
+/* RELACIÓN */
 Estudiante.hasMany(RespuestaEstudianteEjercicio, {
   foreignKey: "estudiante_id",
 });
@@ -55,4 +55,4 @@ RespuestaEstudianteEjercicio.belongsTo(Estudiante, {
   foreignKey: "estudiante_id",
 });
 
-export default RespuestaEstudianteEjercicio;
+module.exports = RespuestaEstudianteEjercicio;

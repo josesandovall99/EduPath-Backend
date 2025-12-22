@@ -1,19 +1,18 @@
-import express from "express";
-import {
+const express = require("express");
+const {
   crearPersona,
   obtenerPersonas,
   obtenerPersonaPorId,
   actualizarPersona,
   eliminarPersona,
-} from "../controllers/persona.controller.js";
+} = require("../controllers/persona.controller");
 
 const router = express.Router();
 
-// CRUD Persona
-router.post("/", crearPersona);        // CREATE
-router.get("/", obtenerPersonas);       // READ ALL
-router.get("/:id", obtenerPersonaPorId); // READ ONE
-router.put("/:id", actualizarPersona);  // UPDATE
-router.delete("/:id", eliminarPersona); // DELETE
+router.post("/", crearPersona);
+router.get("/", obtenerPersonas);
+router.get("/:id", obtenerPersonaPorId);
+router.put("/:id", actualizarPersona);
+router.delete("/:id", eliminarPersona);
 
-export default router;
+module.exports = router;
