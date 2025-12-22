@@ -1,37 +1,33 @@
-const { DataTypes } = require("sequelize");
-const sequelize = require("../config/database");
-const Persona = require("./persona.model");
+module.exports = (sequelize, DataTypes) => {
+  const Administrador = sequelize.define(
+    "Administrador",
+    {
+      id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true,
+      },
 
-const Administrador = sequelize.define(
-  "Administrador",
-  {
-    id: {
-      type: DataTypes.BIGINT,
-      primaryKey: true,
-      references: {
-        model: Persona,
-        key: "id",
+      persona_id: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+      },
+
+      cargo: {
+        type: DataTypes.STRING,
+        allowNull: false,
+      },
+
+      nivelAcceso: {
+        type: DataTypes.STRING,
+        allowNull: false,
       },
     },
+    {
+      tableName: "administradores",
+      timestamps: true,
+    }
+  );
 
-    cargo: {
-      type: DataTypes.STRING,
-      allowNull: false,
-    },
-
-    nivelAcceso: {
-      type: DataTypes.STRING,
-      allowNull: false,
-    },
-  },
-  {
-    tableName: "administrador",
-    timestamps: false,
-  }
-);
-
-/* HERENCIA 1 A 1 */
-Persona.hasOne(Administrador, { foreignKey: "id" });
-Administrador.belongsTo(Persona, { foreignKey: "id" });
-
-module.exports = Administrador;
+  return Administrador;
+};

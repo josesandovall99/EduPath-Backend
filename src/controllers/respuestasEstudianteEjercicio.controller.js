@@ -1,5 +1,5 @@
-const RespuestaEstudianteEjercicio = require(
-  "../models/respuestaEstudianteEjercicio.model"
+const RespuestasEstudianteEjercicio = require(
+  "../models/respuestasEstudianteEjercicio.model"
 );
 
 /* CREAR RESPUESTA */
@@ -12,7 +12,7 @@ const crearRespuestaEjercicio = async (req, res) => {
       estado,
     } = req.body;
 
-    const nuevaRespuesta = await RespuestaEstudianteEjercicio.create({
+    const nuevaRespuesta = await RespuestasEstudianteEjercicio.create({
       respuesta,
       estudiante_id,
       ejercicio_id,
@@ -92,7 +92,7 @@ const eliminarRespuestaEjercicio = async (req, res) => {
     const { id } = req.params;
 
     const respuesta =
-      await RespuestaEstudianteEjercicio.findByPk(id);
+      await RespuestasEstudianteEjercicio.findByPk(id);
 
     if (!respuesta) {
       return res.status(404).json({

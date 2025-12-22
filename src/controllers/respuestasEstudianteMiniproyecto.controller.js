@@ -1,5 +1,5 @@
 const RespuestaEstudianteMiniproyecto = require(
-  "../models/respuestaEstudianteMiniproyecto.model"
+  "../models/respuestasEstudianteMiniproyecto.model"
 );
 
 /* CREAR RESPUESTA */

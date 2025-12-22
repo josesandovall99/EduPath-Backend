@@ -1,36 +1,39 @@
-const { DataTypes } = require("sequelize");
-const sequelize = require("../config/database");
+module.exports = (sequelize, DataTypes) => {
+  const Estudiante = sequelize.define(
+    "Estudiante",
+    {
+      id: {
+        type: DataTypes.INTEGER,
+        primaryKey: true,
+        autoIncrement: true,
+      },
 
-const Estudiante = sequelize.define(
-  "Estudiante",
-  {
-    id: {
-      type: DataTypes.BIGINT,
-      primaryKey: true,
-      references: {
-        model: Persona,
-        key: "id",
+      persona_id: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+      },
+
+      codigoEstudiantil: {
+        type: DataTypes.STRING,
+        allowNull: false,
+        unique: true,
+      },
+
+      semestre: {
+        type: DataTypes.INTEGER,
+        allowNull: false,
+      },
+
+      programa: {
+        type: DataTypes.STRING,
+        allowNull: false,
       },
     },
+    {
+      tableName: "estudiantes",
+      timestamps: true,
+    }
+  );
 
-    programa: {
-      type: DataTypes.STRING,
-      allowNull: false,
-    },
-
-    semestre: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-    },
-  },
-  {
-    tableName: "estudiante",
-    timestamps: false,
-  }
-);
-
-/* RELACIÓN 1 A 1 (HERENCIA) */
-Persona.hasOne(Estudiante, { foreignKey: "id" });
-Estudiante.belongsTo(Persona, { foreignKey: "id" });
-
-export default Estudiante;
+  return Estudiante;
+};

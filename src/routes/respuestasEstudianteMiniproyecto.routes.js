@@ -6,7 +6,7 @@ const {
   actualizarRespuestaMiniproyecto,
   eliminarRespuestaMiniproyecto,
 } = require(
-  "../controllers/respuestaEstudianteMiniproyecto.controller"
+  "../controllers/respuestasEstudianteMiniproyecto.controller"
 );
 
 const router = express.Router();

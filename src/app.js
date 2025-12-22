@@ -29,8 +29,8 @@ app.use('/ejercicios', require('./routes/ejercicio.routes'));
 app.use('/persona', require('./routes/persona.routes'));
 app.use('/estudiante', require('./routes/estudiante.routes'));
 app.use('/administrador', require('./routes/administrador.routes'));
-app.use('/respuestaEstudianteEjercicio', require('./routes/respuestaEstudianteEjercicio.routes'));
-app.use('/respuestaEstudianteMiniproyecto', require('./routes/respuestaEstudianteMiniproyecto.routes'));
+app.use('/respuestasEstudianteEjercicio', require('./routes/respuestasEstudianteEjercicio.routes'));
+app.use('/respuestasEstudianteMiniproyecto', require('./routes/respuestasEstudianteMiniproyecto.routes'));
 
 
 app.listen(3000, () => {

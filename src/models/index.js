@@ -9,8 +9,8 @@ const progreso = require('./progreso.model')(sequelize, DataTypes);
 const Persona = require('./persona.model')(sequelize, DataTypes);
 const Estudiante = require('./estudiante.model')(sequelize, DataTypes);
 const Administrador = require('./administrador.model')(sequelize, DataTypes);
-const RespuestaEstudianteMiniproyecto = require('./respuestaEstudianteMiniproyecto.model')(sequelize, DataTypes);
-const RespuestaEstudianteEjercicio = require('./respuestaEstudianteEjercicio.model')(sequelize, DataTypes);
+const RespuestaEstudianteMiniproyecto = require('./respuestasEstudianteMiniproyecto.model')(sequelize, DataTypes);
+const RespuestaEstudianteEjercicio = require('./respuestasEstudianteEjercicio.model')(sequelize, DataTypes);
 
 
 
