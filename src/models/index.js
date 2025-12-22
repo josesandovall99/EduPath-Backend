@@ -15,6 +15,10 @@ const RespuestaEstudianteEjercicio = require('./respuestasEstudianteEjercicio.mo
 
 
 const Area = require('./area.model')(sequelize, DataTypes);
+const Tema = require('./tema.models')(sequelize, DataTypes);
+const Subtema = require('./subtema.models')(sequelize, DataTypes);
+const Contenido = require('./contenido.models')(sequelize, DataTypes);
+const Ejercicio = require('./ejercicio.models')(sequelize, DataTypes);
 
 
 module.exports = {
@@ -29,5 +33,9 @@ module.exports = {
   Administrador,
   RespuestaEstudianteMiniproyecto,
   RespuestaEstudianteEjercicio,
-  Area
+  Area,
+  Tema,
+  Subtema,
+  Contenido,
+  Ejercicio
 };
