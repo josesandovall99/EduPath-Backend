@@ -14,7 +14,7 @@ const RespuestaEstudianteEjercicio = require('./respuestasEstudianteEjercicio.mo
 
 
 
-const area = require('./area.model')(sequelize, DataTypes);
+const Area = require('./area.model')(sequelize, DataTypes);
 
 
 module.exports = {
@@ -29,5 +29,5 @@ module.exports = {
   Administrador,
   RespuestaEstudianteMiniproyecto,
   RespuestaEstudianteEjercicio,
-  area
+  Area
 };
