@@ -20,6 +20,11 @@ app.use('/tipo-actividades', require('./routes/tipoactividad.routes'));
 app.use('/actividades', require('./routes/actividad.routes'));
 app.use('/progresos', require('./routes/progreso.routes'));
 
+app.use('/areas', require('./routes/area.routes'));
+app.use('/temas', require('./routes/tema.routes'));
+app.use('/subtemas', require('./routes/subtema.routes'));
+app.use('/contenidos', require('./routes/contenido.routes'));
+app.use('/ejercicios', require('./routes/ejercicio.routes'));
 
 
 app.listen(3000, () => {
