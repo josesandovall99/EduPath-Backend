@@ -50,6 +50,15 @@ Ejercicio.belongsTo(Actividad, {
   foreignKey: 'id'
 });
 
+// --- RELACIÓN: Miniproyecto <-> Area (N a 1) ---
+// ESTO ES LO QUE FALTABA PARA TU ERROR
+Miniproyecto.belongsTo(Area, {
+  foreignKey: 'area_id'
+});
+Area.hasMany(Miniproyecto, {
+  foreignKey: 'area_id'
+});
+
 // --- Persona <-> Estudiante (1 a 1) ---
 Persona.hasOne(Estudiante, {
   foreignKey: "id",
@@ -74,6 +83,10 @@ Tema.belongsTo(Area, { foreignKey: 'area_id' });
 
 Tema.hasMany(Subtema, { foreignKey: 'tema_id' });
 Subtema.belongsTo(Tema, { foreignKey: 'tema_id' });
+
+// Relación de Ejercicio con Subtema (Si aplica en tu lógica)
+Ejercicio.belongsTo(Subtema, { foreignKey: 'subtema_id' });
+Subtema.hasMany(Ejercicio, { foreignKey: 'subtema_id' });
 
 
 
