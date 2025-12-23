@@ -1,17 +1,38 @@
 module.exports = (sequelize, DataTypes) => {
-  return sequelize.define('Actividad', {
+  const Actividad = sequelize.define('Actividad', {
     id: {
       type: DataTypes.BIGINT,
       primaryKey: true,
       autoIncrement: true
     },
-    titulo: DataTypes.TEXT,
-    descripcion: DataTypes.TEXT,
-    nivel_dificultad: DataTypes.TEXT,
-    fecha_creacion: DataTypes.DATE,
-    tipo_actividad_id: DataTypes.BIGINT
+    titulo: {
+      type: DataTypes.TEXT
+    },
+    descripcion: {
+      type: DataTypes.TEXT
+    },
+    nivel_dificultad: {
+      type: DataTypes.TEXT
+    },
+    fecha_creacion: {
+      type: DataTypes.DATE
+    },
+    tipo_actividad_id: {
+      type: DataTypes.BIGINT,
+      allowNull: false // Recomendado para validar integridad
+    }
   }, {
     tableName: 'actividad',
     timestamps: false
   });
+
+  // Agregamos el método associate
+  Actividad.associate = (models) => {
+    Actividad.belongsTo(models.TipoActividad, {
+      foreignKey: 'tipo_actividad_id',
+      as: 'tipo'
+    });
+  };
+
+  return Actividad;
 };

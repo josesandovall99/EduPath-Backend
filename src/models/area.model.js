@@ -18,10 +18,24 @@ module.exports = (sequelize, DataTypes) => {
     timestamps: false
   });
 
-  Area.associate = models => {
-    Area.hasMany(models.Tema, { foreignKey: 'area_id' });
-    Area.hasMany(models.Chatbot, { foreignKey: 'area_id' });
-    Area.hasMany(models.Miniproyecto, { foreignKey: 'area_id' });
+  // Método para centralizar las relaciones salientes de Area
+  Area.associate = (models) => {
+    // Relación con Temas
+    Area.hasMany(models.Tema, { 
+      foreignKey: 'area_id' 
+    });
+
+    // Relación con Chatbots (si existe el modelo)
+    if (models.Chatbot) {
+      Area.hasMany(models.Chatbot, { 
+        foreignKey: 'area_id' 
+      });
+    }
+
+    // Relación con Miniproyecto (La que movimos del index)
+    Area.hasMany(models.Miniproyecto, { 
+      foreignKey: 'area_id' 
+    });
   };
 
   return Area;

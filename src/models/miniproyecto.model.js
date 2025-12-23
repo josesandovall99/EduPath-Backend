@@ -3,7 +3,7 @@ module.exports = (sequelize, DataTypes) => {
         id: {
             type: DataTypes.BIGINT,
             primaryKey: true,
-            // SE CAMBIA A FALSE: El ID vendrá desde el modelo Actividad
+            // Importante: autoIncrement false porque hereda el ID de Actividad
             autoIncrement: false 
         },
         area_id: {
@@ -20,6 +20,13 @@ module.exports = (sequelize, DataTypes) => {
         tableName: 'miniproyecto',
         timestamps: false
     });
+
+    // Añadimos la asociación con Area
+    Miniproyecto.associate = (models) => {
+        Miniproyecto.belongsTo(models.Area, {
+            foreignKey: 'area_id'
+        });
+    };
 
     return Miniproyecto;
 };
