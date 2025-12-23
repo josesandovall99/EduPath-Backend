@@ -26,23 +26,24 @@ const Ejercicio = require('./ejercicio.models')(sequelize, DataTypes);
 
 // Persona <-> Estudiante (1 a 1)
 Persona.hasOne(Estudiante, {
-  foreignKey: "id",
+  foreignKey: "persona_id",
   as: "estudiante",
 });
 
 Estudiante.belongsTo(Persona, {
-  foreignKey: "id",
+  foreignKey: "persona_id",
   as: "persona",
 });
 
+
 // Persona <-> Administrador (1 a 1)
 Persona.hasOne(Administrador, {
-  foreignKey: "id",
+  foreignKey: "persona_id",
   as: "administrador",
 });
 
 Administrador.belongsTo(Persona, {
-  foreignKey: "id",
+  foreignKey: "persona_id",
   as: "persona",
 });
 
