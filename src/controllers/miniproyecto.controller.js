@@ -1,52 +1,85 @@
 const db = require('../models');
-const { Actividad, Miniproyecto, TipoActividad, sequelize } = db;
+// Añadimos Area a la desestructuración para poder validar su existencia
+const { Actividad, Miniproyecto, TipoActividad, Area, sequelize } = db;
 
 exports.create = async (req, res) => {
-  const t = await sequelize.transaction();
+  const { tipo_actividad_id, area_id } = req.body;
 
   try {
-    // 1. Crear Actividad (Padre)
-    const nuevaActividad = await Actividad.create({
-      titulo: req.body.titulo,
-      descripcion: req.body.descripcion,
-      nivel_dificultad: req.body.nivel_dificultad,
-      fecha_creacion: req.body.fecha_creacion || new Date(),
-      tipo_actividad_id: req.body.tipo_actividad_id
-    }, { transaction: t });
+    // 1. VALIDACIÓN: Verificar que los IDs de las llaves foráneas existan realmente
+    const [tipoExiste, areaExiste] = await Promise.all([
+      TipoActividad.findByPk(tipo_actividad_id),
+      Area.findByPk(area_id)
+    ]);
 
-    // 2. Crear Miniproyecto (Hijo) heredando el ID
-    const nuevoMiniproyecto = await Miniproyecto.create({
-      id: nuevaActividad.id, 
-      area_id: req.body.area_id,
-      entregable: req.body.entregable,
-      respuesta_miniproyecto: req.body.respuesta_miniproyecto
-    }, { transaction: t });
+    if (!tipoExiste) {
+      return res.status(400).json({ 
+        error: `Validación fallida: El tipo_actividad_id (${tipo_actividad_id}) no existe en la tabla tipo_actividad.` 
+      });
+    }
 
-    await t.commit();
+    if (!areaExiste) {
+      return res.status(400).json({ 
+        error: `Validación fallida: El area_id (${area_id}) no existe en la tabla area.` 
+      });
+    }
 
-    res.status(201).json({
-      message: "Miniproyecto y Actividad creados exitosamente",
-      data: {
-        id: nuevaActividad.id,
-        ...nuevaActividad.get({ plain: true }),
-        ...nuevoMiniproyecto.get({ plain: true })
-      }
-    });
+    // 2. Si las validaciones pasan, procedemos con la Transacción
+    const t = await sequelize.transaction();
+
+    try {
+      // Crear Actividad (Padre)
+      const nuevaActividad = await Actividad.create({
+        titulo: req.body.titulo,
+        descripcion: req.body.descripcion,
+        nivel_dificultad: req.body.nivel_dificultad,
+        fecha_creacion: req.body.fecha_creacion || new Date(),
+        tipo_actividad_id: tipo_actividad_id
+      }, { transaction: t });
+
+      // Crear Miniproyecto (Hijo)
+      const nuevoMiniproyecto = await Miniproyecto.create({
+        id: nuevaActividad.id, 
+        area_id: area_id,
+        entregable: req.body.entregable,
+        respuesta_miniproyecto: req.body.respuesta_miniproyecto
+      }, { transaction: t });
+
+      await t.commit();
+
+      res.status(201).json({
+        message: "Miniproyecto y Actividad creados exitosamente",
+        data: {
+          id: nuevaActividad.id,
+          ...nuevaActividad.get({ plain: true }),
+          ...nuevoMiniproyecto.get({ plain: true })
+        }
+      });
+
+    } catch (err) {
+      // Si falla algo en la inserción, deshacemos todo
+      await t.rollback();
+      throw err; 
+    }
 
   } catch (err) {
-    await t.rollback();
-    res.status(500).json({ error: "Error en la creación: " + err.message });
+    res.status(500).json({ error: "Error interno: " + err.message });
   }
 };
 
 exports.findAll = async (req, res) => {
   try {
     const data = await Miniproyecto.findAll({
-      include: [{ 
-        model: Actividad,
-        // Traemos también el nombre del Tipo de Actividad (Anidado)
-        include: [{ model: TipoActividad, as: 'tipo' }] 
-      }] 
+      // Limpieza: Excluimos el ID redundante del área porque ya traeremos el modelo Area
+      attributes: { exclude: ['area_id'] },
+      include: [
+        { model: Area },
+        { 
+          model: Actividad,
+          attributes: { exclude: ['tipo_actividad_id'] },
+          include: [{ model: TipoActividad, as: 'tipo' }] 
+        }
+      ] 
     });
     res.json(data);
   } catch (err) {
@@ -57,10 +90,15 @@ exports.findAll = async (req, res) => {
 exports.findOne = async (req, res) => {
   try {
     const data = await Miniproyecto.findByPk(req.params.id, {
-      include: [{ 
-        model: Actividad,
-        include: [{ model: TipoActividad, as: 'tipo' }]
-      }]
+      attributes: { exclude: ['area_id'] },
+      include: [
+        { model: Area },
+        { 
+          model: Actividad,
+          attributes: { exclude: ['tipo_actividad_id'] },
+          include: [{ model: TipoActividad, as: 'tipo' }]
+        }
+      ]
     });
     if (!data) return res.status(404).json({ message: "Miniproyecto no encontrado" });
     res.json(data);
@@ -72,19 +110,11 @@ exports.findOne = async (req, res) => {
 exports.update = async (req, res) => {
   const t = await sequelize.transaction();
   try {
-    // Actualizamos Actividad
-    await Actividad.update(req.body, { 
-      where: { id: req.params.id }, 
-      transaction: t 
-    });
-    // Actualizamos Miniproyecto
-    await Miniproyecto.update(req.body, { 
-      where: { id: req.params.id }, 
-      transaction: t 
-    });
-
+    // Nota: Aquí también podrías agregar validaciones de existencia si cambian los IDs
+    await Actividad.update(req.body, { where: { id: req.params.id }, transaction: t });
+    await Miniproyecto.update(req.body, { where: { id: req.params.id }, transaction: t });
     await t.commit();
-    res.json({ message: 'Registro actualizado correctamente en ambas tablas' });
+    res.json({ message: 'Registro actualizado correctamente' });
   } catch (err) {
     await t.rollback();
     res.status(500).json({ error: err.message });
@@ -93,7 +123,6 @@ exports.update = async (req, res) => {
 
 exports.delete = async (req, res) => {
   try {
-    // ON DELETE CASCADE en la BD se encarga del hijo al borrar al padre
     const deleted = await Actividad.destroy({ where: { id: req.params.id } });
     if (deleted === 0) return res.status(404).json({ message: "Registro no encontrado" });
     res.json({ message: 'Miniproyecto y Actividad eliminados correctamente' });
