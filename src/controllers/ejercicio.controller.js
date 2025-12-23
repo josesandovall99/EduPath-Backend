@@ -40,13 +40,13 @@ exports.createEjercicio = async (req, res) => {
   }
 };
 
-// Listar ejercicios con su actividad
+// Listar ejercicios con su actividad y subtema
 exports.getEjercicios = async (req, res) => {
   try {
     const ejercicios = await Ejercicio.findAll({
       include: [
-        { model: Actividad, as: 'detallesEjercicio' }, // alias definido en index.js
-        { model: Subtema } // opcional: incluir también el subtema
+        { model: Actividad, as: 'detallesEjercicio' }, // alias consistente
+        { model: Subtema }
       ]
     });
     res.json(ejercicios);
@@ -88,8 +88,8 @@ exports.updateEjercicio = async (req, res) => {
     }
 
     // Validar subtema si se envía
-    if (req.body.subtema_id) {
-      const subtemaExistente = await Subtema.findByPk(req.body.subtema_id);
+    if (req.body.ejercicio?.subtema_id) {
+      const subtemaExistente = await Subtema.findByPk(req.body.ejercicio.subtema_id);
       if (!subtemaExistente) {
         await t.rollback();
         return res.status(400).json({ message: "El subtema especificado no existe" });

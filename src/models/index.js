@@ -41,14 +41,17 @@ models.Miniproyecto.belongsTo(models.Actividad, {
   foreignKey: 'id'
 });
 
-// --- HERENCIA: Actividad <-> Ejercicio (1 a 1 por ID) ---
+// --- HERENCIA: Actividad <-> Ejercicio (1 a 1) ---
 models.Actividad.hasOne(models.Ejercicio, {
   foreignKey: 'id',
   as: 'detallesEjercicio'
 });
 models.Ejercicio.belongsTo(models.Actividad, {
-  foreignKey: 'id'
+  foreignKey: 'id',
+  as: 'detallesEjercicio'   // alias igual en ambos lados
 });
+
+
 
 // Persona <-> Estudiante (1 a 1)
 models.Persona.hasOne(models.Estudiante, {
