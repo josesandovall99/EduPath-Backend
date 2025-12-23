@@ -1,4 +1,4 @@
-const { RespuestaEstudianteMiniproyecto } = require("../models");
+const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto } = require("../models");
 
 /* =========================
    CREAR RESPUESTA
@@ -6,6 +6,22 @@ const { RespuestaEstudianteMiniproyecto } = require("../models");
 const crearRespuestaMiniproyecto = async (req, res) => {
   try {
     const { respuesta, estudiante_id, miniproyecto_id, estado } = req.body;
+
+    // Validar existencia de Estudiante
+    const estudiante = await Estudiante.findByPk(estudiante_id);
+    if (!estudiante) {
+      return res.status(400).json({
+        mensaje: `No existe un estudiante con id ${estudiante_id}`,
+      });
+    }
+
+    // Validar existencia de Miniproyecto
+    const miniproyecto = await Miniproyecto.findByPk(miniproyecto_id);
+    if (!miniproyecto) {
+      return res.status(400).json({
+        mensaje: `No existe un miniproyecto con id ${miniproyecto_id}`,
+      });
+    }
 
     const nuevaRespuesta = await RespuestaEstudianteMiniproyecto.create({
       respuesta,
@@ -28,7 +44,12 @@ const crearRespuestaMiniproyecto = async (req, res) => {
 ========================= */
 const obtenerRespuestasMiniproyecto = async (req, res) => {
   try {
-    const respuestas = await RespuestaEstudianteMiniproyecto.findAll();
+    const respuestas = await RespuestaEstudianteMiniproyecto.findAll({
+      include: [
+        { model: Estudiante, as: "estudiante" },
+        { model: Miniproyecto, as: "miniproyecto" },
+      ],
+    });
     res.json(respuestas);
   } catch (error) {
     res.status(500).json({
@@ -45,7 +66,12 @@ const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
+    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id, {
+      include: [
+        { model: Estudiante, as: "estudiante" },
+        { model: Miniproyecto, as: "miniproyecto" },
+      ],
+    });
 
     if (!respuesta) {
       return res.status(404).json({
@@ -68,13 +94,32 @@ const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
 const actualizarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
+    const { estudiante_id, miniproyecto_id } = req.body;
 
     const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
-
     if (!respuesta) {
       return res.status(404).json({
         mensaje: "Respuesta de miniproyecto no encontrada",
       });
+    }
+
+    // Validar llaves foráneas si vienen en el body
+    if (estudiante_id) {
+      const estudiante = await Estudiante.findByPk(estudiante_id);
+      if (!estudiante) {
+        return res.status(400).json({
+          mensaje: `No existe un estudiante con id ${estudiante_id}`,
+        });
+      }
+    }
+
+    if (miniproyecto_id) {
+      const miniproyecto = await Miniproyecto.findByPk(miniproyecto_id);
+      if (!miniproyecto) {
+        return res.status(400).json({
+          mensaje: `No existe un miniproyecto con id ${miniproyecto_id}`,
+        });
+      }
     }
 
     await respuesta.update(req.body);
@@ -99,7 +144,6 @@ const eliminarRespuestaMiniproyecto = async (req, res) => {
     const { id } = req.params;
 
     const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
-
     if (!respuesta) {
       return res.status(404).json({
         mensaje: "Respuesta de miniproyecto no encontrada",
@@ -118,6 +162,29 @@ const eliminarRespuestaMiniproyecto = async (req, res) => {
     });
   }
 };
+
+
+
+Estudiante.hasMany(RespuestaEstudianteMiniproyecto, {
+  foreignKey: "estudiante_id",
+  as: "respuestasMiniproyecto",
+});
+
+RespuestaEstudianteMiniproyecto.belongsTo(Estudiante, {
+  foreignKey: "estudiante_id",
+  as: "estudiante",
+});
+
+Miniproyecto.hasMany(RespuestaEstudianteMiniproyecto, {
+  foreignKey: "miniproyecto_id",
+  as: "respuestasEstudiante",
+});
+
+RespuestaEstudianteMiniproyecto.belongsTo(Miniproyecto, {
+  foreignKey: "miniproyecto_id",
+  as: "miniproyecto",
+});
+
 
 module.exports = {
   crearRespuestaMiniproyecto,

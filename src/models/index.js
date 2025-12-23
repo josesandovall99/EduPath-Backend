@@ -50,23 +50,28 @@ models.Ejercicio.belongsTo(models.Actividad, {
   foreignKey: 'id'
 });
 
-// --- HERENCIA: Persona <-> Estudiante (1 a 1 por ID) ---
+// Persona <-> Estudiante (1 a 1)
 models.Persona.hasOne(models.Estudiante, {
-  foreignKey: "id",
-  as: "perfilEstudiante",
-});
-models.Estudiante.belongsTo(models.Persona, {
-  foreignKey: "id",
+  foreignKey: "persona_id",
+  as: "estudiante",
 });
 
-// --- HERENCIA: Persona <-> Administrador (1 a 1 por ID) ---
+models.Estudiante.belongsTo(models.Persona, {
+  foreignKey: "persona_id",
+  as: "persona",
+});
+
+// Persona <-> Administrador (1 a 1)
 models.Persona.hasOne(models.Administrador, {
-  foreignKey: "id",
-  as: "perfilAdmin",
+  foreignKey: "persona_id",
+  as: "administrador",
 });
+
 models.Administrador.belongsTo(models.Persona, {
-  foreignKey: "id",
+  foreignKey: "persona_id",
+  as: "persona",
 });
+
 
 // --- Estructura Académica Restante (Si aún no las has movido a sus modelos) ---
 models.Tema.belongsTo(models.Area, { foreignKey: 'area_id' });
