@@ -1,11 +1,10 @@
-
 module.exports = (sequelize, DataTypes) => {
-
     const Miniproyecto = sequelize.define('Miniproyecto', {
         id: {
             type: DataTypes.BIGINT,
             primaryKey: true,
-            autoIncrement: true
+            // SE CAMBIA A FALSE: El ID vendrá desde el modelo Actividad
+            autoIncrement: false 
         },
         area_id: {
             type: DataTypes.BIGINT,
