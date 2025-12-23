@@ -3,11 +3,7 @@ module.exports = (sequelize, DataTypes) => {
     id: {
       type: DataTypes.BIGINT,
       primaryKey: true,
-      autoIncrement: true
-    },
-    actividad_id: {
-      type: DataTypes.BIGINT,
-      allowNull: false
+      allowNull: false // será el mismo id de Actividad
     },
     subtema_id: {
       type: DataTypes.BIGINT,
@@ -27,11 +23,8 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Ejercicio.associate = models => {
-    Ejercicio.belongsTo(models.Actividad, { foreignKey: 'actividad_id' });
+    // Aquí NO pongas foreignKey: 'id' otra vez
     Ejercicio.belongsTo(models.Subtema, { foreignKey: 'subtema_id' });
-    Ejercicio.hasMany(models.RespuestaEstudianteEjercicio, { foreignKey: 'ejercicio_id' });
-    Ejercicio.hasMany(models.Evaluacion, { foreignKey: 'ejercicio_id' });
-    Ejercicio.hasMany(models.Progreso, { foreignKey: 'ejercicio_id' });
   };
 
   return Ejercicio;
