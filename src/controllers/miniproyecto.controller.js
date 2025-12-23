@@ -1,76 +1,92 @@
 const db = require('../models');
-// Añadimos Area a la desestructuración para poder validar su existencia
 const { Actividad, Miniproyecto, TipoActividad, Area, sequelize } = db;
 
+// Función auxiliar para validar FKs (Evita repetir código)
+const validarRelaciones = async (tipo_id, area_id) => {
+  if (tipo_id) {
+    const existe = await TipoActividad.findByPk(tipo_id);
+    if (!existe) throw new Error(`El tipo_actividad_id (${tipo_id}) no existe.`);
+  }
+  if (area_id) {
+    const existe = await Area.findByPk(area_id);
+    if (!existe) throw new Error(`El area_id (${area_id}) no existe.`);
+  }
+};
+
 exports.create = async (req, res) => {
-  const { tipo_actividad_id, area_id } = req.body;
-
   try {
-    // 1. VALIDACIÓN: Verificar que los IDs de las llaves foráneas existan realmente
-    const [tipoExiste, areaExiste] = await Promise.all([
-      TipoActividad.findByPk(tipo_actividad_id),
-      Area.findByPk(area_id)
-    ]);
+    // 1. Validar existencia de FKs antes de iniciar
+    await validarRelaciones(req.body.tipo_actividad_id, req.body.area_id);
 
-    if (!tipoExiste) {
-      return res.status(400).json({ 
-        error: `Validación fallida: El tipo_actividad_id (${tipo_actividad_id}) no existe en la tabla tipo_actividad.` 
-      });
-    }
-
-    if (!areaExiste) {
-      return res.status(400).json({ 
-        error: `Validación fallida: El area_id (${area_id}) no existe en la tabla area.` 
-      });
-    }
-
-    // 2. Si las validaciones pasan, procedemos con la Transacción
     const t = await sequelize.transaction();
-
     try {
-      // Crear Actividad (Padre)
       const nuevaActividad = await Actividad.create({
         titulo: req.body.titulo,
         descripcion: req.body.descripcion,
         nivel_dificultad: req.body.nivel_dificultad,
         fecha_creacion: req.body.fecha_creacion || new Date(),
-        tipo_actividad_id: tipo_actividad_id
+        tipo_actividad_id: req.body.tipo_actividad_id
       }, { transaction: t });
 
-      // Crear Miniproyecto (Hijo)
       const nuevoMiniproyecto = await Miniproyecto.create({
-        id: nuevaActividad.id, 
-        area_id: area_id,
+        id: nuevaActividad.id,
+        area_id: req.body.area_id,
         entregable: req.body.entregable,
         respuesta_miniproyecto: req.body.respuesta_miniproyecto
       }, { transaction: t });
 
       await t.commit();
-
       res.status(201).json({
-        message: "Miniproyecto y Actividad creados exitosamente",
-        data: {
-          id: nuevaActividad.id,
-          ...nuevaActividad.get({ plain: true }),
-          ...nuevoMiniproyecto.get({ plain: true })
-        }
+        message: "Creado exitosamente",
+        data: { ...nuevaActividad.toJSON(), ...nuevoMiniproyecto.toJSON() }
       });
-
     } catch (err) {
-      // Si falla algo en la inserción, deshacemos todo
       await t.rollback();
-      throw err; 
+      throw err;
     }
-
   } catch (err) {
-    res.status(500).json({ error: "Error interno: " + err.message });
+    res.status(400).json({ error: err.message });
   }
 };
+
+exports.update = async (req, res) => {
+  try {
+    // 1. Validar FKs solo si vienen en el body
+    await validarRelaciones(req.body.tipo_actividad_id, req.body.area_id);
+
+    // 2. Verificar si el registro existe antes de editar
+    const miniproyecto = await Miniproyecto.findByPk(req.params.id);
+    if (!miniproyecto) return res.status(404).json({ message: "Miniproyecto no encontrado" });
+
+    const t = await sequelize.transaction();
+    try {
+      // Actualizar tabla padre
+      await Actividad.update(req.body, { 
+        where: { id: req.params.id }, 
+        transaction: t 
+      });
+      // Actualizar tabla hija
+      await Miniproyecto.update(req.body, { 
+        where: { id: req.params.id }, 
+        transaction: t 
+      });
+
+      await t.commit();
+      res.json({ message: 'Actualizado correctamente' });
+    } catch (err) {
+      await t.rollback();
+      throw err;
+    }
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+};
+
+// ... findAll, findOne y delete se mantienen igual ...
 
 exports.findAll = async (req, res) => {
   try {
     const data = await Miniproyecto.findAll({
-      // Limpieza: Excluimos el ID redundante del área porque ya traeremos el modelo Area
       attributes: { exclude: ['area_id'] },
       include: [
         { model: Area },
@@ -107,25 +123,11 @@ exports.findOne = async (req, res) => {
   }
 };
 
-exports.update = async (req, res) => {
-  const t = await sequelize.transaction();
-  try {
-    // Nota: Aquí también podrías agregar validaciones de existencia si cambian los IDs
-    await Actividad.update(req.body, { where: { id: req.params.id }, transaction: t });
-    await Miniproyecto.update(req.body, { where: { id: req.params.id }, transaction: t });
-    await t.commit();
-    res.json({ message: 'Registro actualizado correctamente' });
-  } catch (err) {
-    await t.rollback();
-    res.status(500).json({ error: err.message });
-  }
-};
-
 exports.delete = async (req, res) => {
   try {
     const deleted = await Actividad.destroy({ where: { id: req.params.id } });
     if (deleted === 0) return res.status(404).json({ message: "Registro no encontrado" });
-    res.json({ message: 'Miniproyecto y Actividad eliminados correctamente' });
+    res.json({ message: 'Eliminado correctamente' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
