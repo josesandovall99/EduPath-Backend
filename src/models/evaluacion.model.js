@@ -1,19 +1,48 @@
 module.exports = (sequelize, DataTypes) => {
-  return sequelize.define('Evaluacion', {
+  const Evaluacion = sequelize.define('Evaluacion', {
     id: {
       type: DataTypes.BIGINT,
       primaryKey: true,
       autoIncrement: true
     },
-    calificacion: DataTypes.NUMERIC,
-    retroalimentacion: DataTypes.TEXT,
-    estudiante_id: DataTypes.BIGINT,
-    ejercicio_id: DataTypes.BIGINT,
-    miniproyecto_id: DataTypes.BIGINT,
-    estado: DataTypes.TEXT,
-    fecha_evaluacion: DataTypes.DATE
+    calificacion: {
+      type: DataTypes.NUMERIC,
+      allowNull: false
+    },
+    retroalimentacion: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    estudiante_id: {
+      type: DataTypes.BIGINT,
+      allowNull: false
+    },
+    ejercicio_id: {
+      type: DataTypes.BIGINT,
+      allowNull: true
+    },
+    miniproyecto_id: {
+      type: DataTypes.BIGINT,
+      allowNull: true
+    },
+    estado: {
+      type: DataTypes.TEXT,
+      allowNull: false
+    },
+    fecha_evaluacion: {
+      type: DataTypes.DATE, // En Sequelize, DATE maneja TIMESTAMP
+      defaultValue: DataTypes.NOW
+    }
   }, {
     tableName: 'evaluacion',
     timestamps: false
   });
+
+  Evaluacion.associate = (models) => {
+    Evaluacion.belongsTo(models.Estudiante, { foreignKey: 'estudiante_id' });
+    Evaluacion.belongsTo(models.Ejercicio, { foreignKey: 'ejercicio_id' });
+    Evaluacion.belongsTo(models.Miniproyecto, { foreignKey: 'miniproyecto_id' });
+  };
+
+  return Evaluacion;
 };
