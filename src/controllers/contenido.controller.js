@@ -95,3 +95,26 @@ exports.deleteContenido = async (req, res) => {
     res.status(500).json({ message: "Error al eliminar el contenido", error });
   }
 };
+
+// Obtener contenidos por subtema_id
+exports.getContenidosPorSubtema = async (req, res) => {
+  try {
+    const { subtemaId } = req.params;
+
+    // Validar que el subtema exista
+    const subtema = await Subtema.findByPk(subtemaId);
+    if (!subtema) {
+      return res.status(404).json({ message: "Subtema no encontrado" });
+    }
+
+    // Buscar contenidos asociados al subtema
+    const contenidos = await Contenido.findAll({
+      where: { subtema_id: subtemaId }
+    });
+
+    res.json(contenidos);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener los contenidos por subtema", error });
+  }
+};
+
