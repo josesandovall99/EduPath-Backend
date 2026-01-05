@@ -4,57 +4,62 @@ const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio } = require("../mode
 const JUDGE0_URL = process.env.JUDGE0_URL;
 const JUDGE0_KEY = process.env.JUDGE0_KEY;
 
-/* =========================
-   CREAR RESPUESTA (Con Judge0)
-========================= */
+/* ============================================================
+   UTILIDADES DE CONVERSIÓN (Base64)
+============================================================ */
+// Convierte texto humano a Base64 para Judge0
+const codificar = (texto) => Buffer.from(texto || "").toString('base64');
+
+// Convierte Base64 de Judge0 a texto humano
+const decodificar = (base64) => Buffer.from(base64 || "", 'base64').toString('utf-8').trim();
+
+/* ============================================================
+   1. CREAR RESPUESTA (POST)
+============================================================ */
 const crearRespuestaEjercicio = async (req, res) => {
   try {
-    const { respuesta, estudiante_id, ejercicio_id, respuesta_esperada, idioma_id } = req.body;
+    // El frontend enviará "respuesta" como texto normal (ej: print("hola"))
+    const { respuesta, estudiante_id, ejercicio_id, lenguaje_id } = req.body;
 
-    // 1. Validaciones (Estudiante y Ejercicio) ... se mantienen igual ...
+    if (!respuesta || !estudiante_id || !ejercicio_id || !lenguaje_id) {
+      return res.status(400).json({ error: "Faltan campos obligatorios" });
+    }
 
-    // 2. Llamada a Judge0
+    const ejercicio = await Ejercicio.findByPk(ejercicio_id);
+    if (!ejercicio) {
+      return res.status(404).json({ error: "El ejercicio no existe" });
+    }
+
+    // --- CODIFICAMOS EL CÓDIGO ANTES DE ENVIAR ---
+    const codigoBase64 = codificar(respuesta);
+
     const response = await axios.post(`${JUDGE0_URL}/submissions?base64_encoded=true&wait=false`, {
-      source_code: respuesta,
-      language_id: idioma_id || 71,
+      source_code: codigoBase64,
+      language_id: lenguaje_id
     }, {
-      headers: { 
-        'x-rapidapi-key': JUDGE0_KEY,
-        'Content-Type': 'application/json'
-      }
+      headers: { 'x-rapidapi-key': JUDGE0_KEY }
     });
 
-    // AQUÍ SE DEFINE EL TOKEN
-    const token = response.data.token; 
-
-    // 3. Ahora sí, creamos el registro en la BD usando el token
-    // ... dentro del crearRespuestaEjercicio ...
-
-    const nuevaRespuesta = await RespuestaEstudianteEjercicio.create({
-      respuesta,
+    // Guardamos la respuesta original (texto plano) para que sea legible en nuestra DB
+    const nuevoIntento = await RespuestaEstudianteEjercicio.create({
+      respuesta: respuesta, 
       estudiante_id,
       ejercicio_id,
-      // respuesta_esperada, <--- COMENTA O BORRA ESTA LÍNEA
-      idioma_id: idioma_id || 71,
-      token: token, 
-      estado: "Processing",
-      calificacion: 0
+      lenguaje_id,
+      token: response.data.token,
+      estado: 'Processing'
     });
 
-    res.status(201).json(nuevaRespuesta);
-
+    res.status(201).json(nuevoIntento);
   } catch (error) {
-    // Si Axios falla, el error vendrá aquí
-    res.status(500).json({
-      mensaje: "Error al crear",
-      error: error.message
-    });
+    console.error("Error en crearRespuesta:", error.message);
+    res.status(500).json({ error: "Error al procesar con Judge0" });
   }
 };
 
-/* =========================
-   OBTENER RESULTADO JUDGE0 (Calificación)
-========================= */
+/* ============================================================
+   2. OBTENER RESULTADO (GET)
+============================================================ */
 const obtenerResultadoJudge0 = async (req, res) => {
   try {
     const { token } = req.params;
@@ -64,37 +69,36 @@ const obtenerResultadoJudge0 = async (req, res) => {
 
     const result = response.data;
 
-    // Si el proceso terminó (status id > 2)
-    if (result.status && result.status.id > 2) {
-      let nota = 0;
+    if (result.status && result.status.id >= 3) {
       const registro = await RespuestaEstudianteEjercicio.findOne({ where: { token } });
-      
-      if (result.stdout && registro && registro.respuesta_esperada) {
-        const salidaReal = Buffer.from(result.stdout, 'base64').toString('utf-8').trim();
-        const salidaEsperada = registro.respuesta_esperada.trim();
-        nota = (salidaReal === salidaEsperada) ? 100 : 0;
+
+      if (registro) {
+        // --- DECODIFICAMOS LA SALIDA DE CONSOLA (stdout) ---
+        const stdoutHumano = result.stdout ? decodificar(result.stdout) : "";
+        
+        // También decodificamos el error si existe (stderr)
+        const stderrHumano = result.stderr ? decodificar(result.stderr) : "";
+
+        await registro.update({
+          stdout: stdoutHumano,
+          estado: result.status.description
+        });
+
+        // Modificamos el objeto 'result' que devolvemos al front para que también sea legible
+        result.stdout = stdoutHumano;
+        result.stderr = stderrHumano;
+        result.compile_output = result.compile_output ? decodificar(result.compile_output) : null;
       }
-
-      await RespuestaEstudianteEjercicio.update({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        compile_output: result.compile_output,
-        estado: result.status.description,
-        calificacion: nota
-      }, { where: { token } });
-
-      result.calificacion_automatica = nota;
     }
-
     res.json(result);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al consultar Judge0", error: error.message });
+    res.status(500).json({ error: "Error al consultar token" });
   }
 };
 
-/* =========================
-   OBTENER TODAS
-========================= */
+/* ============================================================
+   CRUD RESTANTE
+============================================================ */
 const obtenerRespuestasEjercicio = async (req, res) => {
   try {
     const respuestas = await RespuestaEstudianteEjercicio.findAll({
@@ -105,13 +109,10 @@ const obtenerRespuestasEjercicio = async (req, res) => {
     });
     res.json(respuestas);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al obtener respuestas", error: error.message });
+    res.status(500).json({ error: error.message });
   }
 };
 
-/* =========================
-   OBTENER POR ID
-========================= */
 const obtenerRespuestaEjercicioPorId = async (req, res) => {
   try {
     const { id } = req.params;
@@ -121,17 +122,13 @@ const obtenerRespuestaEjercicioPorId = async (req, res) => {
         { model: Ejercicio, as: "ejercicio" },
       ],
     });
-
     if (!respuesta) return res.status(404).json({ mensaje: "No encontrada" });
     res.json(respuesta);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error", error: error.message });
+    res.status(500).json({ error: error.message });
   }
 };
 
-/* =========================
-   ACTUALIZAR
-========================= */
 const actualizarRespuestaEjercicio = async (req, res) => {
   try {
     const { id } = req.params;
@@ -141,13 +138,10 @@ const actualizarRespuestaEjercicio = async (req, res) => {
     await respuesta.update(req.body);
     res.json(respuesta);
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al actualizar", error: error.message });
+    res.status(500).json({ error: error.message });
   }
 };
 
-/* =========================
-   ELIMINAR
-========================= */
 const eliminarRespuestaEjercicio = async (req, res) => {
   try {
     const { id } = req.params;
@@ -157,15 +151,15 @@ const eliminarRespuestaEjercicio = async (req, res) => {
     await respuesta.destroy();
     res.json({ mensaje: "Eliminada correctamente" });
   } catch (error) {
-    res.status(500).json({ mensaje: "Error al eliminar", error: error.message });
+    res.status(500).json({ error: error.message });
   }
 };
 
 module.exports = {
   crearRespuestaEjercicio,
-  obtenerResultadoJudge0, // Asegúrate de agregar esta a tus rutas
+  obtenerResultadoJudge0,
   obtenerRespuestasEjercicio,
   obtenerRespuestaEjercicioPorId,
   actualizarRespuestaEjercicio,
-  eliminarRespuestaEjercicio,
+  eliminarRespuestaEjercicio
 };

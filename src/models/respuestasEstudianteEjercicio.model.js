@@ -5,20 +5,21 @@ module.exports = (sequelize, DataTypes) => {
       primaryKey: true,
       autoIncrement: true
     },
-    // RECTIFICADO: Usamos 'respuesta' para que coincida con la DB física
     respuesta: {
       type: DataTypes.TEXT,
       allowNull: false
     },
-    respuesta_esperada: {
+    token: {
+      type: DataTypes.STRING,
+      allowNull: true
+    },
+    stdout: {
       type: DataTypes.TEXT,
       allowNull: true
     },
-    // Dentro de tu archivo .model.js, busca idioma_id y cámbialo a esto:
-    idioma_id: {
-      type: DataTypes.INTEGER,
-      allowNull: true, // Lo ponemos en true para que no bloquee el insert si falla el nombre
-      field: 'idioma_id' // <--- Si en tu DB se llama diferente, cámbialo aquí
+    estado: {
+      type: DataTypes.STRING,
+      defaultValue: 'Processing'
     },
     estudiante_id: {
       type: DataTypes.INTEGER,
@@ -28,35 +29,16 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.INTEGER,
       allowNull: false
     },
-    token: {
-      type: DataTypes.STRING,
-      allowNull: true
-    },
-    estado: {
-      type: DataTypes.STRING,
-      defaultValue: 'Processing'
-    },
-    calificacion: {
+    // CAMBIO: De idioma_id a lenguaje_id
+    lenguaje_id: {
       type: DataTypes.INTEGER,
-      defaultValue: 0
-    },
-    // Campos para almacenar lo que devuelve Judge0
-    stdout: {
-      type: DataTypes.TEXT,
-      allowNull: true
-    },
-    stderr: {
-      type: DataTypes.TEXT,
-      allowNull: true
-    },
-    compile_output: {
-      type: DataTypes.TEXT,
-      allowNull: true
+      allowNull: false,
+      field: 'lenguaje_id' 
     }
   }, {
-    tableName: 'respuestas_estudiante_ejercicio', // Nombre exacto de la tabla en Render
+    tableName: 'respuestas_estudiante_ejercicio', 
     timestamps: true,
-    underscored: true // Esto ayuda si tus columnas usan created_at en lugar de createdAt
+    underscored: true 
   });
 
   return RespuestaEstudianteEjercicio;
