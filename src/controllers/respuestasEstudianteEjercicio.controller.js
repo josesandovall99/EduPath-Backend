@@ -1,5 +1,6 @@
 const axios = require('axios');
-const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio } = require("../models");
+const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio, Evaluacion } = require("../models");
+const { Op } = require('sequelize');
 
 const JUDGE0_URL = process.env.JUDGE0_URL;
 const JUDGE0_KEY = process.env.JUDGE0_KEY;
@@ -7,18 +8,18 @@ const JUDGE0_KEY = process.env.JUDGE0_KEY;
 /* ============================================================
    UTILIDADES DE CONVERSIÓN (Base64)
 ============================================================ */
-// Convierte texto humano a Base64 para Judge0
 const codificar = (texto) => Buffer.from(texto || "").toString('base64');
 
-// Convierte Base64 de Judge0 a texto humano
-const decodificar = (base64) => Buffer.from(base64 || "", 'base64').toString('utf-8').trim();
+const decodificar = (base64) => {
+    if (!base64) return "";
+    return Buffer.from(base64, 'base64').toString('utf-8').trim();
+};
 
 /* ============================================================
    1. CREAR RESPUESTA (POST)
 ============================================================ */
 const crearRespuestaEjercicio = async (req, res) => {
   try {
-    // El frontend enviará "respuesta" como texto normal (ej: print("hola"))
     const { respuesta, estudiante_id, ejercicio_id, lenguaje_id } = req.body;
 
     if (!respuesta || !estudiante_id || !ejercicio_id || !lenguaje_id) {
@@ -30,7 +31,6 @@ const crearRespuestaEjercicio = async (req, res) => {
       return res.status(404).json({ error: "El ejercicio no existe" });
     }
 
-    // --- CODIFICAMOS EL CÓDIGO ANTES DE ENVIAR ---
     const codigoBase64 = codificar(respuesta);
 
     const response = await axios.post(`${JUDGE0_URL}/submissions?base64_encoded=true&wait=false`, {
@@ -40,9 +40,8 @@ const crearRespuestaEjercicio = async (req, res) => {
       headers: { 'x-rapidapi-key': JUDGE0_KEY }
     });
 
-    // Guardamos la respuesta original (texto plano) para que sea legible en nuestra DB
     const nuevoIntento = await RespuestaEstudianteEjercicio.create({
-      respuesta: respuesta, 
+      respuesta,
       estudiante_id,
       ejercicio_id,
       lenguaje_id,
@@ -58,11 +57,12 @@ const crearRespuestaEjercicio = async (req, res) => {
 };
 
 /* ============================================================
-   2. OBTENER RESULTADO (GET)
+   2. OBTENER RESULTADO (GET) - Evaluación Automática
 ============================================================ */
 const obtenerResultadoJudge0 = async (req, res) => {
   try {
     const { token } = req.params;
+    
     const response = await axios.get(`${JUDGE0_URL}/submissions/${token}?base64_encoded=true`, {
       headers: { 'x-rapidapi-key': JUDGE0_KEY }
     });
@@ -70,29 +70,73 @@ const obtenerResultadoJudge0 = async (req, res) => {
     const result = response.data;
 
     if (result.status && result.status.id >= 3) {
-      const registro = await RespuestaEstudianteEjercicio.findOne({ where: { token } });
+      const registro = await RespuestaEstudianteEjercicio.findOne({
+        where: { token },
+        include: [{ model: Ejercicio, as: 'ejercicio' }]
+      });
 
       if (registro) {
-        // --- DECODIFICAMOS LA SALIDA DE CONSOLA (stdout) ---
         const stdoutHumano = result.stdout ? decodificar(result.stdout) : "";
-        
-        // También decodificamos el error si existe (stderr)
         const stderrHumano = result.stderr ? decodificar(result.stderr) : "";
 
+        // --- LÓGICA DE LIMPIEZA EXTREMA ---
+        // Eliminamos saltos de línea (\n, \r) y espacios en blanco accidentales
+        const limpiarCadena = (str) => {
+            return str ? str.toString().replace(/[\n\r]/g, "").trim() : "";
+        };
+
+        const esperado = limpiarCadena(registro.ejercicio?.resultado_ejercicio);
+        const obtenido = limpiarCadena(stdoutHumano);
+        
+        // Comparación técnica
+        const esCorrecto = (obtenido === esperado && obtenido !== "" && !result.stderr);
+
+        // 1. Actualizamos registro de respuesta
         await registro.update({
           stdout: stdoutHumano,
           estado: result.status.description
         });
 
-        // Modificamos el objeto 'result' que devolvemos al front para que también sea legible
+        // 2. Creamos evaluación si no existe para este token
+        const evaluacionExistente = await Evaluacion.findOne({ 
+          where: { retroalimentacion: { [Op.like]: `%${token}%` } } 
+        });
+
+        if (!evaluacionExistente) {
+          await Evaluacion.create({
+            calificacion: esCorrecto ? 5.0 : 0.0,
+            retroalimentacion: esCorrecto
+              ? `Aprobado (Token: ${token}). Coincide con: ${esperado}.`
+              : result.stderr 
+                ? `Error técnico (Token: ${token}).`
+                : `Incorrecto (Token: ${token}). Esperado: '${esperado}', Recibido: '${obtenido}'.`,
+            estudiante_id: registro.estudiante_id,
+            ejercicio_id: registro.ejercicio_id,
+            estado: esCorrecto ? 'Aprobado' : 'Reprobado',
+            fecha_evaluacion: new Date()
+          });
+        }
+
+        // --- DATOS PARA INSOMNIA ---
         result.stdout = stdoutHumano;
         result.stderr = stderrHumano;
-        result.compile_output = result.compile_output ? decodificar(result.compile_output) : null;
+        result.evaluacion_final = esCorrecto ? 'Aprobado' : 'Reprobado';
+        
+        // Objeto de depuración para entender por qué sale Reprobado
+        result.debug_validacion = {
+          esperado_db: esperado,
+          obtenido_judge0: obtenido,
+          longitud_esperado: esperado.length,
+          longitud_obtenido: obtenido.length,
+          son_identicos: (obtenido === esperado)
+        };
       }
     }
+    
     res.json(result);
   } catch (error) {
-    res.status(500).json({ error: "Error al consultar token" });
+    console.error("Error en obtenerResultado:", error);
+    res.status(500).json({ error: "Error al evaluar", detalle: error.message });
   }
 };
 
