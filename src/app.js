@@ -1,8 +1,11 @@
 const express = require('express');
+const cors = require('cors');
 const app = express();
 const sequelize = require('./config/database');
 const db = require('./models');
 
+// 👇 habilita CORS para permitir peticiones desde tu frontend
+app.use(cors({ origin: 'http://localhost:3000', methods: ['GET', 'POST', 'PUT', 'DELETE'], allowedHeaders: ['Content-Type'] }));
 
 app.use(express.json());
 
@@ -33,6 +36,10 @@ app.use('/respuestasEstudianteEjercicio', require('./routes/respuestasEstudiante
 app.use('/respuestasEstudianteMiniproyecto', require('./routes/respuestasEstudianteMiniproyecto.routes'));
 
 
-app.listen(3000, () => {
-    console.log('Servidor corriendo en el puerto 3000');
+//DIAGRAMAS
+app.use('/diagrams', require('./routes/diagram.routes'));
+
+
+app.listen(4000, () => {
+    console.log('Servidor corriendo en el puerto 4000');
 });
