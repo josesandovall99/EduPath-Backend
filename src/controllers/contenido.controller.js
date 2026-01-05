@@ -1,4 +1,4 @@
-const { Contenido, Tema, Subtema, Area } = require('../models');
+const { Contenido, Tema, Subtema, Area , Estudiante } = require('../models');
 
 // Crear un contenido con validación de tema_id y subtema_id
 exports.createContenido = async (req, res) => {
@@ -167,4 +167,68 @@ exports.getContenidosPorAreaNombre = async (req, res) => {
   }
 };
 
+// Obtener contenidos adaptados al perfil del estudiante según su semestre
+exports.adaptarContenidoPorPerfil = async (req, res) => {
+  try {
+    const { estudianteId } = req.params;
+
+    // Buscar al estudiante
+    const estudiante = await Estudiante.findByPk(estudianteId);
+    if (!estudiante) {
+      return res.status(404).json({ message: "Estudiante no encontrado" });
+    }
+
+    const semestre = estudiante.semestre;
+
+    // Determinar áreas permitidas según el semestre
+    let nombresAreas = [];
+
+    if (semestre >= 1 && semestre <= 4) {
+      nombresAreas = ["Fundamentos de programación"];
+    } else if (semestre >= 5 && semestre <= 6) {
+      nombresAreas = ["Fundamentos de programación", "Análisis de sistemas"];
+    } else if (semestre >= 7 && semestre <= 10) {
+      nombresAreas = ["Fundamentos de programación", "Análisis de sistemas", "ATC"];
+    } else {
+      return res.status(400).json({ message: "Semestre fuera de rango válido (1-10)" });
+    }
+
+    // Buscar las áreas por nombre
+    const areas = await Area.findAll({
+      where: { nombre: nombresAreas }
+    });
+
+    const areaIds = areas.map(area => area.id);
+
+    // Buscar los temas de esas áreas
+    const temas = await Tema.findAll({
+      where: { area_id: areaIds }
+    });
+
+    const temaIds = temas.map(tema => tema.id);
+
+    // Buscar los contenidos relacionados a esos temas
+    const contenidos = await Contenido.findAll({
+      where: { tema_id: temaIds },
+      include: [
+        { model: Tema },
+        { model: Subtema }
+      ]
+    });
+
+    res.json({
+      estudianteId,
+      semestre,
+      areas: nombresAreas,
+      totalContenidos: contenidos.length,
+      contenidos
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      message: "Error al adaptar los contenidos por perfil del estudiante",
+      error: error.message || error
+    });
+  }
+};
 
