@@ -9,6 +9,7 @@ router.get('/:id', contenidoController.getContenidoById);
 router.put('/:id', contenidoController.updateContenido);
 router.delete('/:id', contenidoController.deleteContenido);
 router.get('/subtema/:subtemaId', contenidoController.getContenidosPorSubtema);
+router.get('/categoria/:categoria', contenidoController.getContenidosPorCategoria);
 
 
 module.exports = router;

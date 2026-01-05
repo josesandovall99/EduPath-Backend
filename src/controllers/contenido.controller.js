@@ -118,3 +118,22 @@ exports.getContenidosPorSubtema = async (req, res) => {
   }
 };
 
+// Obtener contenidos por categoría (tipo)
+exports.getContenidosPorCategoria = async (req, res) => {
+  try {
+    const { categoria } = req.params;
+
+    const contenidos = await Contenido.findAll({
+      where: { tipo: categoria }
+    });
+
+    if (contenidos.length === 0) {
+      return res.status(404).json({ message: "No se encontraron contenidos para esta categoría" });
+    }
+
+    res.json(contenidos);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener los contenidos por categoría", error });
+  }
+};
+
