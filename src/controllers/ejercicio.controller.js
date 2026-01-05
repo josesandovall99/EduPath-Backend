@@ -137,3 +137,75 @@ exports.deleteEjercicio = async (req, res) => {
     res.status(500).json({ message: "Error al eliminar el ejercicio", error: error.message || error });
   }
 };
+
+
+
+// Resolver un ejercicio y verificar la respuesta
+exports.resolverEjercicio = async (req, res) => {
+  try {
+    const { ejercicioId } = req.params;
+    const { respuesta } = req.body;
+
+    // Buscar el ejercicio
+    const ejercicio = await Ejercicio.findByPk(ejercicioId);
+    if (!ejercicio) {
+      return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    // Función para normalizar texto
+    const normalizarTexto = (texto) =>
+      texto
+        .toLowerCase()              // ignorar mayúsculas/minúsculas
+        .trim()                     // quitar espacios al inicio y final
+        .replace(/\s+/g, " ");      // convertir múltiples espacios en uno solo
+
+    // Normalizar respuestas
+    const respuestaEstudiante = normalizarTexto(respuesta);
+    const respuestaCorrecta = normalizarTexto(ejercicio.resultado_ejercicio);
+
+    // Comparar respuestas
+    const esCorrecta = respuestaEstudiante === respuestaCorrecta;
+
+    // Preparar retroalimentación
+    const retroalimentacion = esCorrecta
+      ? "¡Respuesta correcta! Bien hecho."
+      : `Respuesta incorrecta. La respuesta correcta es: ${ejercicio.resultado_ejercicio}`;
+
+    res.json({
+      ejercicioId,
+      esCorrecta,
+      puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
+      retroalimentacion
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      message: "Error al resolver el ejercicio",
+      error: error.message || error
+    });
+  }
+};
+
+
+// Obtener la retroalimentación de un ejercicio
+exports.getRetroalimentacionEjercicio = async (req, res) => {
+  try {
+    const { ejercicioId } = req.params;
+
+    const ejercicio = await Ejercicio.findByPk(ejercicioId);
+    if (!ejercicio) {
+      return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    res.json({
+      ejercicioId,
+      retroalimentacion: `La respuesta correcta es: ${ejercicio.resultado_ejercicio}`
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Error al obtener la retroalimentación del ejercicio",
+      error: error.message || error
+    });
+  }
+};
+
