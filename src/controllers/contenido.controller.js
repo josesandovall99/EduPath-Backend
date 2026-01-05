@@ -1,4 +1,4 @@
-const { Contenido, Tema, Subtema } = require('../models');
+const { Contenido, Tema, Subtema, Area } = require('../models');
 
 // Crear un contenido con validación de tema_id y subtema_id
 exports.createContenido = async (req, res) => {
@@ -136,4 +136,35 @@ exports.getContenidosPorCategoria = async (req, res) => {
     res.status(500).json({ message: "Error al obtener los contenidos por categoría", error });
   }
 };
+
+// Obtener contenidos por nombre del área (ej. "ATC", "Fundamentos de programación")
+exports.getContenidosPorAreaNombre = async (req, res) => {
+  try {
+    const { nombreArea } = req.params;
+
+    // Buscar el área por nombre
+    const area = await Area.findOne({ where: { nombre: nombreArea } });
+    if (!area) {
+      return res.status(404).json({ message: "Área no encontrada" });
+    }
+
+    // Buscar temas de esa área
+    const temas = await Tema.findAll({ where: { area_id: area.id } });
+    const temaIds = temas.map(t => t.id);
+
+    // Buscar contenidos relacionados a esos temas
+    const contenidos = await Contenido.findAll({
+      where: { tema_id: temaIds },
+      include: [
+        { model: Tema },
+        { model: Subtema }
+      ]
+    });
+
+    res.json(contenidos);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener contenidos por área", error });
+  }
+};
+
 
