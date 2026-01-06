@@ -1,40 +1,359 @@
 const express = require('express');
 const router = express.Router();
 
-// Ruta para validar diagramas UML exportados desde el frontend
+/**
+ * Validador de Diagramas UML
+ * POST /diagrams/validate
+ */
 router.post('/validate', (req, res) => {
   const { diagram } = req.body;
+  
+  // Validar que existe el diagrama
   if (!diagram) {
-    return res.status(400).json({ message: 'No se recibió el diagrama' });
+    return res.status(400).json({
+      success: false,
+      message: 'No se recibió el diagrama',
+      errors: [{
+        type: 'MISSING_DIAGRAM',
+        severity: 'error',
+        message: 'El campo "diagram" es requerido'
+      }],
+      warnings: []
+    });
   }
 
   try {
-    // Filtrar solo las clases (rectángulos estándar)
-    const elements = diagram.cells.filter(cell => cell.type === 'standard.Rectangle');
+    const errors = [];
+    const warnings = [];
 
-    // Extraer el texto de cada clase
-    const clases = elements.map(el => el.attrs.label.text);
+    // Separar clases (rectangles) y relaciones (links)
+    const classes = diagram.cells?.filter(cell => cell.type === 'standard.Rectangle') || [];
+    const links = diagram.cells?.filter(cell => cell.type === 'standard.Link') || [];
 
-    // Validar cada clase
-    const errores = clases.map((texto) => {
-      const nombre = texto.split('\n')[0]; // primera línea = nombre de la clase
-      const tieneAtributo = texto.includes('-'); // atributos con prefijo "-"
-      const tieneMetodo = texto.includes('+');   // métodos con prefijo "+"
-
-      if (!tieneAtributo || !tieneMetodo) {
-        return `Clase "${nombre}" incompleta (atributo o método faltante)`;
-      }
-      return null;
-    }).filter(Boolean);
-
-    // Responder según validación
-    if (errores.length > 0) {
-      return res.json({ message: 'Errores encontrados:\n' + errores.join('\n') });
+    // Validar cantidad mínima de clases
+    if (classes.length < 2) {
+      errors.push({
+        type: 'EMPTY_DIAGRAM',
+        severity: 'error',
+        message: 'El diagrama debe contener al menos 2 clases',
+        details: `Se encontraron ${classes.length} clase(s)`
+      });
+      return res.status(400).json({
+        success: false,
+        message: `El diagrama contiene ${errors.length} error(es)`,
+        errors,
+        warnings
+      });
     }
 
-    return res.json({ message: `Diagrama válido: ${clases.length} clases encontradas.` });
+    // Validar clases
+    const classNames = new Map();
+    classes.forEach(classElement => {
+      const classId = classElement.id;
+      const labelText = classElement.attrs?.label?.text || '';
+
+      // Validar que tenga nombre
+      if (!labelText?.trim()) {
+        errors.push({
+          type: 'MISSING_CLASS_NAME',
+          severity: 'error',
+          message: 'Una clase no tiene nombre',
+          elementId: classId,
+          location: 'En la clase (elemento sin nombre)',
+          details: 'El label de la clase está vacío'
+        });
+        return;
+      }
+
+      const lines = labelText.split('\n').map(l => l.trim()).filter(l => l);
+      const className = lines[0];
+
+      // Validar nombre de clase
+      if (!className || className.length < 1 || className.length > 100 || !/^[a-zA-Z0-9_]+$/.test(className)) {
+        errors.push({
+          type: 'INVALID_CLASS_NAME',
+          severity: 'error',
+          message: `Nombre de clase inválido: "${className}"`,
+          elementId: classId,
+          location: `En la clase: ${className}`,
+          details: 'Debe tener entre 1 y 100 caracteres, solo letras, números y guiones bajos'
+        });
+        return;
+      }
+
+      // Validar nombres únicos
+      if (classNames.has(className)) {
+        errors.push({
+          type: 'DUPLICATE_CLASS_NAME',
+          severity: 'error',
+          message: `La clase '${className}' está duplicada`,
+          elementId: classId,
+          location: `En la clase: ${className}`,
+          details: `La clase '${className}' ya existe en el diagrama`
+        });
+      } else {
+        classNames.set(className, classId);
+      }
+
+      // Validar atributos y métodos
+      const classAttributes = new Map();
+      const classMethods = new Map();
+
+      for (let i = 1; i < lines.length; i++) {
+        const line = lines[i];
+        
+        if (!line || line.length === 0) continue;
+
+        const prefix = line[0];
+        if (prefix !== '+' && prefix !== '-') {
+          errors.push({
+            type: 'INVALID_ATTRIBUTE_FORMAT',
+            severity: 'error',
+            message: `Formato inválido en línea de clase '${className}'`,
+            elementId: classId,
+            lineNumber: i + 1,
+            location: `En la clase '${className}', línea ${i + 1}`,
+            details: `Se esperaba '+' o '-' al inicio`
+          });
+          continue;
+        }
+
+        const content = line.substring(1).trim();
+
+        // Diferenciar método de atributo
+        if (content.includes('(')) {
+          // Es un método: nombre(): tipo
+          const openParen = content.indexOf('(');
+          const closeParen = content.indexOf(')');
+
+          if (openParen === -1 || closeParen === -1 || closeParen <= openParen) {
+            errors.push({
+              type: 'INVALID_METHOD_FORMAT',
+              severity: 'error',
+              message: 'Paréntesis mal formados en método',
+              elementId: classId,
+              lineNumber: i + 1,
+              location: `En la clase '${className}', línea ${i + 1}`,
+              details: `Se esperaba 'nombre(...): tipo'`
+            });
+            continue;
+          }
+
+          const methodName = content.substring(0, openParen).trim();
+          const returnPart = content.substring(closeParen + 1).trim();
+
+          if (!methodName) {
+            errors.push({
+              type: 'INVALID_METHOD_FORMAT',
+              severity: 'error',
+              message: 'Método sin nombre',
+              elementId: classId,
+              lineNumber: i + 1,
+              location: `En la clase '${className}', línea ${i + 1}`
+            });
+            continue;
+          }
+
+          if (!returnPart.startsWith(':')) {
+            errors.push({
+              type: 'INVALID_METHOD_FORMAT',
+              severity: 'error',
+              message: 'Tipo de retorno incorrecto',
+              elementId: classId,
+              lineNumber: i + 1,
+              location: `En la clase '${className}', línea ${i + 1}`,
+              details: `Se esperaba ':', recibido '${returnPart}'`
+            });
+            continue;
+          }
+
+          const returnType = returnPart.substring(1).trim();
+          if (!returnType) {
+            errors.push({
+              type: 'INVALID_METHOD_FORMAT',
+              severity: 'error',
+              message: 'Tipo de retorno vacío',
+              elementId: classId,
+              lineNumber: i + 1,
+              location: `En la clase '${className}', línea ${i + 1}`
+            });
+            continue;
+          }
+
+          if (classMethods.has(methodName)) {
+            errors.push({
+              type: 'DUPLICATE_METHOD',
+              severity: 'error',
+              message: `Método '${methodName}' duplicado en clase '${className}'`,
+              elementId: classId,
+              lineNumber: i + 1,
+              location: `En la clase '${className}', línea ${i + 1}`,
+              details: `El método '${methodName}' ya existe en esta clase`
+            });
+          } else {
+            classMethods.set(methodName, true);
+          }
+        } else {
+          // Es un atributo: nombre: tipo
+          const parts = content.split(':');
+
+          if (parts.length !== 2) {
+            errors.push({
+              type: 'INVALID_ATTRIBUTE_FORMAT',
+              severity: 'error',
+              message: 'Formato inválido en atributo',
+              elementId: classId,
+              lineNumber: i + 1,
+              location: `En la clase '${className}', línea ${i + 1}`,
+              details: `Se esperaba 'nombre: tipo', recibido '${content}'`
+            });
+            continue;
+          }
+
+          const name = parts[0].trim();
+          const type = parts[1].trim();
+
+          if (!name || !type) {
+            errors.push({
+              type: 'INVALID_ATTRIBUTE_FORMAT',
+              severity: 'error',
+              message: 'Atributo incompleto',
+              elementId: classId,
+              lineNumber: i + 1,
+              location: `En la clase '${className}', línea ${i + 1}`,
+              details: 'Nombre o tipo vacío'
+            });
+            continue;
+          }
+
+          if (classAttributes.has(name)) {
+            errors.push({
+              type: 'DUPLICATE_ATTRIBUTE',
+              severity: 'error',
+              message: `Atributo '${name}' duplicado en clase '${className}'`,
+              elementId: classId,
+              lineNumber: i + 1,
+              location: `En la clase '${className}', línea ${i + 1}`,
+              details: `El atributo '${name}' ya existe en esta clase`
+            });
+          } else {
+            classAttributes.set(name, true);
+          }
+        }
+      }
+    });
+
+    // Validar relaciones solo si no hay errores en clases
+    if (errors.filter(e => e.type.includes('CLASS') || e.type === 'INVALID_ATTRIBUTE_FORMAT' || 
+                           e.type === 'INVALID_METHOD_FORMAT').length === 0) {
+      const classIds = new Set(classes.map(c => c.id));
+
+      links.forEach(link => {
+        const sourceId = link.source?.id;
+        const targetId = link.target?.id;
+
+        // Validar que ambas clases existan
+        if (!sourceId || !classIds.has(sourceId)) {
+          errors.push({
+            type: 'INVALID_RELATIONSHIP',
+            severity: 'error',
+            message: 'Relación apunta a clase inexistente (origen)',
+            elementId: link.id,
+            location: `En la relación (origen no existe)`,
+            details: `La clase origen '${sourceId}' no existe en el diagrama`
+          });
+          return;
+        }
+
+        if (!targetId || !classIds.has(targetId)) {
+          errors.push({
+            type: 'INVALID_RELATIONSHIP',
+            severity: 'error',
+            message: 'Relación apunta a clase inexistente (destino)',
+            elementId: link.id,
+            location: `En la relación (destino no existe)`,
+            details: `La clase destino '${targetId}' no existe en el diagrama`
+          });
+          return;
+        }
+
+        // Validar multiplicidades
+        if (link.labels && Array.isArray(link.labels)) {
+          const validMultiplicities = ['1', '0..1', '1..*', '0..*', '*'];
+          link.labels.forEach((label) => {
+            const multiplicity = label.attrs?.text?.text;
+            if (multiplicity && !validMultiplicities.includes(multiplicity.trim())) {
+              errors.push({
+                type: 'INVALID_MULTIPLICITY',
+                severity: 'error',
+                message: `Multiplicidad inválida: '${multiplicity}'`,
+                elementId: link.id,
+                location: `En la relación entre clases`,
+                details: `Usar formato UML: 1, 0..1, 1..*, 0..*, *`
+              });
+            }
+          });
+        }
+
+        // Validar herencias circulares
+        if (link.metadata?.relationType === 'inheritance') {
+          let current = targetId;
+          const visited = new Set();
+
+          while (current && classIds.has(current)) {
+            if (current === sourceId) {
+              errors.push({
+                type: 'CIRCULAR_INHERITANCE',
+                severity: 'error',
+                message: 'Herencia circular detectada',
+                elementId: link.id,
+                location: `En la relación de herencia`,
+                details: `No se permite herencia circular`
+              });
+              break;
+            }
+            if (visited.has(current)) break;
+            visited.add(current);
+            // Buscar siguiente en cadena (esto es simplificado)
+            current = null;
+          }
+        }
+      });
+    }
+
+    // Advertencia si no hay relaciones
+    if (links.length === 0) {
+      warnings.push({
+        type: 'NO_RELATIONSHIPS',
+        severity: 'warning',
+        message: 'El diagrama no tiene relaciones entre clases',
+        suggestion: 'Considera agregar relaciones para un diagrama más completo'
+      });
+    }
+
+    // Retornar resultado
+    const success = errors.length === 0;
+    const statusCode = success ? 200 : 400;
+
+    return res.status(statusCode).json({
+      success,
+      message: success ? 'Diagrama válido' : `El diagrama contiene ${errors.length} error(es)`,
+      errors,
+      warnings
+    });
+
   } catch (err) {
-    return res.status(500).json({ message: 'Error al procesar el diagrama', error: err.message });
+    console.error('Error al validar diagrama:', err);
+    return res.status(500).json({
+      success: false,
+      message: 'Error al procesar el diagrama',
+      errors: [{
+        type: 'SERVER_ERROR',
+        severity: 'error',
+        message: err.message
+      }],
+      warnings: []
+    });
   }
 });
 
