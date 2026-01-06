@@ -1,7 +1,7 @@
 const sequelize = require('../config/database');
 const { DataTypes } = require('sequelize');
 
-// 1. Inicialización de Modelos en un objeto central
+// 1. Inicialización de Modelos
 const models = {
   Miniproyecto: require('./miniproyecto.model')(sequelize, DataTypes),
   TipoActividad: require('./tipoactividad.model')(sequelize, DataTypes),
@@ -20,8 +20,7 @@ const models = {
   Ejercicio: require('./ejercicio.models')(sequelize, DataTypes)
 };
 
-// 2. EJECUTAR ASOCIACIONES MODULARES
-// Esto activa los métodos "associate" que pusiste en Actividad, Miniproyecto y Area
+// 2. Ejecutar asociaciones modulares (definidas dentro de cada archivo .model)
 Object.keys(models).forEach((modelName) => {
   if (models[modelName].associate) {
     models[modelName].associate(models);
@@ -29,61 +28,42 @@ Object.keys(models).forEach((modelName) => {
 });
 
 // =========================================================
-// 3. ASOCIACIONES DE HERENCIA Y ESPECIALES (Se quedan en index)
+// 3. ASOCIACIONES MANUALES Y DE HERENCIA
 // =========================================================
 
-// --- HERENCIA: Actividad <-> Miniproyecto (1 a 1 por ID) ---
-models.Actividad.hasOne(models.Miniproyecto, {
-  foreignKey: 'id',
-  as: 'detallesMiniproyecto'
-});
-models.Miniproyecto.belongsTo(models.Actividad, {
-  foreignKey: 'id'
-});
+// --- HERENCIA: Actividad <-> Miniproyecto ---
+models.Actividad.hasOne(models.Miniproyecto, { foreignKey: 'id', as: 'detallesMiniproyecto' });
+models.Miniproyecto.belongsTo(models.Actividad, { foreignKey: 'id' });
 
-// --- HERENCIA: Actividad <-> Ejercicio (1 a 1) ---
-models.Actividad.hasOne(models.Ejercicio, {
-  foreignKey: 'id',
-  as: 'detallesEjercicio'
-});
-models.Ejercicio.belongsTo(models.Actividad, {
-  foreignKey: 'id',
-  as: 'detallesEjercicio'   // alias igual en ambos lados
-});
+// --- HERENCIA: Actividad <-> Ejercicio ---
+models.Actividad.hasOne(models.Ejercicio, { foreignKey: 'id', as: 'detallesEjercicio' });
+models.Ejercicio.belongsTo(models.Actividad, { foreignKey: 'id' });
 
+// --- USUARIOS: Persona <-> Estudiante / Administrador ---
+models.Persona.hasOne(models.Estudiante, { foreignKey: "persona_id", as: "estudiante" });
+models.Estudiante.belongsTo(models.Persona, { foreignKey: "persona_id", as: "persona" });
 
+models.Persona.hasOne(models.Administrador, { foreignKey: "persona_id", as: "administrador" });
+models.Administrador.belongsTo(models.Persona, { foreignKey: "persona_id", as: "persona" });
 
-// Persona <-> Estudiante (1 a 1)
-models.Persona.hasOne(models.Estudiante, {
-  foreignKey: "persona_id",
-  as: "estudiante",
-});
+// --- ESTRUCTURA ACADÉMICA ---
+models.Tema.belongsTo(models.Area, { foreignKey: 'area_id', as: 'area' });
+models.Subtema.belongsTo(models.Tema, { foreignKey: 'tema_id', as: 'tema' });
+models.Ejercicio.belongsTo(models.Subtema, { foreignKey: 'subtema_id', as: 'subtema' });
 
-models.Estudiante.belongsTo(models.Persona, {
-  foreignKey: "persona_id",
-  as: "persona",
-});
+// =========================================================
+// 4. ASOCIACIONES PARA RESPUESTAS (NUEVO)
+// =========================================================
 
-// Persona <-> Administrador (1 a 1)
-models.Persona.hasOne(models.Administrador, {
-  foreignKey: "persona_id",
-  as: "administrador",
-});
+// RespuestaEjercicio <-> Estudiante
+models.Estudiante.hasMany(models.RespuestaEstudianteEjercicio, { foreignKey: 'estudiante_id', as: 'respuestasEjercicio' });
+models.RespuestaEstudianteEjercicio.belongsTo(models.Estudiante, { foreignKey: 'estudiante_id', as: 'estudiante' });
 
-models.Administrador.belongsTo(models.Persona, {
-  foreignKey: "persona_id",
-  as: "persona",
-});
-
-
-// --- Estructura Académica Restante (Si aún no las has movido a sus modelos) ---
-models.Tema.belongsTo(models.Area, { foreignKey: 'area_id' });
-models.Subtema.belongsTo(models.Tema, { foreignKey: 'tema_id' });
-models.Ejercicio.belongsTo(models.Subtema, { foreignKey: 'subtema_id' });
-
-
+// RespuestaEjercicio <-> Ejercicio
+models.Ejercicio.hasMany(models.RespuestaEstudianteEjercicio, { foreignKey: 'ejercicio_id', as: 'respuestas' });
+models.RespuestaEstudianteEjercicio.belongsTo(models.Ejercicio, { foreignKey: 'ejercicio_id', as: 'ejercicio' });
 
 module.exports = {
   sequelize,
-  ...models // Exportamos todos los modelos listos para usar
+  ...models
 };

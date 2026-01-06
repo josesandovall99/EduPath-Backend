@@ -1,45 +1,148 @@
-const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio } = require("../models");
+const axios = require('axios');
+const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio, Evaluacion } = require("../models");
+const { Op } = require('sequelize');
 
-/* =========================
-   CREAR RESPUESTA
-========================= */
+const JUDGE0_URL = process.env.JUDGE0_URL;
+const JUDGE0_KEY = process.env.JUDGE0_KEY;
+
+/* ============================================================
+   UTILIDADES DE CONVERSIÓN (Base64)
+============================================================ */
+const codificar = (texto) => Buffer.from(texto || "").toString('base64');
+
+const decodificar = (base64) => {
+    if (!base64) return "";
+    return Buffer.from(base64, 'base64').toString('utf-8').trim();
+};
+
+/* ============================================================
+   1. CREAR RESPUESTA (POST)
+============================================================ */
 const crearRespuestaEjercicio = async (req, res) => {
   try {
-    const { respuesta, estudiante_id, ejercicio_id, estado } = req.body;
+    const { respuesta, estudiante_id, ejercicio_id, lenguaje_id } = req.body;
 
-    const estudiante = await Estudiante.findByPk(estudiante_id);
-    if (!estudiante) {
-      return res.status(400).json({
-        mensaje: `No existe un estudiante con id ${estudiante_id}`,
-      });
+    if (!respuesta || !estudiante_id || !ejercicio_id || !lenguaje_id) {
+      return res.status(400).json({ error: "Faltan campos obligatorios" });
     }
 
     const ejercicio = await Ejercicio.findByPk(ejercicio_id);
     if (!ejercicio) {
-      return res.status(400).json({
-        mensaje: `No existe un ejercicio con id ${ejercicio_id}`,
-      });
+      return res.status(404).json({ error: "El ejercicio no existe" });
     }
 
-    const nuevaRespuesta = await RespuestaEstudianteEjercicio.create({
+    const codigoBase64 = codificar(respuesta);
+
+    const response = await axios.post(`${JUDGE0_URL}/submissions?base64_encoded=true&wait=false`, {
+      source_code: codigoBase64,
+      language_id: lenguaje_id
+    }, {
+      headers: { 'x-rapidapi-key': JUDGE0_KEY }
+    });
+
+    const nuevoIntento = await RespuestaEstudianteEjercicio.create({
       respuesta,
       estudiante_id,
       ejercicio_id,
-      estado,
+      lenguaje_id,
+      token: response.data.token,
+      estado: 'Processing'
     });
 
-    res.status(201).json(nuevaRespuesta);
+    res.status(201).json(nuevoIntento);
   } catch (error) {
-    res.status(500).json({
-      mensaje: "Error al crear la respuesta del ejercicio",
-      error: error.message,
-    });
+    console.error("Error en crearRespuesta:", error.message);
+    res.status(500).json({ error: "Error al procesar con Judge0" });
   }
 };
 
-/* =========================
-   OBTENER TODAS
-========================= */
+/* ============================================================
+   2. OBTENER RESULTADO (GET) - Evaluación Automática
+============================================================ */
+const obtenerResultadoJudge0 = async (req, res) => {
+  try {
+    const { token } = req.params;
+    
+    const response = await axios.get(`${JUDGE0_URL}/submissions/${token}?base64_encoded=true`, {
+      headers: { 'x-rapidapi-key': JUDGE0_KEY }
+    });
+
+    const result = response.data;
+
+    if (result.status && result.status.id >= 3) {
+      const registro = await RespuestaEstudianteEjercicio.findOne({
+        where: { token },
+        include: [{ model: Ejercicio, as: 'ejercicio' }]
+      });
+
+      if (registro) {
+        const stdoutHumano = result.stdout ? decodificar(result.stdout) : "";
+        const stderrHumano = result.stderr ? decodificar(result.stderr) : "";
+
+        // --- LÓGICA DE LIMPIEZA EXTREMA ---
+        // Eliminamos saltos de línea (\n, \r) y espacios en blanco accidentales
+        const limpiarCadena = (str) => {
+            return str ? str.toString().replace(/[\n\r]/g, "").trim() : "";
+        };
+
+        const esperado = limpiarCadena(registro.ejercicio?.resultado_ejercicio);
+        const obtenido = limpiarCadena(stdoutHumano);
+        
+        // Comparación técnica
+        const esCorrecto = (obtenido === esperado && obtenido !== "" && !result.stderr);
+
+        // 1. Actualizamos registro de respuesta
+        await registro.update({
+          stdout: stdoutHumano,
+          estado: result.status.description
+        });
+
+        // 2. Creamos evaluación si no existe para este token
+        const evaluacionExistente = await Evaluacion.findOne({ 
+          where: { retroalimentacion: { [Op.like]: `%${token}%` } } 
+        });
+
+        if (!evaluacionExistente) {
+          await Evaluacion.create({
+            calificacion: esCorrecto ? 5.0 : 0.0,
+            retroalimentacion: esCorrecto
+              ? `Aprobado (Token: ${token}). Coincide con: ${esperado}.`
+              : result.stderr 
+                ? `Error técnico (Token: ${token}).`
+                : `Incorrecto (Token: ${token}). Esperado: '${esperado}', Recibido: '${obtenido}'.`,
+            estudiante_id: registro.estudiante_id,
+            ejercicio_id: registro.ejercicio_id,
+            estado: esCorrecto ? 'Aprobado' : 'Reprobado',
+            fecha_evaluacion: new Date()
+          });
+        }
+
+        // --- DATOS PARA INSOMNIA ---
+        result.stdout = stdoutHumano;
+        result.stderr = stderrHumano;
+        result.evaluacion_final = esCorrecto ? 'Aprobado' : 'Reprobado';
+        
+        // Objeto de depuración para entender por qué sale Reprobado
+        result.debug_validacion = {
+          esperado_db: esperado,
+          obtenido_judge0: obtenido,
+          longitud_esperado: esperado.length,
+          longitud_obtenido: obtenido.length,
+          son_identicos: (obtenido === esperado)
+        };
+      }
+    }
+    
+    res.json(result);
+  } catch (error) {
+    console.error("Error en obtenerResultado:", error);
+    res.status(500).json({ error: "Error al evaluar", detalle: error.message });
+  }
+};
+
+/* ============================================================
+   CRUD RESTANTE
+============================================================ */
 const obtenerRespuestasEjercicio = async (req, res) => {
   try {
     const respuestas = await RespuestaEstudianteEjercicio.findAll({
@@ -50,136 +153,57 @@ const obtenerRespuestasEjercicio = async (req, res) => {
     });
     res.json(respuestas);
   } catch (error) {
-    res.status(500).json({
-      mensaje: "Error al obtener respuestas del ejercicio",
-      error: error.message,
-    });
+    res.status(500).json({ error: error.message });
   }
 };
 
-/* =========================
-   OBTENER POR ID
-========================= */
 const obtenerRespuestaEjercicioPorId = async (req, res) => {
   try {
     const { id } = req.params;
-
     const respuesta = await RespuestaEstudianteEjercicio.findByPk(id, {
       include: [
         { model: Estudiante, as: "estudiante" },
         { model: Ejercicio, as: "ejercicio" },
       ],
     });
-
-    if (!respuesta) {
-      return res.status(404).json({
-        mensaje: "Respuesta de ejercicio no encontrada",
-      });
-    }
-
+    if (!respuesta) return res.status(404).json({ mensaje: "No encontrada" });
     res.json(respuesta);
   } catch (error) {
-    res.status(500).json({
-      mensaje: "Error al obtener la respuesta del ejercicio",
-      error: error.message,
-    });
+    res.status(500).json({ error: error.message });
   }
 };
 
-/* =========================
-   ACTUALIZAR
-========================= */
 const actualizarRespuestaEjercicio = async (req, res) => {
   try {
     const { id } = req.params;
-    const { estudiante_id, ejercicio_id } = req.body;
-
     const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
-    if (!respuesta) {
-      return res.status(404).json({
-        mensaje: "Respuesta de ejercicio no encontrada",
-      });
-    }
-
-    if (estudiante_id) {
-      const estudiante = await Estudiante.findByPk(estudiante_id);
-      if (!estudiante) {
-        return res.status(400).json({
-          mensaje: `No existe un estudiante con id ${estudiante_id}`,
-        });
-      }
-    }
-
-    if (ejercicio_id) {
-      const ejercicio = await Ejercicio.findByPk(ejercicio_id);
-      if (!ejercicio) {
-        return res.status(400).json({
-          mensaje: `No existe un ejercicio con id ${ejercicio_id}`,
-        });
-      }
-    }
+    if (!respuesta) return res.status(404).json({ mensaje: "No encontrada" });
 
     await respuesta.update(req.body);
     res.json(respuesta);
   } catch (error) {
-    res.status(500).json({
-      mensaje: "Error al actualizar la respuesta del ejercicio",
-      error: error.message,
-    });
+    res.status(500).json({ error: error.message });
   }
 };
 
-/* =========================
-   ELIMINAR
-========================= */
 const eliminarRespuestaEjercicio = async (req, res) => {
   try {
     const { id } = req.params;
-
     const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
-    if (!respuesta) {
-      return res.status(404).json({
-        mensaje: "Respuesta de ejercicio no encontrada",
-      });
-    }
+    if (!respuesta) return res.status(404).json({ mensaje: "No encontrada" });
 
     await respuesta.destroy();
-    res.json({
-      mensaje: "Respuesta de ejercicio eliminada correctamente",
-    });
+    res.json({ mensaje: "Eliminada correctamente" });
   } catch (error) {
-    res.status(500).json({
-      mensaje: "Error al eliminar la respuesta del ejercicio",
-      error: error.message,
-    });
+    res.status(500).json({ error: error.message });
   }
 };
 
-Estudiante.hasMany(RespuestaEstudianteEjercicio, {
-  foreignKey: "estudiante_id",
-  as: "respuestasEjercicio",
-});
-
-RespuestaEstudianteEjercicio.belongsTo(Estudiante, {
-  foreignKey: "estudiante_id",
-  as: "estudiante",
-});
-
-Ejercicio.hasMany(RespuestaEstudianteEjercicio, {
-  foreignKey: "ejercicio_id",
-  as: "respuestasEstudiante",
-});
-
-RespuestaEstudianteEjercicio.belongsTo(Ejercicio, {
-  foreignKey: "ejercicio_id",
-  as: "ejercicio",
-});
-
-
 module.exports = {
   crearRespuestaEjercicio,
+  obtenerResultadoJudge0,
   obtenerRespuestasEjercicio,
   obtenerRespuestaEjercicioPorId,
   actualizarRespuestaEjercicio,
-  eliminarRespuestaEjercicio,
+  eliminarRespuestaEjercicio
 };
