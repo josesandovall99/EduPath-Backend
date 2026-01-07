@@ -5,8 +5,14 @@ const app = express();
 const sequelize = require('./config/database');
 const db = require('./models');
 
+<<<<<<< HEAD
 app.set('strict routing', false); 
 app.use(cors()); 
+=======
+// 👇 habilita CORS para permitir peticiones desde tu frontend
+app.use(cors({ origin: 'http://localhost:3000', methods: ['GET', 'POST', 'PUT', 'DELETE'], allowedHeaders: ['Content-Type'] }));
+
+>>>>>>> acb13d8ffa074311a067b84f212f3515af602c1b
 app.use(express.json());
 
 // Logger para confirmar qué llega al servidor
@@ -38,8 +44,18 @@ app.use('/actividades', require('./routes/actividad.routes'));
 app.use('/progresos', require('./routes/progreso.routes'));
 app.use('/respuestasEstudianteMiniproyecto', require('./routes/respuestasEstudianteMiniproyecto.routes'));
 
+<<<<<<< HEAD
 app.get('/debug', (req, res) => {
     res.json({ mensaje: "El servidor responde ✅", estado: "Online" });
+=======
+
+//DIAGRAMAS
+app.use('/diagrams', require('./routes/diagram.routes'));
+
+
+app.listen(4000, () => {
+    console.log('Servidor corriendo en el puerto 4000');
+>>>>>>> acb13d8ffa074311a067b84f212f3515af602c1b
 });
 
 const PORT = process.env.PORT || 4000;
