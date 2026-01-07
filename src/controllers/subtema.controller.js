@@ -78,3 +78,21 @@ exports.deleteSubtema = async (req, res) => {
     res.status(500).json({ message: "Error al eliminar el subtema", error });
   }
 };
+
+// Obtener todos los subtemas por tema
+exports.getSubtemasByTema = async (req, res) => {
+  try {
+    const { temaId } = req.params;
+
+    // Validar que el tema exista
+    const temaExistente = await Tema.findByPk(temaId);
+    if (!temaExistente) {
+      return res.status(404).json({ message: "Tema no encontrado" });
+    }
+
+    const subtemas = await Subtema.findAll({ where: { tema_id: temaId } });
+    res.json(subtemas);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener los subtemas del tema", error });
+  }
+};

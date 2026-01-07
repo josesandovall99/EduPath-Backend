@@ -79,3 +79,21 @@ exports.deleteTema = async (req, res) => {
     res.status(500).json({ message: "Error al eliminar el tema", error });
   }
 };
+
+// Obtener todos los temas por área
+exports.getTemasByArea = async (req, res) => {
+  try {
+    const { areaId } = req.params;
+
+    // Validar que el área exista
+    const areaExistente = await Area.findByPk(areaId);
+    if (!areaExistente) {
+      return res.status(404).json({ message: "Área no encontrada" });
+    }
+
+    const temas = await Tema.findAll({ where: { area_id: areaId } });
+    res.json(temas);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener los temas del área", error });
+  }
+};
