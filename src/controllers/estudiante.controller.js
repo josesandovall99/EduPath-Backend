@@ -1,29 +1,29 @@
 const sequelize = require("../config/database");
 const { Persona, Estudiante } = require("../models");
+const XLSX = require('xlsx');
+const procesarCorreos = require('../utils/colaCorreos');
+const { generarPassword, generarCodigoAcceso } = require("../utils/generarCredenciales");
+const bcrypt = require('bcryptjs'); 
 
 /* =========================
    CREAR ESTUDIANTE
 ========================= */
 const crearEstudiante = async (req, res) => {
   const transaction = await sequelize.transaction();
-
+  
   try {
-    const {
-      nombre,
-      email,
-      codigoAcceso,
-      contraseña,
-      codigoEstudiantil,
-      programa,
-      semestre
-    } = req.body;
+    const { nombre, email, codigoAcceso, contraseña, codigoEstudiantil, programa, semestre } = req.body;
+
+    // 🔒 Encriptar contraseña
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(contraseña, salt);
 
     const persona = await Persona.create(
       {
         nombre,
         email,
         codigoAcceso,
-        contraseña,
+        contraseña: passwordHash, // <--- GUARDAMOS EL HASH, NO EL TEXTO PLANO
         tipoUsuario: "ESTUDIANTE",
       },
       { transaction }
@@ -204,6 +204,101 @@ const eliminarEstudiante = async (req, res) => {
 };
 
 /* =========================
+   IMPORTAR DESDE EXCEL
+========================= */
+const importarEstudiantesDesdeExcel = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    if (!req.file) {
+      return res.status(400).json({ message: "No se recibió ningún archivo" });
+    }
+
+    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
+    const hoja = workbook.Sheets[workbook.SheetNames[0]];
+    const datos = XLSX.utils.sheet_to_json(hoja);
+
+    console.log("📊 Datos del Excel:", datos);
+
+    const personasParaCorreo = [];
+
+    for (const fila of datos) {
+      const Nombres = fila["Nombres"];
+      const Apellidos = fila["Apellidos"];
+      const Email = fila["Email_institucional"];
+      const CodigoEstudiantil = fila["CodigoEstudiantil"];
+      const Programa = fila["Programa"];
+      const Semestre = fila["Semestre"];
+
+      if (!Nombres || !Apellidos || !Email || !CodigoEstudiantil) {
+        console.log("⏭️ Fila ignorada:", fila);
+        continue;
+      }
+
+      // 🔐 Generar credenciales
+      const passwordPlana = generarPassword(); // Esta es para el correo
+      const codigoAcceso = generarCodigoAcceso();
+
+      // 🔒 Encriptar para la Base de Datos
+      const salt = await bcrypt.genSalt(10);
+      const passwordHash = await bcrypt.hash(passwordPlana, salt); // Esta es para la BD
+
+      // 👤 Crear Persona
+      const persona = await Persona.create(
+        {
+          nombre: `${Nombres} ${Apellidos}`,
+          email: Email,
+          contraseña: passwordHash, // <--- Guardamos encriptada
+          codigoAcceso,
+          tipoUsuario: "ESTUDIANTE",
+        },
+        { transaction }
+      );
+
+      // 🎓 Crear Estudiante
+      await Estudiante.create(
+        {
+          persona_id: persona.id,
+          codigoEstudiantil: CodigoEstudiantil,
+          programa: Programa,
+          semestre: Semestre,
+        },
+        { transaction }
+      );
+
+      // 📧 Datos para correo (Usamos la plana para que el usuario pueda leerla)
+      personasParaCorreo.push({
+        nombre: `${Nombres} ${Apellidos}`,
+        email: Email,
+        codigoEstudiantil: CodigoEstudiantil,
+        password: passwordPlana, // <--- Enviamos la original al correo
+      });
+    }
+
+    await transaction.commit();
+
+    // 🚀 Envío de correos en segundo plano
+    procesarCorreos(personasParaCorreo);
+
+    res.status(201).json({
+      message: `Se importaron ${personasParaCorreo.length} estudiantes correctamente`,
+      total: personasParaCorreo.length,
+    });
+
+  } catch (error) {
+    await transaction.rollback();
+    console.error(error);
+    res.status(500).json({
+      message: "Error al importar estudiantes",
+      error: error.message,
+    });
+  }
+};
+
+
+
+
+/* =========================
    EXPORTS
 ========================= */
 module.exports = {
@@ -212,4 +307,8 @@ module.exports = {
   obtenerEstudiantePorId,
   actualizarEstudiante,
   eliminarEstudiante,
+  importarEstudiantesDesdeExcel,
 };
+
+
+

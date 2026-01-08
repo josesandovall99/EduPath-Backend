@@ -29,6 +29,16 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
 
+      
+      primer_ingreso: {
+        type: DataTypes.BOOLEAN,
+        field: "primer_ingreso", // Campo para saber si es el primer ingreso del estudiante
+        defaultValue: true,
+        allowNull: false
+      },
+
+
+
       tipoUsuario: {
         type: DataTypes.ENUM("ESTUDIANTE", "ADMINISTRADOR"),
         allowNull: false,
