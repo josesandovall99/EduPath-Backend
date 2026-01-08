@@ -36,14 +36,11 @@ const crearRespuestaEjercicio = async (req, res) => {
             return res.status(404).json({ error: "El ejercicio no existe" });
         }
 
-        // Preparamos los Headers dinámicamente para evitar el error 401
         const headers = { 'content-type': 'application/json' };
-        
-        // Si hay una Key en el .env, la agregamos (formato RapidAPI o Estándar)
         if (JUDGE0_KEY) {
             headers['x-rapidapi-key'] = JUDGE0_KEY;
             headers['x-rapidapi-host'] = 'judge0-ce.p.rapidapi.com';
-            headers['X-Auth-Token'] = JUDGE0_KEY; // Por si usas la versión CE directa
+            headers['X-Auth-Token'] = JUDGE0_KEY;
         }
 
         const response = await axios.post(`${JUDGE0_URL}/submissions?base64_encoded=true&wait=false`, {
@@ -144,8 +141,68 @@ const obtenerResultadoJudge0 = async (req, res) => {
     }
 };
 
-// ... (El resto de tus funciones CRUD se mantienen igual)
+/* ============================================================
+   3. CRUD ESTÁNDAR (Faltaban estas definiciones)
+============================================================ */
+const obtenerRespuestasEjercicio = async (req, res) => {
+    try {
+        const respuestas = await RespuestaEstudianteEjercicio.findAll({
+            include: [
+                { model: Estudiante, as: "estudiante" },
+                { model: Ejercicio, as: "ejercicio" },
+            ],
+        });
+        res.json(respuestas);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
 
+const obtenerRespuestaEjercicioPorId = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const respuesta = await RespuestaEstudianteEjercicio.findByPk(id, {
+            include: [
+                { model: Estudiante, as: "estudiante" },
+                { model: Ejercicio, as: "ejercicio" },
+            ],
+        });
+        if (!respuesta) return res.status(404).json({ mensaje: "No encontrada" });
+        res.json(respuesta);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+const actualizarRespuestaEjercicio = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
+        if (!respuesta) return res.status(404).json({ mensaje: "No encontrada" });
+
+        await respuesta.update(req.body);
+        res.json(respuesta);
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+const eliminarRespuestaEjercicio = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const respuesta = await RespuestaEstudianteEjercicio.findByPk(id);
+        if (!respuesta) return res.status(404).json({ mensaje: "No encontrada" });
+
+        await respuesta.destroy();
+        res.json({ mensaje: "Eliminada correctamente" });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+/* ============================================================
+   EXPORTACIONES
+============================================================ */
 module.exports = {
     crearRespuestaEjercicio,
     obtenerResultadoJudge0,
