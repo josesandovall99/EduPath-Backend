@@ -9,7 +9,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BIGINT,
       allowNull: false,
       references: {
-        model: 'contenidos', // Nombre de la tabla en la DB
+        model: 'contenidos', // Referencia a la tabla física
         key: 'id'
       }
     },
@@ -17,7 +17,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BIGINT,
       allowNull: false,
       references: {
-        model: 'contenidos',
+        model: 'contenidos', // Referencia a la tabla física
         key: 'id'
       }
     },
@@ -31,24 +31,23 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: true
     },
     fecha_creacion: {
-      type: DataTypes.DATE, 
+      type: DataTypes.DATE,
       allowNull: false,
       defaultValue: DataTypes.NOW
     }
   }, {
     tableName: 'secuencia_contenidos',
-    timestamps: false 
+    timestamps: false
   });
 
-  // Aquí definimos las asociaciones
   SecuenciaContenido.associate = (models) => {
-    // Una secuencia tiene un origen (Contenido)
+    // Relación con el contenido de origen
     SecuenciaContenido.belongsTo(models.Contenido, { 
       as: 'origen', 
       foreignKey: 'contenido_origen_id' 
     });
 
-    // Una secuencia tiene un destino (Contenido)
+    // Relación con el contenido de destino
     SecuenciaContenido.belongsTo(models.Contenido, { 
       as: 'destino', 
       foreignKey: 'contenido_destino_id' 
