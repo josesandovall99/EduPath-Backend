@@ -17,7 +17,9 @@ const models = {
   Tema: require('./tema.models')(sequelize, DataTypes),
   Subtema: require('./subtema.models')(sequelize, DataTypes),
   Contenido: require('./contenido.models')(sequelize, DataTypes),
-  Ejercicio: require('./ejercicio.models')(sequelize, DataTypes)
+  Ejercicio: require('./ejercicio.models')(sequelize, DataTypes),
+
+  SecuenciaContenido: require('./secuenciaContenido.model')(sequelize, DataTypes)
 };
 
 // 2. Ejecutar asociaciones modulares (definidas dentro de cada archivo .model)
