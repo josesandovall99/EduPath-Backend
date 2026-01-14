@@ -52,6 +52,76 @@ exports.createSecuenciaContenido = async (req, res) => {
   }
 };
 
+// ...existing code...
+
+// Obtener contenidos ordenados por secuencia de un subtema
+exports.getContenidosOrdenadosPorSecuencia = async (req, res) => {
+  try {
+    const { subtemaId } = req.params;
+
+    // Obtener todos los contenidos del subtema
+    const contenidos = await Contenido.findAll({
+      where: { subtema_id: subtemaId }
+    });
+
+    if (contenidos.length === 0) {
+      return res.json([]);
+    }
+
+    // Obtener todas las secuencias activas
+    const secuencias = await SecuenciaContenido.findAll({
+      where: { estado: true }
+    });
+
+    // Crear mapa de secuencias
+    const secuenciaMap = new Map();
+    secuencias.forEach(sec => {
+      secuenciaMap.set(sec.contenido_origen_id, sec.contenido_destino_id);
+    });
+
+    // Encontrar el contenido inicial (que no es destino de ninguno)
+    let contenidoInicialId = null;
+    for (const contenido of contenidos) {
+      const esDestino = secuencias.some(s => s.contenido_destino_id === contenido.id);
+      if (!esDestino) {
+        contenidoInicialId = contenido.id;
+        break;
+      }
+    }
+
+    // Si no hay inicial, comenzar con el primero
+    if (!contenidoInicialId && contenidos.length > 0) {
+      contenidoInicialId = contenidos[0].id;
+    }
+
+    // Construir la secuencia ordenada
+    const ordenado = [];
+    let actual = contenidoInicialId;
+
+    while (actual !== null && actual !== undefined) {
+      const contenido = contenidos.find(c => c.id === actual);
+      if (contenido) {
+        ordenado.push(contenido);
+      }
+      actual = secuenciaMap.get(actual);
+    }
+
+    // Añadir contenidos no secuenciados al final
+    const ids = new Set(ordenado.map(c => c.id));
+    contenidos.forEach(c => {
+      if (!ids.has(c.id)) {
+        ordenado.push(c);
+      }
+    });
+
+    res.json(ordenado);
+  } catch (error) {
+    console.error("Error al obtener contenidos ordenados:", error);
+    res.status(500).json({ message: "Error al obtener contenidos ordenados", error });
+  }
+};
+
+// ...existing code...
 
 // Listar todas las secuencias de contenido
 exports.getSecuenciasContenido = async (req, res) => {

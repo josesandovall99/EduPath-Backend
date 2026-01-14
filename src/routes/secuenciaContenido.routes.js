@@ -17,6 +17,13 @@ router.put('/:id', secuenciaContenidoController.updateSecuenciaContenido);
 // Habilitar o inhabilitar una secuencia de contenido
 router.patch('/:id/estado', secuenciaContenidoController.toggleEstadoSecuenciaContenido);
 
+// ...existing code...
+
+// Obtener contenidos ordenados por secuencia de un subtema
+router.get('/subtema/:subtemaId/ordenados', secuenciaContenidoController.getContenidosOrdenadosPorSecuencia);
+
+// ...existing code...
+
 // Eliminar una secuencia de contenido
 router.delete('/:id', secuenciaContenidoController.deleteSecuenciaContenido);
 
