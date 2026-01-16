@@ -1,54 +1,271 @@
 const { SecuenciaContenido, Contenido } = require('../models');
 
-// Crear una secuencia de contenido
-exports.createSecuenciaContenido = async (req, res) => {
-  try {
-    const { contenido_origen_id, contenido_destino_id, descripcion, estado } = req.body;
+/**
+ * Función auxiliar para validar la integridad de una secuencia de contenido
+ * 
+ * Validaciones realizadas:
+ * 1. Existencia de ambos contenidos
+ * 2. Evitar relación consigo mismo (A → A)
+ * 3. Evitar duplicados exactos (A → B ya existe)
+ * 4. Evitar relaciones inversas directas (B → A existe)
+ * 5. Evitar múltiples salidas desde un contenido
+ * 6. Evitar múltiples entradas hacia un contenido
+ * 7. Evitar ciclos indirectos (A → B → ... → A)
+ * 8. Validar pertenencia al mismo subtema (opcional)
+ * 
+ * @param {number} contenido_origen_id - ID del contenido origen
+ * @param {number} contenido_destino_id - ID del contenido destino
+ * @param {number} excludeSecuenciaId - ID de secuencia a excluir (para updates)
+ * @param {boolean} validarSubtema - Si debe validar mismo subtema
+ * @returns {Object} { valido: boolean, error: string, detalles: Object }
+ */
+async function validarSecuenciaContenido(
+  contenido_origen_id,
+  contenido_destino_id,
+  excludeSecuenciaId = null,
+  validarSubtema = true
+) {
+  const { Op } = require('sequelize');
+  const resultado = {
+    valido: true,
+    error: null,
+    detalles: {},
+    validacionesRealizadas: []
+  };
 
-    // Validar que ambos contenidos existan
+  try {
+    // ========== VALIDACIÓN 1: Existencia de contenidos ==========
     const contenidoOrigen = await Contenido.findByPk(contenido_origen_id);
     if (!contenidoOrigen) {
-      return res.status(400).json({ message: "El contenido origen especificado no existe" });
+      resultado.valido = false;
+      resultado.error = `Contenido origen con ID ${contenido_origen_id} no existe`;
+      return resultado;
     }
+    resultado.validacionesRealizadas.push('✅ V1: Existencia de contenidos');
 
     const contenidoDestino = await Contenido.findByPk(contenido_destino_id);
     if (!contenidoDestino) {
-      return res.status(400).json({ message: "El contenido destino especificado no existe" });
+      resultado.valido = false;
+      resultado.error = `Contenido destino con ID ${contenido_destino_id} no existe`;
+      return resultado;
+    }
+    resultado.validacionesRealizadas.push('✅ V2: Contenido destino existe');
+
+    // ========== VALIDACIÓN 2: Relación consigo mismo ==========
+    if (contenido_origen_id === contenido_destino_id) {
+      resultado.valido = false;
+      resultado.error = `No se permite A → A. Origen y destino son el mismo contenido (ID: ${contenido_origen_id})`;
+      return resultado;
+    }
+    resultado.validacionesRealizadas.push('✅ V3: No es relación consigo mismo');
+
+    // ========== VALIDACIÓN 3: Duplicados exactos ==========
+    const whereClauseDuplicados = {
+      contenido_origen_id,
+      contenido_destino_id
+    };
+    if (excludeSecuenciaId) {
+      whereClauseDuplicados.id = { [Op.ne]: excludeSecuenciaId };
     }
 
-    // 🚫 Validación 1: evitar relación inversa
-    const existeInversa = await SecuenciaContenido.findOne({
+    const secuenciaDuplicada = await SecuenciaContenido.findOne({
+      where: whereClauseDuplicados
+    });
+
+    if (secuenciaDuplicada) {
+      resultado.valido = false;
+      resultado.error = `Ya existe secuencia duplicada ${contenido_origen_id} → ${contenido_destino_id} (ID: ${secuenciaDuplicada.id})`;
+      return resultado;
+    }
+    resultado.validacionesRealizadas.push('✅ V4: No hay duplicados');
+
+    // ========== VALIDACIÓN 4: Relaciones inversas directas ==========
+    const secuenciaInversa = await SecuenciaContenido.findOne({
       where: {
         contenido_origen_id: contenido_destino_id,
         contenido_destino_id: contenido_origen_id
       }
     });
 
-    if (existeInversa) {
-      return res.status(400).json({ message: "No se puede crear una relación inversa entre contenidos" });
+    if (secuenciaInversa) {
+      resultado.valido = false;
+      resultado.error = `No se permite relación inversa. Ya existe ${contenido_destino_id} → ${contenido_origen_id} (ID: ${secuenciaInversa.id})`;
+      return resultado;
+    }
+    resultado.validacionesRealizadas.push('✅ V5: No hay relación inversa');
+
+    // ========== VALIDACIÓN 5: Múltiples salidas desde un contenido ==========
+    const whereClauseSalidas = {
+      contenido_origen_id
+    };
+    if (excludeSecuenciaId) {
+      whereClauseSalidas.id = { [Op.ne]: excludeSecuenciaId };
     }
 
-    // 🚫 Validación 2 (opcional): evitar que un contenido ya sea origen en otra secuencia
-    const yaUsadoComoOrigen = await SecuenciaContenido.findOne({
-      where: { contenido_origen_id }
+    const salidasExistentes = await SecuenciaContenido.findAll({
+      where: whereClauseSalidas
     });
 
-    if (yaUsadoComoOrigen) {
-      return res.status(400).json({ message: "Este contenido ya está asignado como origen en otra secuencia" });
+    if (salidasExistentes && salidasExistentes.length > 0) {
+      resultado.valido = false;
+      const destinos = salidasExistentes.map(s => `${s.contenido_destino_id} (ID:${s.id})`).join(', ');
+      resultado.error = `Contenido ${contenido_origen_id} ya tiene salidas a: ${destinos}. No se permiten múltiples salidas`;
+      return resultado;
+    }
+    resultado.validacionesRealizadas.push('✅ V6: Sin múltiples salidas');
+
+    // ========== VALIDACIÓN 6: Múltiples entradas hacia un contenido ==========
+    const whereClaseEntradas = {
+      contenido_destino_id
+    };
+    if (excludeSecuenciaId) {
+      whereClaseEntradas.id = { [Op.ne]: excludeSecuenciaId };
     }
 
-    // ✅ Crear la secuencia de contenido
+    const entradasExistentes = await SecuenciaContenido.findAll({
+      where: whereClaseEntradas
+    });
+
+    if (entradasExistentes && entradasExistentes.length > 0) {
+      resultado.valido = false;
+      const origenes = entradasExistentes.map(s => `${s.contenido_origen_id} (ID:${s.id})`).join(', ');
+      resultado.error = `Contenido ${contenido_destino_id} ya recibe desde: ${origenes}. No se permiten múltiples entradas`;
+      return resultado;
+    }
+    resultado.validacionesRealizadas.push('✅ V7: Sin múltiples entradas');
+
+    // ========== VALIDACIÓN 7: Ciclos indirectos ==========
+    const existeCiclo = await detectarCicloIndirecto(contenido_destino_id, contenido_origen_id);
+    if (existeCiclo) {
+      resultado.valido = false;
+      resultado.error = `Ciclo detectado: ${contenido_destino_id} → ... → ${contenido_origen_id}. Crear ${contenido_origen_id} → ${contenido_destino_id} formaría bucle`;
+      return resultado;
+    }
+    resultado.validacionesRealizadas.push('✅ V8: Sin ciclos indirectos');
+
+    // ========== VALIDACIÓN 8: Pertenencia al mismo subtema ==========
+    if (validarSubtema) {
+      if (contenidoOrigen.subtema_id !== contenidoDestino.subtema_id) {
+        resultado.valido = false;
+        resultado.error = `Contenidos en diferente subtema. Origen subtema_id: ${contenidoOrigen.subtema_id}, Destino subtema_id: ${contenidoDestino.subtema_id}`;
+        return resultado;
+      }
+      resultado.validacionesRealizadas.push('✅ V9: Mismo subtema');
+    }
+
+    resultado.detalles = {
+      contenido_origen: {
+        id: contenidoOrigen.id,
+        titulo: contenidoOrigen.titulo,
+        subtema_id: contenidoOrigen.subtema_id
+      },
+      contenido_destino: {
+        id: contenidoDestino.id,
+        titulo: contenidoDestino.titulo,
+        subtema_id: contenidoDestino.subtema_id
+      }
+    };
+
+    return resultado;
+  } catch (error) {
+    resultado.valido = false;
+    resultado.error = `Error en validación: ${error.message}`;
+    console.error(`[ERROR VALIDACION] ${error.message}`);
+    return resultado;
+  }
+}
+
+/**
+ * Función auxiliar para detectar ciclos indirectos usando DFS (Depth-First Search)
+ * Verifica si hay un camino desde 'destino' hacia 'origen'
+ * 
+ * @param {number} desde - Contenido desde el cual buscar
+ * @param {number} objetivo - Contenido objetivo a encontrar
+ * @param {Set} visitados - Conjunto de nodos ya visitados
+ * @returns {boolean} true si se detecta un ciclo potencial
+ */
+async function detectarCicloIndirecto(desde, objetivo, visitados = new Set()) {
+  // Prevenir bucle infinito
+  if (visitados.has(desde)) {
+    return false;
+  }
+
+  visitados.add(desde);
+
+  // Si encontramos el objetivo, hay ciclo
+  if (desde === objetivo) {
+    return true;
+  }
+
+  // Buscar todas las secuencias donde 'desde' es origen
+  const siguientes = await SecuenciaContenido.findAll({
+    where: { contenido_origen_id: desde }
+  });
+
+  // Recursivamente buscar en cada siguiente
+  for (const secuencia of siguientes) {
+    if (await detectarCicloIndirecto(secuencia.contenido_destino_id, objetivo, visitados)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// Crear una secuencia de contenido
+exports.createSecuenciaContenido = async (req, res) => {
+  try {
+    const { contenido_origen_id, contenido_destino_id, descripcion, estado } = req.body;
+
+    if (!contenido_origen_id || !contenido_destino_id) {
+      return res.status(400).json({
+        message: "Faltan campos requeridos",
+        error: "contenido_origen_id y contenido_destino_id son obligatorios"
+      });
+    }
+
+    console.log(`[CREATE] Creando ${contenido_origen_id} → ${contenido_destino_id}`);
+
+    // Ejecutar 8 validaciones exhaustivas
+    const validacion = await validarSecuenciaContenido(
+      contenido_origen_id,
+      contenido_destino_id,
+      null,
+      true
+    );
+
+    if (!validacion.valido) {
+      console.log(`[CREATE] ❌ Validación fallida: ${validacion.error}`);
+      return res.status(400).json({
+        message: "Validación fallida",
+        error: validacion.error,
+        detalles: validacion.detalles,
+        validacionesRealizadas: validacion.validacionesRealizadas
+      });
+    }
+
+    // Crear la secuencia
     const nuevaSecuencia = await SecuenciaContenido.create({
       contenido_origen_id,
       contenido_destino_id,
-      descripcion,
+      descripcion: descripcion || null,
       estado: estado !== undefined ? estado : true
     });
 
-    res.status(201).json(nuevaSecuencia);
+    console.log(`[CREATE] ✅ Creada. ID: ${nuevaSecuencia.id}`);
+
+    return res.status(201).json({
+      message: "Secuencia creada correctamente",
+      secuencia: nuevaSecuencia,
+      validacionesRealizadas: validacion.validacionesRealizadas,
+      detallesContenidos: validacion.detalles
+    });
   } catch (error) {
-    console.error("Error al crear secuencia:", error);
-    res.status(500).json({ message: "Error al crear la secuencia de contenido", error });
+    console.error(`[CREATE] Error: ${error.message}`);
+    res.status(500).json({
+      message: "Error al crear secuencia",
+      error: error.message
+    });
   }
 };
 
@@ -204,63 +421,59 @@ exports.updateSecuenciaContenido = async (req, res) => {
     const secuencia = await SecuenciaContenido.findByPk(req.params.id);
 
     if (!secuencia) {
-      return res.status(404).json({ message: "Secuencia de contenido no encontrada" });
+      return res.status(404).json({
+        message: "Secuencia no encontrada"
+      });
     }
 
     const { contenido_origen_id, contenido_destino_id, descripcion, estado } = req.body;
 
-    // Validar que los contenidos existan si se envían
-    if (contenido_origen_id) {
-      const contenidoOrigen = await Contenido.findByPk(contenido_origen_id);
-      if (!contenidoOrigen) {
-        return res.status(400).json({ message: "El contenido origen especificado no existe" });
+    // Usar valores actuales si no se envían nuevos
+    const nuevoOrigen = contenido_origen_id || secuencia.contenido_origen_id;
+    const nuevoDestino = contenido_destino_id || secuencia.contenido_destino_id;
+
+    console.log(`[UPDATE] ID ${secuencia.id}: (${secuencia.contenido_origen_id}→${secuencia.contenido_destino_id}) a (${nuevoOrigen}→${nuevoDestino})`);
+
+    // Validar si hay cambios en los contenidos
+    if (contenido_origen_id || contenido_destino_id) {
+      const validacion = await validarSecuenciaContenido(
+        nuevoOrigen,
+        nuevoDestino,
+        req.params.id,  // Excluir esta secuencia
+        true
+      );
+
+      if (!validacion.valido) {
+        console.log(`[UPDATE] ❌ Validación fallida: ${validacion.error}`);
+        return res.status(400).json({
+          message: "Validación fallida",
+          error: validacion.error,
+          detalles: validacion.detalles,
+          validacionesRealizadas: validacion.validacionesRealizadas
+        });
       }
     }
 
-    if (contenido_destino_id) {
-      const contenidoDestino = await Contenido.findByPk(contenido_destino_id);
-      if (!contenidoDestino) {
-        return res.status(400).json({ message: "El contenido destino especificado no existe" });
-      }
-    }
-
-    // 🚫 Validación 1: evitar relación inversa
-    if (contenido_origen_id && contenido_destino_id) {
-      const existeInversa = await SecuenciaContenido.findOne({
-        where: {
-          contenido_origen_id: contenido_destino_id,
-          contenido_destino_id: contenido_origen_id
-        }
-      });
-
-      if (existeInversa) {
-        return res.status(400).json({ message: "No se puede crear una relación inversa entre contenidos" });
-      }
-    }
-
-    // 🚫 Validación 2 (opcional): evitar que un contenido ya sea origen en otra secuencia
-    if (contenido_origen_id) {
-      const yaUsadoComoOrigen = await SecuenciaContenido.findOne({
-        where: { contenido_origen_id }
-      });
-
-      if (yaUsadoComoOrigen && yaUsadoComoOrigen.id !== secuencia.id) {
-        return res.status(400).json({ message: "Este contenido ya está asignado como origen en otra secuencia" });
-      }
-    }
-
-    // ✅ Actualizar la secuencia
-    await secuencia.update({
-      contenido_origen_id: contenido_origen_id || secuencia.contenido_origen_id,
-      contenido_destino_id: contenido_destino_id || secuencia.contenido_destino_id,
+    // Actualizar
+    const actualizada = await secuencia.update({
+      contenido_origen_id: nuevoOrigen,
+      contenido_destino_id: nuevoDestino,
       descripcion: descripcion !== undefined ? descripcion : secuencia.descripcion,
       estado: estado !== undefined ? estado : secuencia.estado
     });
 
-    res.json(secuencia);
+    console.log(`[UPDATE] ✅ ID ${secuencia.id} actualizada`);
+
+    return res.json({
+      message: "Secuencia actualizada correctamente",
+      secuencia: actualizada
+    });
   } catch (error) {
-    console.error("Error al actualizar secuencia:", error);
-    res.status(500).json({ message: "Error al actualizar la secuencia de contenido", error });
+    console.error(`[UPDATE] Error: ${error.message}`);
+    res.status(500).json({
+      message: "Error al actualizar secuencia",
+      error: error.message
+    });
   }
 };
 
