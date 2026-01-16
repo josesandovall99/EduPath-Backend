@@ -1,4 +1,111 @@
-const { Contenido, Tema, Subtema, Area , Estudiante } = require('../models');
+const { Contenido, Tema, Subtema, Area, Estudiante, SecuenciaContenido } = require('../models');
+
+/**
+ * Función auxiliar para manejar la redirección automática cuando un contenido es eliminado o inactivado
+ * 
+ * Lógica:
+ * - Si el contenido está en medio de una secuencia (A → B → C), crea A → C
+ * - Si el contenido es solo origen o solo destino, elimina la secuencia
+ * - Valida que no se creen ciclos
+ * - Valida que la nueva relación no exista antes de crearla
+ * 
+ * @param {number} contenidoId - ID del contenido que se elimina/inactiva
+ * @returns {Object} Información sobre las secuencias redirigidas y eliminadas
+ */
+async function handleSecuenciaRedirecccion(contenidoId) {
+  const resultado = {
+    secuenciasEliminadas: [],
+    secuenciasCreadas: [],
+    errores: []
+  };
+
+  try {
+    // 1. Encontrar todas las secuencias donde el contenido es ORIGEN (B en A → B)
+    const secuenciasComOrigen = await SecuenciaContenido.findAll({
+      where: { contenido_origen_id: contenidoId }
+    });
+
+    // 2. Encontrar todas las secuencias donde el contenido es DESTINO (B en B → C)
+    const secuenciasComoDestino = await SecuenciaContenido.findAll({
+      where: { contenido_destino_id: contenidoId }
+    });
+
+    // 3. Si está en medio de una secuencia, crear la redirección (A → C)
+    if (secuenciasComoDestino.length > 0 && secuenciasComOrigen.length > 0) {
+      for (const secuenciaOrigen of secuenciasComOrigen) {
+        for (const secuenciaDestino of secuenciasComoDestino) {
+          const contenido_origen_id = secuenciaDestino.contenido_origen_id;
+          const contenido_destino_id = secuenciaOrigen.contenido_destino_id;
+
+          // Validar que no sea un ciclo (A → A)
+          if (contenido_origen_id === contenido_destino_id) {
+            resultado.errores.push(
+              `No se puede crear redirección porque sería un ciclo: ${contenido_origen_id} → ${contenido_destino_id}`
+            );
+            continue;
+          }
+
+          // Verificar que la nueva relación no exista ya
+          const relacionExistente = await SecuenciaContenido.findOne({
+            where: {
+              contenido_origen_id,
+              contenido_destino_id
+            }
+          });
+
+          if (relacionExistente) {
+            resultado.errores.push(
+              `La secuencia ${contenido_origen_id} → ${contenido_destino_id} ya existe`
+            );
+            continue;
+          }
+
+          // Crear la nueva secuencia
+          const nuevaSecuencia = await SecuenciaContenido.create({
+            contenido_origen_id,
+            contenido_destino_id,
+            descripcion: `Redirección automática (origen: ${secuenciaDestino.contenido_origen_id} → ${contenidoId} → ${secuenciaOrigen.contenido_destino_id})`,
+            estado: true
+          });
+
+          resultado.secuenciasCreadas.push({
+            id: nuevaSecuencia.id,
+            de: contenido_origen_id,
+            a: contenido_destino_id
+          });
+        }
+      }
+    }
+
+    // 4. Eliminar todas las secuencias que involucran este contenido
+    // Eliminar donde el contenido es ORIGEN (B → C)
+    for (const secuencia of secuenciasComOrigen) {
+      await secuencia.destroy();
+      resultado.secuenciasEliminadas.push({
+        id: secuencia.id,
+        de: secuencia.contenido_origen_id,
+        a: secuencia.contenido_destino_id,
+        razon: 'Contenido origen eliminado/inactivado'
+      });
+    }
+
+    // Eliminar donde el contenido es DESTINO (A → B)
+    for (const secuencia of secuenciasComoDestino) {
+      await secuencia.destroy();
+      resultado.secuenciasEliminadas.push({
+        id: secuencia.id,
+        de: secuencia.contenido_origen_id,
+        a: secuencia.contenido_destino_id,
+        razon: 'Contenido destino eliminado/inactivado'
+      });
+    }
+
+    return resultado;
+  } catch (error) {
+    resultado.errores.push(error.message);
+    return resultado;
+  }
+}
 
 // Crear un contenido con validación de tema_id y subtema_id
 exports.createContenido = async (req, res) => {
@@ -83,14 +190,22 @@ exports.updateContenido = async (req, res) => {
   }
 };
 
-// Eliminar un contenido
+// Eliminar un contenido con redirección automática de secuencias
 exports.deleteContenido = async (req, res) => {
   try {
     const contenido = await Contenido.findByPk(req.params.id);
     if (!contenido) return res.status(404).json({ message: "Contenido no encontrado" });
 
+    // Manejar la redirección automática de secuencias
+    const resultadoRedirecccion = await handleSecuenciaRedirecccion(req.params.id);
+
+    // Eliminar el contenido
     await contenido.destroy();
-    res.json({ message: "Contenido eliminado correctamente" });
+
+    res.json({
+      message: "Contenido eliminado correctamente",
+      redirecccion: resultadoRedirecccion
+    });
   } catch (error) {
     res.status(500).json({ message: "Error al eliminar el contenido", error });
   }
@@ -115,6 +230,49 @@ exports.getContenidosPorSubtema = async (req, res) => {
     res.json(contenidos);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener los contenidos por subtema", error });
+  }
+};
+
+// Toggle del estado de un contenido (inactivo/activo) con redirección automática de secuencias
+// NOTA: Este método se activa cuando el modelo Contenido tenga un campo 'estado'
+exports.toggleEstadoContenido = async (req, res) => {
+  try {
+    const contenido = await Contenido.findByPk(req.params.id);
+    if (!contenido) {
+      return res.status(404).json({ message: "Contenido no encontrado" });
+    }
+
+    // Verificar si el modelo tiene un campo 'estado'
+    if (!('estado' in contenido.dataValues)) {
+      return res.status(400).json({ 
+        message: "El modelo Contenido no tiene un campo 'estado'. Debe agregarse primero a la migración de la base de datos." 
+      });
+    }
+
+    // Si el contenido va a ser inactivado, manejar la redirección
+    const estadoActual = contenido.estado;
+    if (estadoActual === true) {
+      const resultadoRedirecccion = await handleSecuenciaRedirecccion(req.params.id);
+      
+      // Inactivar el contenido
+      await contenido.update({ estado: false });
+
+      return res.json({
+        message: "Contenido inactivado correctamente",
+        contenido,
+        redirecccion: resultadoRedirecccion
+      });
+    } else {
+      // Si se reactiva, simplemente cambiar el estado sin afectar secuencias
+      await contenido.update({ estado: true });
+
+      return res.json({
+        message: "Contenido reactivado correctamente",
+        contenido
+      });
+    }
+  } catch (error) {
+    res.status(500).json({ message: "Error al cambiar el estado del contenido", error });
   }
 };
 
