@@ -81,7 +81,7 @@ async function validarSecuenciaContenido(
     resultado.validacionesRealizadas.push('✅ V4: No hay duplicados');
 
     // ========== VALIDACIÓN 4: Relaciones inversas directas ==========
-    const secuenciaInversa = await SecuenciaContenido.findOne(
+    const secuenciaInversa = await SecuenciaContenido.findOne({
       where: {
         contenido_origen_id: contenido_destino_id,
         contenido_destino_id: contenido_origen_id
