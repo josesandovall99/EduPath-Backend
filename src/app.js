@@ -57,8 +57,19 @@ app.get('/debug', (req, res) => {
     res.json({ mensaje: "El servidor responde ✅", estado: "Online", puerto: 4000 });
 });
 
-// --- ARRANQUE DEL SERVIDOR ---
+// --- ARRANQUE DEL SERVIDOR CON SINCRONIZACIÓN ---
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-    console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
-});
+
+// Sincronizamos con la base de datos antes de iniciar el servidor
+// .sync({ alter: true }) creará las tablas automáticamente en la nueva BD de Render
+db.sequelize.sync({ alter: true })
+    .then(() => {
+        console.log('✅ Base de datos sincronizada con éxito en Render');
+        app.listen(PORT, () => {
+            console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+        });
+    })
+    .catch((err) => {
+        console.error('❌ No se pudo conectar a la base de datos de Render:', err.message);
+        console.log('Asegúrate de haber añadido tu IP en "Access Control" dentro del dashboard de Render.');
+    });
