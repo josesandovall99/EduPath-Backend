@@ -1,5 +1,5 @@
 const bcrypt = require('bcryptjs');
-const { Estudiante, Persona } = require('../models');
+const { Estudiante, Persona, Administrador } = require('../models');
 
 const loginEstudiante = async (req, res) => {
   try {
@@ -68,3 +68,43 @@ const cambiarContraseñaPrimerIngreso = async (req, res) => {
 
 // No olvides exportarla
 module.exports = { loginEstudiante, cambiarContraseñaPrimerIngreso };
+
+/* =========================
+   LOGIN ADMINISTRADOR
+   Nota: se devuelve `primerIngreso` pero no se fuerza cambio
+   de contraseña en este login (según requerimiento).
+========================= */
+const loginAdministrador = async (req, res) => {
+  try {
+    const { codigoAcceso, contraseña } = req.body;
+
+    const persona = await Persona.findOne({
+      where: { codigoAcceso, tipoUsuario: 'ADMINISTRADOR' },
+      include: { model: Administrador, as: 'administrador' },
+    });
+
+    if (!persona || !persona.administrador) {
+      return res.status(404).json({ mensaje: 'Administrador no encontrado' });
+    }
+
+    const passwordValido = await bcrypt.compare(contraseña, persona.contraseña);
+    if (!passwordValido) return res.status(401).json({ mensaje: 'Contraseña incorrecta' });
+
+    res.json({
+      mensaje: 'Bienvenido administrador',
+      primerIngreso: persona.primer_ingreso,
+      administrador: {
+        id: persona.administrador.id,
+        personaId: persona.id,
+        nombre: persona.nombre,
+        email: persona.email,
+        cargo: persona.administrador.cargo,
+        nivelAcceso: persona.administrador.nivelAcceso,
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ mensaje: 'Error en el servidor', error: error.message });
+  }
+};
+
+module.exports = { loginEstudiante, cambiarContraseñaPrimerIngreso, loginAdministrador };

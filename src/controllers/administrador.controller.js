@@ -1,4 +1,5 @@
 const sequelize = require("../config/database");
+const bcrypt = require('bcryptjs');
 const { Persona, Administrador } = require("../models");
 
 /* =========================
@@ -17,13 +18,17 @@ const crearAdministrador = async (req, res) => {
       nivelAcceso,
     } = req.body;
 
+    // 🔒 Encriptar contraseña antes de crear Persona
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(contraseña, salt);
+
     // 1️⃣ Crear Persona
     const persona = await Persona.create(
       {
         nombre,
         email,
         codigoAcceso,
-        contraseña,
+        contraseña: passwordHash,
         tipoUsuario: "ADMINISTRADOR",
       },
       { transaction }
@@ -135,11 +140,14 @@ const actualizarAdministrador = async (req, res) => {
       nivelAcceso,
     } = req.body;
 
-    // 1️⃣ Actualizar Persona
-    await administrador.persona.update(
-      { nombre, email, codigoAcceso, contraseña },
-      { transaction }
-    );
+    // 1️⃣ Actualizar Persona (hashear contraseña si es enviada)
+    const personaUpdate = { nombre, email, codigoAcceso };
+    if (contraseña) {
+      const salt = await bcrypt.genSalt(10);
+      personaUpdate.contraseña = await bcrypt.hash(contraseña, salt);
+    }
+
+    await administrador.persona.update(personaUpdate, { transaction });
 
     // 2️⃣ Actualizar Administrador
     await administrador.update(
