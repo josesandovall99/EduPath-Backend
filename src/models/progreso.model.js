@@ -1,5 +1,5 @@
 module.exports = (sequelize, DataTypes) => {
-  return sequelize.define('Progreso', {
+  const Progreso = sequelize.define('Progreso', {
     id: {
       type: DataTypes.BIGINT,
       primaryKey: true,
@@ -8,6 +8,7 @@ module.exports = (sequelize, DataTypes) => {
     estudiante_id: DataTypes.BIGINT,
     ejercicio_id: DataTypes.BIGINT,
     miniproyecto_id: DataTypes.BIGINT,
+    contenido_id: DataTypes.BIGINT,
     completado: DataTypes.BOOLEAN,
     estado: DataTypes.TEXT,
     fecha_inicio: DataTypes.DATE,
@@ -16,4 +17,10 @@ module.exports = (sequelize, DataTypes) => {
     tableName: 'progreso',
     timestamps: false
   });
+
+  Progreso.associate = models => {
+    Progreso.belongsTo(models.Contenido, { foreignKey: 'contenido_id', as: 'contenido' });
+  };
+
+  return Progreso;
 };
