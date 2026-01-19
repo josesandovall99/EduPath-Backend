@@ -69,15 +69,6 @@ async function validarSecuenciaContenido(
       whereClauseDuplicados.id = { [Op.ne]: excludeSecuenciaId };
     }
 
-<<<<<<< HEAD
-    // Validar que no sea la misma relación (origen === destino)
-    if (contenido_origen_id === contenido_destino_id) {
-      return res.status(400).json({ message: "El contenido origen no puede ser el mismo que el destino" });
-    }
-
-    // 🚫 Validación 1: evitar relación inversa
-    const existeInversa = await SecuenciaContenido.findOne({
-=======
     const secuenciaDuplicada = await SecuenciaContenido.findOne({
       where: whereClauseDuplicados
     });
@@ -90,8 +81,7 @@ async function validarSecuenciaContenido(
     resultado.validacionesRealizadas.push('✅ V4: No hay duplicados');
 
     // ========== VALIDACIÓN 4: Relaciones inversas directas ==========
-    const secuenciaInversa = await SecuenciaContenido.findOne({
->>>>>>> 044d90a411571c4499e580840d7ec83399b13a71
+    const secuenciaInversa = await SecuenciaContenido.findOne(
       where: {
         contenido_origen_id: contenido_destino_id,
         contenido_destino_id: contenido_origen_id
@@ -113,11 +103,6 @@ async function validarSecuenciaContenido(
       whereClauseSalidas.id = { [Op.ne]: excludeSecuenciaId };
     }
 
-<<<<<<< HEAD
-    // ✅ VALIDACIÓN 2 ELIMINADA para permitir reorganización de secuencias
-    // Ahora un contenido puede ser origen en múltiples secuencias
-    // Esto permite insertar secuencias en el medio y reorganizar el orden
-=======
     const salidasExistentes = await SecuenciaContenido.findAll({
       where: whereClauseSalidas
     });
@@ -137,7 +122,6 @@ async function validarSecuenciaContenido(
     if (excludeSecuenciaId) {
       whereClaseEntradas.id = { [Op.ne]: excludeSecuenciaId };
     }
->>>>>>> 044d90a411571c4499e580840d7ec83399b13a71
 
     const entradasExistentes = await SecuenciaContenido.findAll({
       where: whereClaseEntradas
@@ -473,48 +457,10 @@ exports.updateSecuenciaContenido = async (req, res) => {
       }
     }
 
-<<<<<<< HEAD
-    if (contenido_destino_id) {
-      const contenidoDestino = await Contenido.findByPk(contenido_destino_id);
-      if (!contenidoDestino) {
-        return res.status(400).json({ message: "El contenido destino especificado no existe" });
-      }
-    }
-
-    // Validar que no sea la misma relación (origen === destino)
-    if (contenido_origen_id && contenido_destino_id && contenido_origen_id === contenido_destino_id) {
-      return res.status(400).json({ message: "El contenido origen no puede ser el mismo que el destino" });
-    }
-
-    // 🚫 Validación 1: evitar relación inversa
-    if (contenido_origen_id && contenido_destino_id) {
-      const existeInversa = await SecuenciaContenido.findOne({
-        where: {
-          contenido_origen_id: contenido_destino_id,
-          contenido_destino_id: contenido_origen_id,
-          id: { [Op.ne]: secuencia.id } // Excluir la secuencia actual
-        }
-      });
-
-      if (existeInversa) {
-        return res.status(400).json({ message: "No se puede crear una relación inversa entre contenidos" });
-      }
-    }
-
-    // ✅ VALIDACIÓN 2 ELIMINADA para permitir reorganización de secuencias
-    // Ahora un contenido puede ser origen en múltiples secuencias
-    // Esto permite actualizar secuencias sin restricciones de cascada
-
-    // ✅ Actualizar la secuencia
-    await secuencia.update({
-      contenido_origen_id: contenido_origen_id || secuencia.contenido_origen_id,
-      contenido_destino_id: contenido_destino_id || secuencia.contenido_destino_id,
-=======
     // Actualizar
     const actualizada = await secuencia.update({
       contenido_origen_id: nuevoOrigen,
       contenido_destino_id: nuevoDestino,
->>>>>>> 044d90a411571c4499e580840d7ec83399b13a71
       descripcion: descripcion !== undefined ? descripcion : secuencia.descripcion,
       estado: estado !== undefined ? estado : secuencia.estado
     });
