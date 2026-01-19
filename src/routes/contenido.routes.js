@@ -8,6 +8,7 @@ router.get('/', contenidoController.getContenidos);
 router.get('/:id', contenidoController.getContenidoById);
 router.put('/:id', contenidoController.updateContenido);
 router.delete('/:id', contenidoController.deleteContenido);
+router.put('/:id/toggle-estado', contenidoController.toggleEstadoContenido);
 router.get('/subtema/:subtemaId', contenidoController.getContenidosPorSubtema);
 router.get('/categoria/:categoria', contenidoController.getContenidosPorCategoria);
 router.get('/area/nombre/:nombreArea', contenidoController.getContenidosPorAreaNombre);
