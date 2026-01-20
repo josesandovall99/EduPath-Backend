@@ -1,4 +1,4 @@
-const { Progreso, Area, Tema, Subtema, Contenido, Ejercicio, Miniproyecto, Evaluacion, RespuestaEstudianteMiniproyecto, Estudiante } = require('../models');
+const { Area, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido } = require('../models');
 const { Op } = require('sequelize');
 
 exports.create = async (req, res) => {
@@ -38,52 +38,60 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
       });
     }
 
-    // Convertir a números
     const aId = parseInt(area_id, 10);
     const esId = parseInt(estudiante_id, 10);
 
-    // Validar que sean números válidos
     if (isNaN(aId) || isNaN(esId)) {
       return res.status(400).json({
         message: "area_id y estudiante_id deben ser números válidos"
       });
     }
 
-    // Verificar que el área existe
     const area = await Area.findByPk(aId);
     if (!area) {
-      return res.status(404).json({
-        message: "Área no encontrada"
-      });
+      return res.status(404).json({ message: "Área no encontrada" });
     }
 
-    // Verificar que el estudiante existe
     const estudiante = await Estudiante.findByPk(esId);
     if (!estudiante) {
-      return res.status(404).json({
-        message: "Estudiante no encontrado"
-      });
+      return res.status(404).json({ message: "Estudiante no encontrado" });
     }
 
-    // Obtener todos los temas del área
     const temas = await Tema.findAll({
       where: { area_id: aId },
       attributes: ['id']
     });
-
     const temaIds = temas.map(t => t.id);
 
     // ==========================================
-    // 1. CONTENIDOS DEL ÁREA
+    // 1. CONTENIDOS DEL ÁREA (filtrados por secuencia activa)
     // ==========================================
-    const contenidos = await Contenido.findAll({
+    const contenidosDelArea = await Contenido.findAll({
       where: { tema_id: { [Op.in]: temaIds } },
       attributes: ['id']
     });
+    const contenidoIdsDelArea = contenidosDelArea.map(c => c.id);
 
-    const contenidoIds = contenidos.map(c => c.id);
-    
-    // Contenidos visualizados
+    const secuencias = await SecuenciaContenido.findAll({
+      where: {
+        estado: true,
+        [Op.or]: [
+          { contenido_origen_id: { [Op.in]: contenidoIdsDelArea } },
+          { contenido_destino_id: { [Op.in]: contenidoIdsDelArea } }
+        ]
+      },
+      attributes: ['contenido_origen_id', 'contenido_destino_id']
+    });
+
+    const contenidoIdsEnSecuencia = new Set();
+    secuencias.forEach(seq => {
+      contenidoIdsEnSecuencia.add(seq.contenido_origen_id);
+      contenidoIdsEnSecuencia.add(seq.contenido_destino_id);
+    });
+
+    const contenidoIds = [...contenidoIdsEnSecuencia].filter(id => contenidoIdsDelArea.includes(id));
+    const totalContenidos = contenidoIds.length;
+
     const contenidosVisualizados = await Progreso.count({
       where: {
         estudiante_id: esId,
@@ -93,74 +101,58 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
       }
     });
 
-    const totalContenidos = contenidoIds.length;
+    console.log(`📦 Contenido IDs usados para el cálculo de progreso (en secuencia activa):`, contenidoIds);
+    console.log(`👁️ Contenidos visualizados por estudiante ${esId}: ${contenidosVisualizados}`);
 
     // ==========================================
-    // 2. EJERCICIOS DEL ÁREA
+    // 2. EJERCICIOS DEL ÁREA (desde respuestas enviadas o aprobadas)
     // ==========================================
-    // Obtener subtemas del área
     const subtemas = await Subtema.findAll({
       where: { tema_id: { [Op.in]: temaIds } },
       attributes: ['id']
     });
-
     const subtemaIds = subtemas.map(s => s.id);
 
-    // Obtener ejercicios a través de subtemas
     const ejerciciosArea = await Ejercicio.findAll({
       where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] } },
       attributes: ['id']
     });
-
     const ejercicioIds = ejerciciosArea.map(e => e.id);
+    const totalEjercicios = ejercicioIds.length;
 
-    // Ejercicios completados/aprobados
-    const ejerciciosCompletados = await Evaluacion.count({
+    const ejerciciosCompletados = await RespuestaEstudianteEjercicio.count({
       where: {
         estudiante_id: esId,
         ejercicio_id: { [Op.in]: ejercicioIds },
-        estado: 'Aprobado'
+        estado: { [Op.in]: ['ENVIADO', 'APROBADO'] }
       }
     });
 
-    const totalEjercicios = ejercicioIds.length;
-
     // ==========================================
-    // 3. MINIPROYECTOS DEL ÁREA
+    // 3. MINIPROYECTOS DEL ÁREA (desde respuestas enviadas o completadas)
     // ==========================================
-    // Obtener todos los miniproyectos (simplificado)
-    let miniproyectoIds = [];
-    let totalMiniproyectos = 0;
-    let miniproyectosCompletados = 0;
-
-    const miniproyectosArea = await Miniproyecto.findAll({
-      attributes: ['id'],
-      raw: true
+    const respuestasMiniproyectos = await RespuestaEstudianteMiniproyecto.findAll({
+      where: {
+        estudiante_id: esId,
+        estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] }
+      },
+      include: [{
+        model: Miniproyecto,
+        as: 'miniproyecto', // 👈 alias obligatorio
+        where: { area_id: aId },
+        attributes: ['id']
+      }]
     });
 
-    miniproyectoIds = miniproyectosArea.map(m => m.id);
-
-    if (miniproyectoIds.length > 0) {
-      totalMiniproyectos = miniproyectoIds.length;
-
-      // Miniproyectos completados
-      miniproyectosCompletados = await RespuestaEstudianteMiniproyecto.count({
-        where: {
-          estudiante_id: esId,
-          miniproyecto_id: { [Op.in]: miniproyectoIds },
-          estado: 'Completado'
-        }
-      });
-    }
+    const totalMiniproyectos = respuestasMiniproyectos.length;
+    const miniproyectosCompletados = totalMiniproyectos;
 
     // ==========================================
     // 4. CÁLCULO DE PORCENTAJE
     // ==========================================
-    // Contar solo los tipos que tienen al menos 1 item
     let totalItems = 0;
     let itemsCompletados = 0;
 
-    // Sumar solo los que existen
     if (totalContenidos > 0) {
       totalItems += totalContenidos;
       itemsCompletados += contenidosVisualizados;
@@ -181,7 +173,6 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
       porcentajeProgreso = Math.round((itemsCompletados / totalItems) * 100);
     }
 
-    // Construir respuesta dinámica (solo incluir secciones que tengan items)
     const progresoDetallado = {};
 
     if (totalContenidos > 0) {
@@ -224,10 +215,11 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error en obtenerProgresoEstudiantePorArea:', error);
+    console.error('❌ Error en obtenerProgresoEstudiantePorArea:', error);
     res.status(500).json({
       message: "Error al obtener progreso del estudiante por área",
       error: error.message || error
     });
   }
 };
+
