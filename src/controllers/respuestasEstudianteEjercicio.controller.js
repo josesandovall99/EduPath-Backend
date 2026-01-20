@@ -200,6 +200,67 @@ const eliminarRespuestaEjercicio = async (req, res) => {
     }
 };
 
+// Verificar si un ejercicio está completado/aprobado por un estudiante
+const verificarEjercicioCompletado = async (req, res) => {
+    try {
+        const { ejercicio_id, estudiante_id } = req.query;
+
+        if (!ejercicio_id || !estudiante_id) {
+            return res.status(400).json({
+                message: "ejercicio_id y estudiante_id son requeridos como parámetros de query"
+            });
+        }
+
+        // Convertir a números
+        const eId = parseInt(ejercicio_id, 10);
+        const esId = parseInt(estudiante_id, 10);
+
+        // Validar que sean números válidos
+        if (isNaN(eId) || isNaN(esId)) {
+            return res.status(400).json({
+                message: "ejercicio_id y estudiante_id deben ser números válidos"
+            });
+        }
+
+        // Buscar evaluación aprobada para este estudiante y ejercicio
+        const evaluacion = await Evaluacion.findOne({
+            where: {
+                estudiante_id: esId,
+                ejercicio_id: eId,
+                estado: 'Aprobado'
+            }
+        });
+
+        if (evaluacion) {
+            return res.json({
+                completado: true,
+                ejercicio_id: eId,
+                estudiante_id: esId,
+                estado: 'Aprobado',
+                calificacion: evaluacion.calificacion,
+                fecha_evaluacion: evaluacion.fecha_evaluacion,
+                mensaje: "El ejercicio ha sido completado y aprobado"
+            });
+        }
+
+        // Si no hay evaluación aprobada, retornar que no está completado
+        res.json({
+            completado: false,
+            ejercicio_id: eId,
+            estudiante_id: esId,
+            estado: 'No completado',
+            mensaje: "El ejercicio no ha sido completado o no está aprobado"
+        });
+
+    } catch (error) {
+        console.error('Error en verificarEjercicioCompletado:', error);
+        res.status(500).json({
+            message: "Error al verificar estado del ejercicio",
+            error: error.message || error
+        });
+    }
+};
+
 /* ============================================================
    EXPORTACIONES
 ============================================================ */
@@ -209,5 +270,6 @@ module.exports = {
     obtenerRespuestasEjercicio,
     obtenerRespuestaEjercicioPorId,
     actualizarRespuestaEjercicio,
-    eliminarRespuestaEjercicio
+    eliminarRespuestaEjercicio,
+    verificarEjercicioCompletado
 };

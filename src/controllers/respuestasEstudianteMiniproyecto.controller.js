@@ -163,6 +163,67 @@ const eliminarRespuestaMiniproyecto = async (req, res) => {
   }
 };
 
+/* =========================
+   VERIFICAR MINIPROYECTO COMPLETADO
+========================= */
+const verificarMiniproyectoCompletado = async (req, res) => {
+  try {
+    const { miniproyecto_id, estudiante_id } = req.query;
+
+    if (!miniproyecto_id || !estudiante_id) {
+      return res.status(400).json({
+        message: "miniproyecto_id y estudiante_id son requeridos como parámetros de query"
+      });
+    }
+
+    // Convertir a números
+    const mId = parseInt(miniproyecto_id, 10);
+    const esId = parseInt(estudiante_id, 10);
+
+    // Validar que sean números válidos
+    if (isNaN(mId) || isNaN(esId)) {
+      return res.status(400).json({
+        message: "miniproyecto_id y estudiante_id deben ser números válidos"
+      });
+    }
+
+    // Buscar respuesta completada para este estudiante y miniproyecto
+    const respuesta = await RespuestaEstudianteMiniproyecto.findOne({
+      where: {
+        estudiante_id: esId,
+        miniproyecto_id: mId,
+        estado: 'Completado'
+      }
+    });
+
+    if (respuesta) {
+      return res.json({
+        completado: true,
+        miniproyecto_id: mId,
+        estudiante_id: esId,
+        estado: 'Completado',
+        fecha_respuesta: respuesta.createdAt,
+        mensaje: "El miniproyecto ha sido completado"
+      });
+    }
+
+    // Si no está completado, retornar que no está completado
+    res.json({
+      completado: false,
+      miniproyecto_id: mId,
+      estudiante_id: esId,
+      estado: 'No completado',
+      mensaje: "El miniproyecto no ha sido completado"
+    });
+
+  } catch (error) {
+    console.error('Error en verificarMiniproyectoCompletado:', error);
+    res.status(500).json({
+      message: "Error al verificar estado del miniproyecto",
+      error: error.message || error
+    });
+  }
+};
 
 
 Estudiante.hasMany(RespuestaEstudianteMiniproyecto, {
@@ -192,4 +253,5 @@ module.exports = {
   obtenerRespuestaMiniproyectoPorId,
   actualizarRespuestaMiniproyecto,
   eliminarRespuestaMiniproyecto,
+  verificarMiniproyectoCompletado
 };
