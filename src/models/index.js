@@ -18,7 +18,7 @@ const models = {
   Subtema: require('./subtema.models')(sequelize, DataTypes),
   Contenido: require('./contenido.models')(sequelize, DataTypes),
   Ejercicio: require('./ejercicio.models')(sequelize, DataTypes),
-
+  SecuenciaSubtema : require('./secuenciaSubtema.model')(sequelize, DataTypes),
   SecuenciaContenido: require('./secuenciaContenido.model')(sequelize, DataTypes)
 };
 

@@ -35,6 +35,8 @@ app.use('/areas', require('./routes/area.routes'));
 app.use('/temas', require('./routes/tema.routes'));
 app.use('/subtemas', require('./routes/subtema.routes'));
 app.use('/contenidos', require('./routes/contenido.routes'));
+const secuenciaSubtemaRoutes = require('./routes/secuenciaSubtema.routes');
+app.use('/secuencias-subtema', secuenciaSubtemaRoutes);
 app.use('/secuencias-contenido', require('./routes/secuenciaContenido.routes'));
 app.use('/ejercicios', require('./routes/ejercicio.routes'));
 app.use('/persona', require('./routes/persona.routes'));
