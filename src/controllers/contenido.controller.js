@@ -1,4 +1,4 @@
-const { Contenido, Tema, Subtema, Area, Estudiante, SecuenciaContenido } = require('../models');
+const { Contenido, Tema, Subtema, Area, Estudiante, SecuenciaContenido, Progreso } = require('../models');
 
 /**
  * Función auxiliar para manejar la redirección automática cuando un contenido es eliminado o inactivado
@@ -390,3 +390,146 @@ exports.adaptarContenidoPorPerfil = async (req, res) => {
   }
 };
 
+// Marcar contenido como visualizado y registrar progreso del estudiante
+exports.marcarContenidoVisualizado = async (req, res) => {
+  try {
+    const { contenido_id, estudiante_id } = req.body;
+
+    if (!contenido_id || !estudiante_id) {
+      return res.status(400).json({
+        message: "contenido_id y estudiante_id son requeridos"
+      });
+    }
+
+    // Verificar que el contenido existe
+    const contenido = await Contenido.findByPk(contenido_id);
+    if (!contenido) {
+      return res.status(404).json({
+        message: "Contenido no encontrado"
+      });
+    }
+
+    // Verificar que el estudiante existe
+    const estudiante = await Estudiante.findByPk(estudiante_id);
+    if (!estudiante) {
+      return res.status(404).json({
+        message: "Estudiante no encontrado"
+      });
+    }
+
+    // Marcar el contenido como visualizado
+    await contenido.update({ visualizado: true });
+
+    // Buscar o crear el registro de progreso para este estudiante y contenido
+    const [progreso, created] = await Progreso.findOrCreate({
+      where: {
+        estudiante_id: estudiante_id,
+        contenido_id: contenido_id
+      },
+      defaults: {
+        estudiante_id: estudiante_id,
+        contenido_id: contenido_id,
+        completado: true,
+        estado: 'Visualizado',
+        fecha_inicio: new Date(),
+        fecha_fin: new Date()
+      }
+    });
+
+    // Si ya existía, actualizar a completado
+    if (!created) {
+      await progreso.update({
+        completado: true,
+        estado: 'Visualizado',
+        fecha_fin: new Date()
+      });
+    }
+
+    res.json({
+      message: "Contenido marcado como visualizado y progreso registrado",
+      contenido: {
+        id: contenido.id,
+        titulo: contenido.titulo,
+        visualizado: contenido.visualizado
+      },
+      progreso: {
+        id: progreso.id,
+        estudiante_id: progreso.estudiante_id,
+        contenido_id: progreso.contenido_id,
+        completado: progreso.completado,
+        estado: progreso.estado,
+        fecha_inicio: progreso.fecha_inicio,
+        fecha_fin: progreso.fecha_fin
+      }
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Error al marcar contenido como visualizado",
+      error: error.message || error
+    });
+  }
+};
+
+// Obtener estado de visualización de un contenido por un estudiante
+exports.obtenerEstadoVisualizacion = async (req, res) => {
+  try {
+    const { contenido_id, estudiante_id } = req.query;
+
+    if (!contenido_id || !estudiante_id) {
+      return res.status(400).json({
+        message: "contenido_id y estudiante_id son requeridos como parámetros de query"
+      });
+    }
+
+    // Convertir a números
+    const cId = parseInt(contenido_id, 10);
+    const eId = parseInt(estudiante_id, 10);
+
+    // Validar que sean números válidos
+    if (isNaN(cId) || isNaN(eId)) {
+      return res.status(400).json({
+        message: "contenido_id y estudiante_id deben ser números válidos"
+      });
+    }
+
+    // Buscar el registro de progreso
+    const progreso = await Progreso.findOne({
+      where: {
+        estudiante_id: eId,
+        contenido_id: cId
+      }
+    });
+
+    // Si no existe registro de progreso, retornar que no ha sido visualizado
+    if (!progreso) {
+      return res.json({
+        visualizado: false,
+        contenido_id: cId,
+        estudiante_id: eId,
+        estado: 'No visualizado',
+        fecha_inicio: null,
+        fecha_fin: null,
+        completado: false,
+        mensaje: "El contenido no ha sido visualizado por este estudiante"
+      });
+    }
+
+    // Si existe, retornar el estado
+    res.json({
+      visualizado: progreso.completado === true && progreso.estado === 'Visualizado',
+      contenido_id: progreso.contenido_id,
+      estudiante_id: progreso.estudiante_id,
+      estado: progreso.estado,
+      fecha_inicio: progreso.fecha_inicio,
+      fecha_fin: progreso.fecha_fin,
+      completado: progreso.completado
+    });
+
+  } catch (error) {
+    console.error('Error en obtenerEstadoVisualizacion:', error);
+    res.status(500).json({
+      message: "Error al obtener estado de visualización",
+      error: error.message || error
+    });
+  }
+};

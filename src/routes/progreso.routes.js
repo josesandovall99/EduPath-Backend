@@ -2,6 +2,7 @@ const router = require('express').Router();
 const controller = require('../controllers/progreso.controller');
 
 router.post('/', controller.create);
+router.get('/por-area', controller.obtenerProgresoEstudiantePorArea);
 router.get('/', controller.findAll);
 router.get('/:id', controller.findOne);
 router.put('/:id', controller.update);

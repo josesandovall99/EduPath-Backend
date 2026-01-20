@@ -28,6 +28,10 @@ module.exports = (sequelize, DataTypes) => {
     subtema_id: {
       type: DataTypes.BIGINT,
       allowNull: false
+    },
+    visualizado: {
+      type: DataTypes.BOOLEAN,
+      defaultValue: false
     }
   }, {
     tableName: 'contenidos',
@@ -38,6 +42,9 @@ module.exports = (sequelize, DataTypes) => {
     // Relaciones básicas siempre presentes
     Contenido.belongsTo(models.Tema, { foreignKey: 'tema_id' });
     Contenido.belongsTo(models.Subtema, { foreignKey: 'subtema_id' });
+    
+    // Relación con Progreso
+    Contenido.hasMany(models.Progreso, { foreignKey: 'contenido_id', as: 'progresos' });
 
     // Verificamos que el modelo existe antes de asociar para evitar el Error de subclass
     if (models.SecuenciaContenido) {
