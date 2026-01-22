@@ -1,5 +1,6 @@
-const { Area, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido } = require('../models');
+const { Area, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido, Persona } = require('../models');
 const { Op } = require('sequelize');
+const PDFDocument = require('pdfkit');
 
 exports.create = async (req, res) => {
   try {
@@ -561,4 +562,133 @@ exports.getCalificacionEstimada = async (req, res) => {
     res.status(500).json({ message: 'Error al obtener calificación estimada', error: error.message || error });
   }
 };
+
+// Generar PDF con tipo de reporte: 'student' | 'date' | 'activity'
+// Query params:
+// - type: 'student'|'date'|'activity' (required)
+// - estudiante_id: required when type='student'
+exports.generarPdfReporte = async (req, res) => {
+  try {
+    const type = (req.query.type || '').toString().toLowerCase();
+    if (!['student', 'date', 'activity'].includes(type)) {
+      return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'" });
+    }
+
+    // Crear documento PDF en memoria y enviarlo como stream
+    const doc = new PDFDocument({ margin: 40 });
+
+    // Encabezados de respuesta para descargar PDF
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="reporte_${type}.pdf"`);
+
+    // Pipe del PDF directo a la respuesta
+    doc.pipe(res);
+
+    // Título
+    doc.fontSize(18).text('EduPath - Informe', { align: 'center' });
+    doc.moveDown(0.5);
+    doc.fontSize(12).text(`Tipo de informe: ${type}`, { align: 'center' });
+    doc.moveDown(1);
+
+    if (type === 'student') {
+      const estudianteId = parseInt(req.query.estudiante_id || req.params.estudiante_id, 10);
+      if (!estudianteId || isNaN(estudianteId)) {
+        doc.text('estudiante_id es requerido para este tipo de informe');
+        doc.end();
+        return;
+      }
+
+      const estudiante = await Estudiante.findByPk(estudianteId, { include: [{ model: Persona, as: 'persona' }] });
+      if (!estudiante) {
+        doc.text(`Estudiante con id ${estudianteId} no encontrado`);
+        doc.end();
+        return;
+      }
+
+      doc.fontSize(14).text(`Estudiante: ${estudiante.persona ? estudiante.persona.nombre : (estudiante.nombre || estudiante.id)}`);
+      doc.moveDown(0.5);
+
+      // Resumen rápido: contenidos visualizados, ejercicios y miniproyectos
+      const contenidosVisualizados = await Progreso.count({ where: { estudiante_id: estudianteId, completado: true, estado: 'Visualizado' } });
+      const ejerciciosCompletados = await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: estudianteId, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } });
+      const minisCompletados = await RespuestaEstudianteMiniproyecto.count({ where: { estudiante_id: estudianteId, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } });
+
+      doc.text(`Contenidos visualizados: ${contenidosVisualizados}`);
+      doc.text(`Ejercicios completados: ${ejerciciosCompletados}`);
+      doc.text(`Miniproyectos entregados: ${minisCompletados}`);
+      doc.moveDown(0.5);
+
+      // Últimas evaluaciones
+      const ultimasEval = await Evaluacion.findAll({ where: { estudiante_id: estudianteId }, order: [['fecha_evaluacion', 'DESC']], limit: 10 });
+      doc.fontSize(12).text('Últimas evaluaciones:', { underline: true });
+      if (ultimasEval.length === 0) {
+        doc.text('No hay evaluaciones');
+      } else {
+        ultimasEval.forEach(ev => {
+          const tipo = ev.ejercicio_id ? 'Ejercicio' : ev.miniproyecto_id ? 'Miniproyecto' : 'Otro';
+          const fecha = ev.fecha_evaluacion ? new Date(ev.fecha_evaluacion).toLocaleString() : '-';
+          doc.text(`${fecha} — ${tipo} — Calificación: ${parseFloat(ev.calificacion).toFixed(2)} — Estado: ${ev.estado}`);
+        });
+      }
+
+    } else if (type === 'date') {
+      // Agrupar estudiantes por fecha de creación y mostrar promedios
+      const estudiantes = await Estudiante.findAll({ include: [{ model: Persona, as: 'persona' }] });
+      // Agrupar por fecha (YYYY-MM-DD)
+      const groups = {};
+      for (const st of estudiantes) {
+        const created = st.createdAt ? new Date(st.createdAt).toISOString().split('T')[0] : 'unknown';
+        groups[created] = groups[created] || [];
+        groups[created].push(st);
+      }
+
+      doc.fontSize(12).text('Cohortes por fecha de creación:', { underline: true });
+      for (const date of Object.keys(groups).sort()) {
+        const list = groups[date];
+        // Para simplicidad, calculamos un promedio de progreso como (ejercicios+minis+contenidos)/3 por estudiante
+        let sumAvg = 0;
+        for (const st of list) {
+          const contenidos = await Progreso.count({ where: { estudiante_id: st.id, completado: true, estado: 'Visualizado' } });
+          const ejercicios = await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: st.id, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } });
+          const minis = await RespuestaEstudianteMiniproyecto.count({ where: { estudiante_id: st.id, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } });
+          const avg = (contenidos + ejercicios + minis) / 3;
+          sumAvg += avg;
+        }
+        const avgCohorte = list.length ? (sumAvg / list.length) : 0;
+        doc.text(`${date} — Estudiantes: ${list.length} — Promedio (simple): ${avgCohorte.toFixed(2)}`);
+      }
+
+    } else if (type === 'activity') {
+      // Totales de actividades en el sistema (contenidos visualizados, ejercicios completados, miniproyectos entregados)
+      const totalContenidos = await Progreso.count({ where: { completado: true, estado: 'Visualizado' } });
+      const totalEjercicios = await RespuestaEstudianteEjercicio.count({ where: { estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } });
+      const totalMinis = await RespuestaEstudianteMiniproyecto.count({ where: { estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } });
+
+      doc.fontSize(12).text('Resumen de actividades del sistema:', { underline: true });
+      doc.text(`Contenidos visualizados (total): ${totalContenidos}`);
+      doc.text(`Ejercicios completados (total): ${totalEjercicios}`);
+      doc.text(`Miniproyectos entregados (total): ${totalMinis}`);
+
+      // También por área
+      const areas = await Area.findAll();
+      doc.moveDown(0.5);
+      doc.text('Resumen por área:', { underline: true });
+      for (const area of areas) {
+        // conteos simples por área: miniproyectos en area, respuestas asociadas
+        const minisArea = await Miniproyecto.count({ where: { area_id: area.id } });
+        const respuestasMinisArea = await RespuestaEstudianteMiniproyecto.count({ include: [{ model: Miniproyecto, as: 'miniproyecto', where: { area_id: area.id } }] });
+        doc.text(`${area.nombre || 'Área ' + area.id} — Miniproyectos: ${minisArea} — Respuestas: ${respuestasMinisArea}`);
+      }
+    }
+
+    // Finalizar PDF
+    doc.end();
+
+  } catch (error) {
+    console.error('❌ Error en generarPdfReporte:', error);
+    res.status(500).json({ message: 'Error al generar PDF', error: error.message || error });
+  }
+};
+
+
 
