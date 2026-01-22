@@ -20,6 +20,11 @@ module.exports = (sequelize, DataTypes) => {
     area_id: {
       type: DataTypes.BIGINT,
       allowNull: false
+    },
+    orden: {
+      type: DataTypes.INTEGER,
+      allowNull: true,
+      defaultValue: 0
     }
   }, {
     tableName: 'temas',

@@ -91,9 +91,34 @@ exports.getTemasByArea = async (req, res) => {
       return res.status(404).json({ message: "Área no encontrada" });
     }
 
-    const temas = await Tema.findAll({ where: { area_id: areaId } });
+    const temas = await Tema.findAll({ where: { area_id: areaId, estado: true } });
     res.json(temas);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener los temas del área", error });
+  }
+};
+
+// Reordenar temas
+exports.reordenarTemas = async (req, res) => {
+  try {
+    const { orden } = req.body; // Array de IDs en el nuevo orden [1, 3, 2, 5, 4]
+
+    if (!Array.isArray(orden) || orden.length === 0) {
+      return res.status(400).json({ message: "Debe proporcionar un array de IDs válido" });
+    }
+
+    // Actualizar el orden de cada tema
+    const promesas = orden.map((id, index) => {
+      return Tema.update(
+        { orden: index + 1 },
+        { where: { id } }
+      );
+    });
+
+    await Promise.all(promesas);
+
+    res.json({ message: "Temas reordenados correctamente" });
+  } catch (error) {
+    res.status(500).json({ message: "Error al reordenar los temas", error });
   }
 };
