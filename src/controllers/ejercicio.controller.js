@@ -45,7 +45,7 @@ exports.getEjercicios = async (req, res) => {
   try {
     const ejercicios = await Ejercicio.findAll({
       include: [
-        { model: Actividad, as: 'detallesEjercicio' }, // alias consistente
+        { model: Actividad },
         { model: Subtema }
       ]
     });
@@ -60,7 +60,7 @@ exports.getEjercicioById = async (req, res) => {
   try {
     const ejercicio = await Ejercicio.findByPk(req.params.id, {
       include: [
-        { model: Actividad, as: 'detallesEjercicio' },
+        { model: Actividad },
         { model: Subtema }
       ]
     });
