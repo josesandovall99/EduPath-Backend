@@ -3,6 +3,7 @@ const controller = require('../controllers/progreso.controller');
 
 router.post('/', controller.create);
 router.get('/calificacion-estimada', controller.getCalificacionEstimada);
+router.get('/resumen-general', controller.obtenerResumenGeneralEstudiantes);
 router.get('/reporte-pdf', controller.generarPdfReporte);
 router.get('/por-area', controller.obtenerProgresoEstudiantePorArea);
 router.get('/por-tema', controller.obtenerProgresoEstudiantePorTema);

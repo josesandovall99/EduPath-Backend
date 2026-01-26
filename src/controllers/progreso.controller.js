@@ -1,6 +1,575 @@
 const { Area, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido, Persona } = require('../models');
 const { Op } = require('sequelize');
-const PDFDocument = require('pdfkit');
+const puppeteer = require('puppeteer');
+
+const escapeHtml = (value) => {
+  if (value === null || value === undefined) return '';
+  return String(value)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+};
+
+const formatDate = (value) => {
+  if (!value) return '-';
+  try {
+    return new Date(value).toLocaleDateString('es-CO');
+  } catch (e) {
+    return '-';
+  }
+};
+
+const buildReportHtml = ({ type, data }) => {
+  const headerTitle = type === 'student'
+    ? 'Progreso por Estudiante'
+    : type === 'date'
+      ? 'Progreso por Fecha de Creación'
+      : 'Desempeño por Actividad';
+
+  const stats = data.stats || [];
+  const cards = stats.map((stat) => `
+    <div class="card">
+      <div class="card-title">${escapeHtml(stat.label)}</div>
+      <div class="card-value">${escapeHtml(stat.value)}</div>
+      <div class="card-sub">${escapeHtml(stat.sub || '')}</div>
+    </div>
+  `).join('');
+
+  const rows = (data.tableRows || []).map((row) => `
+    <tr>
+      ${(row || []).map((cell) => `<td>${escapeHtml(cell)}</td>`).join('')}
+    </tr>
+  `).join('');
+
+  const tableHeaders = (data.tableHeaders || []).map((header) => `<th>${escapeHtml(header)}</th>`).join('');
+
+  const sections = (data.sections || []).map((section) => `
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title">${escapeHtml(section.title)}</div>
+          ${section.subtitle ? `<div class="section-sub">${escapeHtml(section.subtitle)}</div>` : ''}
+        </div>
+      </div>
+      <div class="section-body">${section.body || ''}</div>
+    </div>
+  `).join('');
+
+  const charts = Array.isArray(data.charts) ? data.charts : [];
+  const chartsHtml = charts.length
+    ? `
+      <div class="chart-grid">
+        ${charts.map((chart) => `
+          <div class="chart-card">
+            <div class="chart-title">${escapeHtml(chart.title || '')}</div>
+            ${chart.subtitle ? `<div class="chart-sub">${escapeHtml(chart.subtitle)}</div>` : ''}
+            <div class="chart-canvas">
+              <canvas id="${escapeHtml(chart.id)}"></canvas>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `
+    : '';
+
+  const chartsScript = charts.length
+    ? `
+      <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+      <script>
+        window.__chartsReady = false;
+        const chartsData = ${JSON.stringify(charts)};
+        const palette = ['#4A90E2', '#7ED6A7', '#F5A97F', '#A78BFA', '#FBBF24', '#34D399', '#60A5FA'];
+        chartsData.forEach((chart, index) => {
+          const ctx = document.getElementById(chart.id);
+          if (!ctx) return;
+          const colors = chart.colors && chart.colors.length
+            ? chart.colors
+            : (chart.type === 'pie' || chart.type === 'doughnut')
+              ? chart.data.map((_, i) => palette[i % palette.length])
+              : [chart.color || palette[index % palette.length]];
+          const dataset = {
+            data: chart.data || [],
+            backgroundColor: colors,
+            borderWidth: 0,
+            borderRadius: chart.type === 'bar' ? 8 : 0
+          };
+          new Chart(ctx, {
+            type: chart.type,
+            data: {
+              labels: chart.labels || [],
+              datasets: [dataset]
+            },
+            options: {
+              responsive: true,
+              animation: false,
+              plugins: {
+                legend: {
+                  display: chart.showLegend !== false,
+                  position: chart.legendPosition || 'bottom'
+                }
+              },
+              scales: chart.type === 'bar' ? {
+                y: { beginAtZero: true, ticks: { precision: 0 } },
+                x: { ticks: { maxRotation: 0, autoSkip: true } }
+              } : undefined
+            }
+          });
+        });
+        window.__chartsReady = true;
+      </script>
+    `
+    : '<script>window.__chartsReady = true;</script>';
+
+  return `<!DOCTYPE html>
+  <html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EduPath Reporte</title>
+    <style>
+      :root {
+        --blue: #4A90E2;
+        --green: #7ED6A7;
+        --orange: #F5A97F;
+        --text: #3A4A5B;
+        --muted: #6B7280;
+        --bg: #F2F2F2;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+        color: var(--text);
+        background: var(--bg);
+      }
+      .page {
+        padding: 32px 36px 48px;
+      }
+      .header {
+        background: #fff;
+        border-radius: 18px;
+        padding: 24px 28px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
+      }
+      .header-title {
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .header-sub {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 4px;
+      }
+      .badge {
+        padding: 6px 14px;
+        border-radius: 999px;
+        background: linear-gradient(90deg, var(--blue), #5B9FED);
+        color: #fff;
+        font-weight: 600;
+        font-size: 12px;
+      }
+      .cards {
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .card {
+        background: #fff;
+        border-radius: 16px;
+        padding: 16px 18px;
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+      }
+      .card-title {
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .card-value {
+        font-size: 24px;
+        font-weight: 700;
+        margin-top: 8px;
+      }
+      .card-sub {
+        margin-top: 4px;
+        font-size: 11px;
+        color: #9CA3AF;
+      }
+      .section {
+        margin-top: 22px;
+        background: #fff;
+        border-radius: 18px;
+        overflow: hidden;
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+      }
+      .section-header {
+        padding: 18px 22px;
+        background: linear-gradient(90deg, var(--blue), #5B9FED);
+        color: #fff;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .section-title {
+        font-size: 16px;
+        font-weight: 700;
+      }
+      .section-sub {
+        font-size: 12px;
+        opacity: 0.85;
+      }
+      .section-body {
+        padding: 18px 22px 22px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      thead th {
+        text-align: left;
+        padding: 10px 12px;
+        background: #F9FAFB;
+        border-bottom: 1px solid #E5E7EB;
+        color: var(--text);
+      }
+      tbody td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #E5E7EB;
+        color: var(--muted);
+      }
+      .list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+      .list li {
+        padding: 8px 0;
+        border-bottom: 1px solid #E5E7EB;
+        color: var(--muted);
+      }
+      .list li:last-child { border-bottom: none; }
+      .meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 12px;
+      }
+      .meta-item {
+        background: #F9FAFB;
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 12px;
+        color: var(--muted);
+      }
+      .meta-item strong { color: var(--text); display: block; font-size: 14px; margin-top: 6px; }
+      .footer {
+        text-align: center;
+        margin-top: 18px;
+        color: #9CA3AF;
+        font-size: 11px;
+      }
+      .chart-grid {
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 16px;
+      }
+      .chart-card {
+        background: #fff;
+        border-radius: 18px;
+        padding: 16px 18px 18px;
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+      }
+      .chart-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .chart-sub {
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .chart-canvas {
+        margin-top: 12px;
+        height: 220px;
+      }
+      .chart-canvas canvas {
+        width: 100% !important;
+        height: 100% !important;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <div class="header">
+        <div>
+          <div class="header-title">EduPath - Generación de Informes</div>
+          <div class="header-sub">${escapeHtml(data.subtitle || '')}</div>
+        </div>
+        <div class="badge">${escapeHtml(headerTitle)}</div>
+      </div>
+
+      ${cards ? `<div class="cards">${cards}</div>` : ''}
+
+      ${sections}
+
+      ${chartsHtml}
+
+      ${(data.tableHeaders && data.tableHeaders.length)
+        ? `
+          <div class="section">
+            <div class="section-header">
+              <div>
+                <div class="section-title">${escapeHtml(data.tableTitle || 'Detalle')}</div>
+                ${data.tableSubtitle ? `<div class="section-sub">${escapeHtml(data.tableSubtitle)}</div>` : ''}
+              </div>
+            </div>
+            <div class="section-body">
+              <table>
+                <thead>
+                  <tr>${tableHeaders}</tr>
+                </thead>
+                <tbody>
+                  ${rows || '<tr><td colspan="6">Sin datos</td></tr>'}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `
+        : ''}
+
+      <div class="footer">Reporte generado automáticamente por EduPath</div>
+    </div>
+    ${chartsScript}
+  </body>
+  </html>`;
+};
+
+const incrementNestedCount = (store, keyA, keyB, delta = 1) => {
+  const kA = String(keyA);
+  const kB = String(keyB);
+  if (!store[kA]) {
+    store[kA] = {};
+  }
+  store[kA][kB] = (store[kA][kB] || 0) + delta;
+};
+
+// Resumen general: estudiantes con progreso por área/tema/subtema en un solo llamado
+exports.obtenerResumenGeneralEstudiantes = async (req, res) => {
+  try {
+    const [areas, temas, subtemas, contenidos, secuencias, estudiantes, ejercicios, miniproyectos] = await Promise.all([
+      Area.findAll({ attributes: ['id', 'nombre'] }),
+      Tema.findAll({ attributes: ['id', 'nombre', 'area_id'] }),
+      Subtema.findAll({ attributes: ['id', 'nombre', 'tema_id'] }),
+      Contenido.findAll({ attributes: ['id', 'tema_id', 'subtema_id'] }),
+      SecuenciaContenido.findAll({ where: { estado: true }, attributes: ['contenido_origen_id', 'contenido_destino_id'] }),
+      Estudiante.findAll({
+        attributes: ['id', 'createdAt', 'semestre'],
+        include: [{ model: Persona, as: 'persona', attributes: ['nombre', 'email'] }]
+      }),
+      Ejercicio.findAll({ attributes: ['id', 'subtema_id'] }),
+      Miniproyecto.findAll({ attributes: ['id', 'area_id'] })
+    ]);
+
+    const temaById = new Map(temas.map(tema => [String(tema.id), tema]));
+    const subtemaById = new Map(subtemas.map(subtema => [String(subtema.id), subtema]));
+
+    const temasByArea = {};
+    temas.forEach((tema) => {
+      const areaId = String(tema.area_id);
+      temasByArea[areaId] = temasByArea[areaId] || [];
+      temasByArea[areaId].push(tema);
+    });
+
+    const subtemasByTema = {};
+    subtemas.forEach((subtema) => {
+      const temaId = String(subtema.tema_id);
+      subtemasByTema[temaId] = subtemasByTema[temaId] || [];
+      subtemasByTema[temaId].push(subtema);
+    });
+
+    const activeContentIds = new Set();
+    secuencias.forEach((seq) => {
+      if (seq.contenido_origen_id) activeContentIds.add(String(seq.contenido_origen_id));
+      if (seq.contenido_destino_id) activeContentIds.add(String(seq.contenido_destino_id));
+    });
+
+    const contentToArea = new Map();
+    const contentToTema = new Map();
+    const contentToSubtema = new Map();
+    const totalContentByArea = {};
+    const totalContentByTema = {};
+    const totalContentBySubtema = {};
+
+    contenidos.forEach((contenido) => {
+      const contentId = String(contenido.id);
+      if (activeContentIds.size && !activeContentIds.has(contentId)) return;
+
+      const temaId = String(contenido.tema_id);
+      const subtemaId = String(contenido.subtema_id);
+      const tema = temaById.get(temaId);
+      const areaId = tema ? String(tema.area_id) : null;
+      if (!areaId) return;
+
+      contentToArea.set(contentId, areaId);
+      contentToTema.set(contentId, temaId);
+      contentToSubtema.set(contentId, subtemaId);
+
+      totalContentByArea[areaId] = (totalContentByArea[areaId] || 0) + 1;
+      totalContentByTema[temaId] = (totalContentByTema[temaId] || 0) + 1;
+      totalContentBySubtema[subtemaId] = (totalContentBySubtema[subtemaId] || 0) + 1;
+    });
+
+    const progresoRows = activeContentIds.size
+      ? await Progreso.findAll({
+          attributes: ['estudiante_id', 'contenido_id'],
+          where: {
+            completado: true,
+            estado: 'Visualizado',
+            contenido_id: { [Op.in]: Array.from(activeContentIds) }
+          }
+        })
+      : [];
+
+    const progressContentByArea = {};
+    const progressContentByTema = {};
+    const progressContentBySubtema = {};
+
+    progresoRows.forEach((row) => {
+      const studentId = String(row.estudiante_id);
+      const contentId = String(row.contenido_id);
+      const areaId = contentToArea.get(contentId);
+      const temaId = contentToTema.get(contentId);
+      const subtemaId = contentToSubtema.get(contentId);
+      if (!areaId || !temaId || !subtemaId) return;
+      incrementNestedCount(progressContentByArea, studentId, areaId, 1);
+      incrementNestedCount(progressContentByTema, studentId, temaId, 1);
+      incrementNestedCount(progressContentBySubtema, studentId, subtemaId, 1);
+    });
+
+    const exerciseToArea = new Map();
+    const totalExercisesByArea = {};
+    ejercicios.forEach((ejercicio) => {
+      const subtema = subtemaById.get(String(ejercicio.subtema_id));
+      if (!subtema) return;
+      const tema = temaById.get(String(subtema.tema_id));
+      if (!tema) return;
+      const areaId = String(tema.area_id);
+      exerciseToArea.set(String(ejercicio.id), areaId);
+      totalExercisesByArea[areaId] = (totalExercisesByArea[areaId] || 0) + 1;
+    });
+
+    const respuestasEjercicio = await RespuestaEstudianteEjercicio.findAll({
+      attributes: ['estudiante_id', 'ejercicio_id'],
+      where: { estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } }
+    });
+
+    const completedExercisesByArea = {};
+    respuestasEjercicio.forEach((respuesta) => {
+      const areaId = exerciseToArea.get(String(respuesta.ejercicio_id));
+      if (!areaId) return;
+      incrementNestedCount(completedExercisesByArea, respuesta.estudiante_id, areaId, 1);
+    });
+
+    const totalMinisByArea = {};
+    const miniproyectoToArea = new Map();
+    miniproyectos.forEach((mini) => {
+      const areaId = String(mini.area_id);
+      totalMinisByArea[areaId] = (totalMinisByArea[areaId] || 0) + 1;
+      miniproyectoToArea.set(String(mini.id), areaId);
+    });
+
+    const respuestasMiniproyecto = await RespuestaEstudianteMiniproyecto.findAll({
+      attributes: ['estudiante_id', 'miniproyecto_id'],
+      where: { estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } }
+    });
+
+    const completedMinisByArea = {};
+    respuestasMiniproyecto.forEach((respuesta) => {
+      const areaId = miniproyectoToArea.get(String(respuesta.miniproyecto_id));
+      if (!areaId) return;
+      incrementNestedCount(completedMinisByArea, respuesta.estudiante_id, areaId, 1);
+    });
+
+    const students = estudiantes.map((student) => {
+      const studentId = String(student.id);
+      const subjects = areas.map((area) => {
+        const areaId = String(area.id);
+        const totalContents = totalContentByArea[areaId] || 0;
+        const completedContents = progressContentByArea[studentId]?.[areaId] || 0;
+        const totalExercises = totalExercisesByArea[areaId] || 0;
+        const completedExercises = completedExercisesByArea[studentId]?.[areaId] || 0;
+        const totalMinis = totalMinisByArea[areaId] || 0;
+        const completedMinis = completedMinisByArea[studentId]?.[areaId] || 0;
+
+        let totalItems = 0;
+        let completedItems = 0;
+        if (totalContents > 0) {
+          totalItems += totalContents;
+          completedItems += completedContents;
+        }
+        if (totalExercises > 0) {
+          totalItems += totalExercises;
+          completedItems += completedExercises;
+        }
+        if (totalMinis > 0) {
+          totalItems += totalMinis;
+          completedItems += completedMinis;
+        }
+
+        const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+
+        const topics = (temasByArea[areaId] || []).map((tema) => {
+          const temaId = String(tema.id);
+          const totalTema = totalContentByTema[temaId] || 0;
+          const completedTema = progressContentByTema[studentId]?.[temaId] || 0;
+          const temaProgress = totalTema > 0 ? Math.round((completedTema / totalTema) * 100) : 0;
+          const subtopics = (subtemasByTema[temaId] || []).map((subtema) => {
+            const subtemaId = String(subtema.id);
+            const totalSubtema = totalContentBySubtema[subtemaId] || 0;
+            const completedSubtema = progressContentBySubtema[studentId]?.[subtemaId] || 0;
+            const subProgress = totalSubtema > 0 ? Math.round((completedSubtema / totalSubtema) * 100) : 0;
+            return { name: subtema.nombre || `Subtema ${subtemaId}`, progress: subProgress };
+          });
+          return { name: tema.nombre || `Tema ${temaId}`, progress: temaProgress, subtopics };
+        });
+
+        return {
+          areaId,
+          name: area.nombre || `Área ${areaId}`,
+          progress,
+          contentViewed: completedContents,
+          exercisesCompleted: completedExercises,
+          miniprojectsSubmitted: completedMinis,
+          topics
+        };
+      });
+
+      return {
+        id: studentId,
+        name: student.persona?.nombre || student.nombre || `Estudiante ${studentId}`,
+        email: student.persona?.email || student.email || student.correo || '',
+        createdDate: student.createdAt ? new Date(student.createdAt).toISOString().split('T')[0] : '',
+        semester: student.semestre ?? '',
+        subjects
+      };
+    });
+
+    res.json({
+      students,
+      areas: areas.map(area => ({ id: area.id, nombre: area.nombre }))
+    });
+  } catch (error) {
+    console.error('❌ Error en obtenerResumenGeneralEstudiantes:', error);
+    res.status(500).json({ message: 'Error al obtener resumen general de estudiantes', error: error.message || error });
+  }
+};
 
 exports.create = async (req, res) => {
   try {
@@ -575,67 +1144,72 @@ exports.generarPdfReporte = async (req, res) => {
       return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'" });
     }
 
-    // Crear documento PDF en memoria y enviarlo como stream
-    const doc = new PDFDocument({ margin: 40 });
-
-    // Encabezados de respuesta para descargar PDF
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="reporte_${type}.pdf"`);
-
-    // Pipe del PDF directo a la respuesta
-    doc.pipe(res);
-
-    // Título
-    doc.fontSize(18).text('EduPath - Informe', { align: 'center' });
-    doc.moveDown(0.5);
-    doc.fontSize(12).text(`Tipo de informe: ${type}`, { align: 'center' });
-    doc.moveDown(1);
+    let reportData = {
+      subtitle: `Reporte generado el ${formatDate(new Date())}`,
+      stats: [],
+      sections: [],
+      tableHeaders: [],
+      tableRows: [],
+      tableTitle: '',
+      tableSubtitle: ''
+    };
 
     if (type === 'student') {
       const estudianteId = parseInt(req.query.estudiante_id || req.params.estudiante_id, 10);
       if (!estudianteId || isNaN(estudianteId)) {
-        doc.text('estudiante_id es requerido para este tipo de informe');
-        doc.end();
-        return;
+        return res.status(400).json({ message: 'estudiante_id es requerido para este tipo de informe' });
       }
 
       const estudiante = await Estudiante.findByPk(estudianteId, { include: [{ model: Persona, as: 'persona' }] });
       if (!estudiante) {
-        doc.text(`Estudiante con id ${estudianteId} no encontrado`);
-        doc.end();
-        return;
+        return res.status(404).json({ message: `Estudiante con id ${estudianteId} no encontrado` });
       }
 
-      doc.fontSize(14).text(`Estudiante: ${estudiante.persona ? estudiante.persona.nombre : (estudiante.nombre || estudiante.id)}`);
-      doc.moveDown(0.5);
+      const estudianteNombre = estudiante.persona ? estudiante.persona.nombre : (estudiante.nombre || estudiante.id);
+      const estudianteEmail = estudiante.persona ? estudiante.persona.email : (estudiante.email || estudiante.correo || '-');
 
-      // Resumen rápido: contenidos visualizados, ejercicios y miniproyectos
       const contenidosVisualizados = await Progreso.count({ where: { estudiante_id: estudianteId, completado: true, estado: 'Visualizado' } });
       const ejerciciosCompletados = await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: estudianteId, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } });
       const minisCompletados = await RespuestaEstudianteMiniproyecto.count({ where: { estudiante_id: estudianteId, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } });
 
-      doc.text(`Contenidos visualizados: ${contenidosVisualizados}`);
-      doc.text(`Ejercicios completados: ${ejerciciosCompletados}`);
-      doc.text(`Miniproyectos entregados: ${minisCompletados}`);
-      doc.moveDown(0.5);
-
-      // Últimas evaluaciones
       const ultimasEval = await Evaluacion.findAll({ where: { estudiante_id: estudianteId }, order: [['fecha_evaluacion', 'DESC']], limit: 10 });
-      doc.fontSize(12).text('Últimas evaluaciones:', { underline: true });
-      if (ultimasEval.length === 0) {
-        doc.text('No hay evaluaciones');
-      } else {
-        ultimasEval.forEach(ev => {
-          const tipo = ev.ejercicio_id ? 'Ejercicio' : ev.miniproyecto_id ? 'Miniproyecto' : 'Otro';
-          const fecha = ev.fecha_evaluacion ? new Date(ev.fecha_evaluacion).toLocaleString() : '-';
-          doc.text(`${fecha} — ${tipo} — Calificación: ${parseFloat(ev.calificacion).toFixed(2)} — Estado: ${ev.estado}`);
-        });
-      }
+      const evaluacionesList = ultimasEval.length
+        ? `<ul class="list">${ultimasEval.map((ev) => {
+            const tipo = ev.ejercicio_id ? 'Ejercicio' : ev.miniproyecto_id ? 'Miniproyecto' : 'Otro';
+            const fecha = ev.fecha_evaluacion ? new Date(ev.fecha_evaluacion).toLocaleString('es-CO') : '-';
+            const calificacion = ev.calificacion ? parseFloat(ev.calificacion).toFixed(2) : '-';
+            return `<li>${escapeHtml(fecha)} — ${escapeHtml(tipo)} — Calificación: ${escapeHtml(calificacion)} — Estado: ${escapeHtml(ev.estado || '-')}</li>`;
+          }).join('')}</ul>`
+        : '<div class="meta-item">No hay evaluaciones recientes</div>';
+
+      reportData = {
+        ...reportData,
+        stats: [
+          { label: 'Contenidos visualizados', value: contenidosVisualizados, sub: 'Total de contenidos' },
+          { label: 'Ejercicios completados', value: ejerciciosCompletados, sub: 'Enviados o aprobados' },
+          { label: 'Miniproyectos entregados', value: minisCompletados, sub: 'Enviados o completados' }
+        ],
+        sections: [
+          {
+            title: 'Resumen del Estudiante',
+            subtitle: 'Información general y métricas clave',
+            body: `
+              <div class="meta">
+                <div class="meta-item">Nombre<strong>${escapeHtml(estudianteNombre)}</strong></div>
+                <div class="meta-item">Correo<strong>${escapeHtml(estudianteEmail)}</strong></div>
+              </div>
+            `
+          },
+          {
+            title: 'Últimas Evaluaciones',
+            subtitle: 'Detalle de las evaluaciones recientes',
+            body: evaluacionesList
+          }
+        ]
+      };
 
     } else if (type === 'date') {
-      // Agrupar estudiantes por fecha de creación y mostrar promedios
       const estudiantes = await Estudiante.findAll({ include: [{ model: Persona, as: 'persona' }] });
-      // Agrupar por fecha (YYYY-MM-DD)
       const groups = {};
       for (const st of estudiantes) {
         const created = st.createdAt ? new Date(st.createdAt).toISOString().split('T')[0] : 'unknown';
@@ -643,10 +1217,15 @@ exports.generarPdfReporte = async (req, res) => {
         groups[created].push(st);
       }
 
-      doc.fontSize(12).text('Cohortes por fecha de creación:', { underline: true });
+      const tableRows = [];
+      let totalEstudiantes = 0;
+      let totalPromedios = 0;
+      const cohortLabels = [];
+      const cohortAvgs = [];
+      const cohortStudents = [];
+
       for (const date of Object.keys(groups).sort()) {
         const list = groups[date];
-        // Para simplicidad, calculamos un promedio de progreso como (ejercicios+minis+contenidos)/3 por estudiante
         let sumAvg = 0;
         for (const st of list) {
           const contenidos = await Progreso.count({ where: { estudiante_id: st.id, completado: true, estado: 'Visualizado' } });
@@ -656,34 +1235,124 @@ exports.generarPdfReporte = async (req, res) => {
           sumAvg += avg;
         }
         const avgCohorte = list.length ? (sumAvg / list.length) : 0;
-        doc.text(`${date} — Estudiantes: ${list.length} — Promedio (simple): ${avgCohorte.toFixed(2)}`);
+        totalEstudiantes += list.length;
+        totalPromedios += avgCohorte;
+        tableRows.push([date, list.length, avgCohorte.toFixed(2)]);
+        cohortLabels.push(date);
+        cohortAvgs.push(parseFloat(avgCohorte.toFixed(2)));
+        cohortStudents.push(list.length);
       }
 
+      reportData = {
+        ...reportData,
+        stats: [
+          { label: 'Cohortes analizadas', value: Object.keys(groups).length, sub: 'Fechas de creación' },
+          { label: 'Total de estudiantes', value: totalEstudiantes, sub: 'Todas las cohortes' },
+          { label: 'Promedio general', value: Object.keys(groups).length ? (totalPromedios / Object.keys(groups).length).toFixed(2) : '0', sub: 'Promedio simple' }
+        ],
+        tableTitle: 'Comparativo por Cohorte',
+        tableSubtitle: 'Promedio simple según contenidos, ejercicios y miniproyectos',
+        tableHeaders: ['Fecha', 'Estudiantes', 'Promedio'],
+        tableRows,
+        charts: [
+          {
+            id: 'cohortAvgChart',
+            type: 'bar',
+            title: 'Progreso Promedio por Cohorte',
+            labels: cohortLabels,
+            data: cohortAvgs,
+            color: '#7ED6A7',
+            showLegend: false
+          },
+          {
+            id: 'cohortDistChart',
+            type: 'pie',
+            title: 'Distribución de Estudiantes',
+            labels: cohortLabels,
+            data: cohortStudents,
+            showLegend: true,
+            legendPosition: 'bottom'
+          }
+        ]
+      };
+
     } else if (type === 'activity') {
-      // Totales de actividades en el sistema (contenidos visualizados, ejercicios completados, miniproyectos entregados)
       const totalContenidos = await Progreso.count({ where: { completado: true, estado: 'Visualizado' } });
       const totalEjercicios = await RespuestaEstudianteEjercicio.count({ where: { estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } });
       const totalMinis = await RespuestaEstudianteMiniproyecto.count({ where: { estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } });
 
-      doc.fontSize(12).text('Resumen de actividades del sistema:', { underline: true });
-      doc.text(`Contenidos visualizados (total): ${totalContenidos}`);
-      doc.text(`Ejercicios completados (total): ${totalEjercicios}`);
-      doc.text(`Miniproyectos entregados (total): ${totalMinis}`);
-
-      // También por área
       const areas = await Area.findAll();
-      doc.moveDown(0.5);
-      doc.text('Resumen por área:', { underline: true });
+      const tableRows = [];
+      const areaLabels = [];
+      const areaValues = [];
       for (const area of areas) {
-        // conteos simples por área: miniproyectos en area, respuestas asociadas
         const minisArea = await Miniproyecto.count({ where: { area_id: area.id } });
-        const respuestasMinisArea = await RespuestaEstudianteMiniproyecto.count({ include: [{ model: Miniproyecto, as: 'miniproyecto', where: { area_id: area.id } }] });
-        doc.text(`${area.nombre || 'Área ' + area.id} — Miniproyectos: ${minisArea} — Respuestas: ${respuestasMinisArea}`);
+        const respuestasMinisArea = await RespuestaEstudianteMiniproyecto.count({
+          include: [{ model: Miniproyecto, as: 'miniproyecto', where: { area_id: area.id } }]
+        });
+        tableRows.push([
+          area.nombre || `Área ${area.id}`,
+          minisArea,
+          respuestasMinisArea
+        ]);
+        areaLabels.push(area.nombre || `Área ${area.id}`);
+        areaValues.push(respuestasMinisArea || 0);
       }
+
+      reportData = {
+        ...reportData,
+        stats: [
+          { label: 'Contenidos visualizados', value: totalContenidos, sub: 'Total sistema' },
+          { label: 'Ejercicios completados', value: totalEjercicios, sub: 'Enviados o aprobados' },
+          { label: 'Miniproyectos entregados', value: totalMinis, sub: 'Enviados o completados' }
+        ],
+        tableTitle: 'Resumen por Área',
+        tableSubtitle: 'Miniproyectos y respuestas por área',
+        tableHeaders: ['Área', 'Miniproyectos', 'Respuestas'],
+        tableRows,
+        charts: [
+          {
+            id: 'activityDistChart',
+            type: 'pie',
+            title: 'Distribución de Actividades',
+            labels: ['Contenidos Visualizados', 'Ejercicios Completados', 'Miniproyectos Entregados'],
+            data: [totalContenidos, totalEjercicios, totalMinis],
+            colors: ['#4A90E2', '#7ED6A7', '#F5A97F'],
+            showLegend: true,
+            legendPosition: 'bottom'
+          },
+          {
+            id: 'areaProgressChart',
+            type: 'bar',
+            title: 'Progreso por Materia',
+            labels: areaLabels,
+            data: areaValues,
+            color: '#4A90E2',
+            showLegend: false
+          }
+        ]
+      };
     }
 
-    // Finalizar PDF
-    doc.end();
+    const html = buildReportHtml({ type, data: reportData });
+
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0' });
+    await page.waitForFunction('window.__chartsReady === true', { timeout: 5000 }).catch(() => {});
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '16mm', right: '14mm', bottom: '18mm', left: '14mm' }
+    });
+    await browser.close();
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="reporte_${type}.pdf"`);
+    res.end(pdfBuffer);
 
   } catch (error) {
     console.error('❌ Error en generarPdfReporte:', error);
