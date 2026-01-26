@@ -330,8 +330,9 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
       return res.status(404).json({ message: "Estudiante no encontrado" });
     }
 
+    // Obtener solo temas activos (estado = true) para aplicar filtro en cascada
     const temas = await Tema.findAll({
-      where: { area_id: aId },
+      where: { area_id: aId, estado: true },
       attributes: ['id']
     });
     const temaIds = temas.map(t => t.id);
