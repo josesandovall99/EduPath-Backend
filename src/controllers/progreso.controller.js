@@ -138,14 +138,20 @@ const buildReportHtml = ({ type, data }) => {
         --bg: #F2F2F2;
       }
       * { box-sizing: border-box; }
+      @page {
+        size: A4;
+        margin: 12mm;
+      }
       body {
         margin: 0;
         font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
         color: var(--text);
-        background: var(--bg);
+        background: #ffffff;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
       }
       .page {
-        padding: 32px 36px 48px;
+        padding: 0;
       }
       .header {
         background: #fff;
@@ -297,11 +303,101 @@ const buildReportHtml = ({ type, data }) => {
       }
       .chart-canvas {
         margin-top: 12px;
-        height: 220px;
+        height: 200px;
       }
       .chart-canvas canvas {
         width: 100% !important;
         height: 100% !important;
+      }
+      .report-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .report-table thead th {
+        text-align: left;
+        padding: 10px 12px;
+        background: #F9FAFB;
+        border-bottom: 1px solid #E5E7EB;
+        color: var(--text);
+      }
+      .report-table tbody td {
+        padding: 10px 12px;
+        border-bottom: 1px solid #E5E7EB;
+        color: var(--muted);
+        vertical-align: middle;
+      }
+      .progress-bar {
+        width: 140px;
+        height: 8px;
+        background: #E5E7EB;
+        border-radius: 999px;
+        overflow: hidden;
+      }
+      .progress-fill {
+        height: 100%;
+        border-radius: 999px;
+        background: var(--blue);
+      }
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      .status-ok {
+        color: #1F7A4D;
+        background: rgba(126, 214, 167, 0.25);
+      }
+      .status-warn {
+        color: #8A6D1D;
+        background: rgba(251, 191, 36, 0.2);
+      }
+      .status-bad {
+        color: #A94442;
+        background: rgba(245, 169, 127, 0.2);
+      }
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .stat-card {
+        background: #F9FAFB;
+        border-radius: 12px;
+        padding: 12px 14px;
+      }
+      .stat-card .label {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .stat-card .value {
+        font-size: 18px;
+        color: var(--text);
+        font-weight: 700;
+        margin-top: 4px;
+      }
+      .stat-card .sub {
+        font-size: 10px;
+        color: #9CA3AF;
+        margin-top: 2px;
+      }
+      .grade-pill {
+        display: inline-block;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: rgba(74, 144, 226, 0.15);
+        color: #4A90E2;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      @media print {
+        body { background: #ffffff; }
+        .page { padding: 0; }
       }
     </style>
   </head>
@@ -331,7 +427,7 @@ const buildReportHtml = ({ type, data }) => {
               </div>
             </div>
             <div class="section-body">
-              <table>
+              <table class="report-table">
                 <thead>
                   <tr>${tableHeaders}</tr>
                 </thead>
@@ -360,211 +456,242 @@ const incrementNestedCount = (store, keyA, keyB, delta = 1) => {
   store[kA][kB] = (store[kA][kB] || 0) + delta;
 };
 
-// Resumen general: estudiantes con progreso por área/tema/subtema en un solo llamado
-exports.obtenerResumenGeneralEstudiantes = async (req, res) => {
-  try {
-    const [areas, temas, subtemas, contenidos, secuencias, estudiantes, ejercicios, miniproyectos] = await Promise.all([
-      Area.findAll({ attributes: ['id', 'nombre'] }),
-      Tema.findAll({ attributes: ['id', 'nombre', 'area_id'] }),
-      Subtema.findAll({ attributes: ['id', 'nombre', 'tema_id'] }),
-      Contenido.findAll({ attributes: ['id', 'tema_id', 'subtema_id'] }),
-      SecuenciaContenido.findAll({ where: { estado: true }, attributes: ['contenido_origen_id', 'contenido_destino_id'] }),
-      Estudiante.findAll({
-        attributes: ['id', 'createdAt', 'semestre'],
-        include: [{ model: Persona, as: 'persona', attributes: ['nombre', 'email'] }]
-      }),
-      Ejercicio.findAll({ attributes: ['id', 'subtema_id'] }),
-      Miniproyecto.findAll({ attributes: ['id', 'area_id'] })
-    ]);
-
-    const temaById = new Map(temas.map(tema => [String(tema.id), tema]));
-    const subtemaById = new Map(subtemas.map(subtema => [String(subtema.id), subtema]));
-
-    const temasByArea = {};
-    temas.forEach((tema) => {
-      const areaId = String(tema.area_id);
-      temasByArea[areaId] = temasByArea[areaId] || [];
-      temasByArea[areaId].push(tema);
+const applyStudentFilters = (students, { semester, dateFrom, dateTo } = {}) => {
+  let filtered = [...students];
+  if (semester && String(semester) !== 'all') {
+    filtered = filtered.filter(student => String(student.semester ?? '') === String(semester));
+  }
+  if (dateFrom || dateTo) {
+    const from = dateFrom ? new Date(dateFrom) : null;
+    const to = dateTo ? new Date(dateTo) : null;
+    filtered = filtered.filter(student => {
+      if (!student.createdDate) return false;
+      const created = new Date(student.createdDate);
+      if (Number.isNaN(created.getTime())) return false;
+      if (from && created < from) return false;
+      if (to && created > to) return false;
+      return true;
     });
+  }
+  return filtered;
+};
 
-    const subtemasByTema = {};
-    subtemas.forEach((subtema) => {
-      const temaId = String(subtema.tema_id);
-      subtemasByTema[temaId] = subtemasByTema[temaId] || [];
-      subtemasByTema[temaId].push(subtema);
-    });
+const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
+  const [areas, temas, subtemas, contenidos, secuencias, estudiantes, ejercicios, miniproyectos] = await Promise.all([
+    Area.findAll({ attributes: ['id', 'nombre'] }),
+    Tema.findAll({ attributes: ['id', 'nombre', 'area_id'] }),
+    Subtema.findAll({ attributes: ['id', 'nombre', 'tema_id'] }),
+    Contenido.findAll({ attributes: ['id', 'tema_id', 'subtema_id'] }),
+    SecuenciaContenido.findAll({ where: { estado: true }, attributes: ['contenido_origen_id', 'contenido_destino_id'] }),
+    Estudiante.findAll({
+      attributes: ['id', 'createdAt', 'semestre'],
+      include: [{ model: Persona, as: 'persona', attributes: ['nombre', 'email'] }]
+    }),
+    Ejercicio.findAll({ attributes: ['id', 'subtema_id'] }),
+    Miniproyecto.findAll({ attributes: ['id', 'area_id'] })
+  ]);
 
-    const activeContentIds = new Set();
-    secuencias.forEach((seq) => {
-      if (seq.contenido_origen_id) activeContentIds.add(String(seq.contenido_origen_id));
-      if (seq.contenido_destino_id) activeContentIds.add(String(seq.contenido_destino_id));
-    });
+  const temaById = new Map(temas.map(tema => [String(tema.id), tema]));
+  const subtemaById = new Map(subtemas.map(subtema => [String(subtema.id), subtema]));
 
-    const contentToArea = new Map();
-    const contentToTema = new Map();
-    const contentToSubtema = new Map();
-    const totalContentByArea = {};
-    const totalContentByTema = {};
-    const totalContentBySubtema = {};
+  const temasByArea = {};
+  temas.forEach((tema) => {
+    const areaId = String(tema.area_id);
+    temasByArea[areaId] = temasByArea[areaId] || [];
+    temasByArea[areaId].push(tema);
+  });
 
-    contenidos.forEach((contenido) => {
-      const contentId = String(contenido.id);
-      if (activeContentIds.size && !activeContentIds.has(contentId)) return;
+  const subtemasByTema = {};
+  subtemas.forEach((subtema) => {
+    const temaId = String(subtema.tema_id);
+    subtemasByTema[temaId] = subtemasByTema[temaId] || [];
+    subtemasByTema[temaId].push(subtema);
+  });
 
-      const temaId = String(contenido.tema_id);
-      const subtemaId = String(contenido.subtema_id);
-      const tema = temaById.get(temaId);
-      const areaId = tema ? String(tema.area_id) : null;
-      if (!areaId) return;
+  const activeContentIds = new Set();
+  secuencias.forEach((seq) => {
+    if (seq.contenido_origen_id) activeContentIds.add(String(seq.contenido_origen_id));
+    if (seq.contenido_destino_id) activeContentIds.add(String(seq.contenido_destino_id));
+  });
 
-      contentToArea.set(contentId, areaId);
-      contentToTema.set(contentId, temaId);
-      contentToSubtema.set(contentId, subtemaId);
+  const contentToArea = new Map();
+  const contentToTema = new Map();
+  const contentToSubtema = new Map();
+  const totalContentByArea = {};
+  const totalContentByTema = {};
+  const totalContentBySubtema = {};
 
-      totalContentByArea[areaId] = (totalContentByArea[areaId] || 0) + 1;
-      totalContentByTema[temaId] = (totalContentByTema[temaId] || 0) + 1;
-      totalContentBySubtema[subtemaId] = (totalContentBySubtema[subtemaId] || 0) + 1;
-    });
+  contenidos.forEach((contenido) => {
+    const contentId = String(contenido.id);
+    if (activeContentIds.size && !activeContentIds.has(contentId)) return;
 
-    const progresoRows = activeContentIds.size
-      ? await Progreso.findAll({
-          attributes: ['estudiante_id', 'contenido_id'],
-          where: {
-            completado: true,
-            estado: 'Visualizado',
-            contenido_id: { [Op.in]: Array.from(activeContentIds) }
-          }
-        })
-      : [];
+    const temaId = String(contenido.tema_id);
+    const subtemaId = String(contenido.subtema_id);
+    const tema = temaById.get(temaId);
+    const areaId = tema ? String(tema.area_id) : null;
+    if (!areaId) return;
 
-    const progressContentByArea = {};
-    const progressContentByTema = {};
-    const progressContentBySubtema = {};
+    contentToArea.set(contentId, areaId);
+    contentToTema.set(contentId, temaId);
+    contentToSubtema.set(contentId, subtemaId);
 
-    progresoRows.forEach((row) => {
-      const studentId = String(row.estudiante_id);
-      const contentId = String(row.contenido_id);
-      const areaId = contentToArea.get(contentId);
-      const temaId = contentToTema.get(contentId);
-      const subtemaId = contentToSubtema.get(contentId);
-      if (!areaId || !temaId || !subtemaId) return;
-      incrementNestedCount(progressContentByArea, studentId, areaId, 1);
-      incrementNestedCount(progressContentByTema, studentId, temaId, 1);
-      incrementNestedCount(progressContentBySubtema, studentId, subtemaId, 1);
-    });
+    totalContentByArea[areaId] = (totalContentByArea[areaId] || 0) + 1;
+    totalContentByTema[temaId] = (totalContentByTema[temaId] || 0) + 1;
+    totalContentBySubtema[subtemaId] = (totalContentBySubtema[subtemaId] || 0) + 1;
+  });
 
-    const exerciseToArea = new Map();
-    const totalExercisesByArea = {};
-    ejercicios.forEach((ejercicio) => {
-      const subtema = subtemaById.get(String(ejercicio.subtema_id));
-      if (!subtema) return;
-      const tema = temaById.get(String(subtema.tema_id));
-      if (!tema) return;
-      const areaId = String(tema.area_id);
-      exerciseToArea.set(String(ejercicio.id), areaId);
-      totalExercisesByArea[areaId] = (totalExercisesByArea[areaId] || 0) + 1;
-    });
-
-    const respuestasEjercicio = await RespuestaEstudianteEjercicio.findAll({
-      attributes: ['estudiante_id', 'ejercicio_id'],
-      where: { estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } }
-    });
-
-    const completedExercisesByArea = {};
-    respuestasEjercicio.forEach((respuesta) => {
-      const areaId = exerciseToArea.get(String(respuesta.ejercicio_id));
-      if (!areaId) return;
-      incrementNestedCount(completedExercisesByArea, respuesta.estudiante_id, areaId, 1);
-    });
-
-    const totalMinisByArea = {};
-    const miniproyectoToArea = new Map();
-    miniproyectos.forEach((mini) => {
-      const areaId = String(mini.area_id);
-      totalMinisByArea[areaId] = (totalMinisByArea[areaId] || 0) + 1;
-      miniproyectoToArea.set(String(mini.id), areaId);
-    });
-
-    const respuestasMiniproyecto = await RespuestaEstudianteMiniproyecto.findAll({
-      attributes: ['estudiante_id', 'miniproyecto_id'],
-      where: { estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } }
-    });
-
-    const completedMinisByArea = {};
-    respuestasMiniproyecto.forEach((respuesta) => {
-      const areaId = miniproyectoToArea.get(String(respuesta.miniproyecto_id));
-      if (!areaId) return;
-      incrementNestedCount(completedMinisByArea, respuesta.estudiante_id, areaId, 1);
-    });
-
-    const students = estudiantes.map((student) => {
-      const studentId = String(student.id);
-      const subjects = areas.map((area) => {
-        const areaId = String(area.id);
-        const totalContents = totalContentByArea[areaId] || 0;
-        const completedContents = progressContentByArea[studentId]?.[areaId] || 0;
-        const totalExercises = totalExercisesByArea[areaId] || 0;
-        const completedExercises = completedExercisesByArea[studentId]?.[areaId] || 0;
-        const totalMinis = totalMinisByArea[areaId] || 0;
-        const completedMinis = completedMinisByArea[studentId]?.[areaId] || 0;
-
-        let totalItems = 0;
-        let completedItems = 0;
-        if (totalContents > 0) {
-          totalItems += totalContents;
-          completedItems += completedContents;
+  const progresoRows = activeContentIds.size
+    ? await Progreso.findAll({
+        attributes: ['estudiante_id', 'contenido_id'],
+        where: {
+          completado: true,
+          estado: 'Visualizado',
+          contenido_id: { [Op.in]: Array.from(activeContentIds) }
         }
-        if (totalExercises > 0) {
-          totalItems += totalExercises;
-          completedItems += completedExercises;
-        }
-        if (totalMinis > 0) {
-          totalItems += totalMinis;
-          completedItems += completedMinis;
-        }
+      })
+    : [];
 
-        const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+  const progressContentByArea = {};
+  const progressContentByTema = {};
+  const progressContentBySubtema = {};
 
-        const topics = (temasByArea[areaId] || []).map((tema) => {
-          const temaId = String(tema.id);
-          const totalTema = totalContentByTema[temaId] || 0;
-          const completedTema = progressContentByTema[studentId]?.[temaId] || 0;
-          const temaProgress = totalTema > 0 ? Math.round((completedTema / totalTema) * 100) : 0;
-          const subtopics = (subtemasByTema[temaId] || []).map((subtema) => {
-            const subtemaId = String(subtema.id);
-            const totalSubtema = totalContentBySubtema[subtemaId] || 0;
-            const completedSubtema = progressContentBySubtema[studentId]?.[subtemaId] || 0;
-            const subProgress = totalSubtema > 0 ? Math.round((completedSubtema / totalSubtema) * 100) : 0;
-            return { name: subtema.nombre || `Subtema ${subtemaId}`, progress: subProgress };
-          });
-          return { name: tema.nombre || `Tema ${temaId}`, progress: temaProgress, subtopics };
+  progresoRows.forEach((row) => {
+    const studentId = String(row.estudiante_id);
+    const contentId = String(row.contenido_id);
+    const areaId = contentToArea.get(contentId);
+    const temaId = contentToTema.get(contentId);
+    const subtemaId = contentToSubtema.get(contentId);
+    if (!areaId || !temaId || !subtemaId) return;
+    incrementNestedCount(progressContentByArea, studentId, areaId, 1);
+    incrementNestedCount(progressContentByTema, studentId, temaId, 1);
+    incrementNestedCount(progressContentBySubtema, studentId, subtemaId, 1);
+  });
+
+  const exerciseToArea = new Map();
+  const totalExercisesByArea = {};
+  ejercicios.forEach((ejercicio) => {
+    const subtema = subtemaById.get(String(ejercicio.subtema_id));
+    if (!subtema) return;
+    const tema = temaById.get(String(subtema.tema_id));
+    if (!tema) return;
+    const areaId = String(tema.area_id);
+    exerciseToArea.set(String(ejercicio.id), areaId);
+    totalExercisesByArea[areaId] = (totalExercisesByArea[areaId] || 0) + 1;
+  });
+
+  const respuestasEjercicio = await RespuestaEstudianteEjercicio.findAll({
+    attributes: ['estudiante_id', 'ejercicio_id'],
+    where: { estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } }
+  });
+
+  const completedExercisesByArea = {};
+  respuestasEjercicio.forEach((respuesta) => {
+    const areaId = exerciseToArea.get(String(respuesta.ejercicio_id));
+    if (!areaId) return;
+    incrementNestedCount(completedExercisesByArea, respuesta.estudiante_id, areaId, 1);
+  });
+
+  const totalMinisByArea = {};
+  const miniproyectoToArea = new Map();
+  miniproyectos.forEach((mini) => {
+    const areaId = String(mini.area_id);
+    totalMinisByArea[areaId] = (totalMinisByArea[areaId] || 0) + 1;
+    miniproyectoToArea.set(String(mini.id), areaId);
+  });
+
+  const respuestasMiniproyecto = await RespuestaEstudianteMiniproyecto.findAll({
+    attributes: ['estudiante_id', 'miniproyecto_id'],
+    where: { estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } }
+  });
+
+  const completedMinisByArea = {};
+  respuestasMiniproyecto.forEach((respuesta) => {
+    const areaId = miniproyectoToArea.get(String(respuesta.miniproyecto_id));
+    if (!areaId) return;
+    incrementNestedCount(completedMinisByArea, respuesta.estudiante_id, areaId, 1);
+  });
+
+  const students = estudiantes.map((student) => {
+    const studentId = String(student.id);
+    const subjects = areas.map((area) => {
+      const areaId = String(area.id);
+      const totalContents = totalContentByArea[areaId] || 0;
+      const completedContents = progressContentByArea[studentId]?.[areaId] || 0;
+      const totalExercises = totalExercisesByArea[areaId] || 0;
+      const completedExercises = completedExercisesByArea[studentId]?.[areaId] || 0;
+      const totalMinis = totalMinisByArea[areaId] || 0;
+      const completedMinis = completedMinisByArea[studentId]?.[areaId] || 0;
+
+      let totalItems = 0;
+      let completedItems = 0;
+      if (totalContents > 0) {
+        totalItems += totalContents;
+        completedItems += completedContents;
+      }
+      if (totalExercises > 0) {
+        totalItems += totalExercises;
+        completedItems += completedExercises;
+      }
+      if (totalMinis > 0) {
+        totalItems += totalMinis;
+        completedItems += completedMinis;
+      }
+
+      const progress = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+
+      const topics = (temasByArea[areaId] || []).map((tema) => {
+        const temaId = String(tema.id);
+        const totalTema = totalContentByTema[temaId] || 0;
+        const completedTema = progressContentByTema[studentId]?.[temaId] || 0;
+        const temaProgress = totalTema > 0 ? Math.round((completedTema / totalTema) * 100) : 0;
+        const subtopics = (subtemasByTema[temaId] || []).map((subtema) => {
+          const subtemaId = String(subtema.id);
+          const totalSubtema = totalContentBySubtema[subtemaId] || 0;
+          const completedSubtema = progressContentBySubtema[studentId]?.[subtemaId] || 0;
+          const subProgress = totalSubtema > 0 ? Math.round((completedSubtema / totalSubtema) * 100) : 0;
+          return { name: subtema.nombre || `Subtema ${subtemaId}`, progress: subProgress };
         });
-
-        return {
-          areaId,
-          name: area.nombre || `Área ${areaId}`,
-          progress,
-          contentViewed: completedContents,
-          exercisesCompleted: completedExercises,
-          miniprojectsSubmitted: completedMinis,
-          topics
-        };
+        return { name: tema.nombre || `Tema ${temaId}`, progress: temaProgress, subtopics };
       });
 
       return {
-        id: studentId,
-        name: student.persona?.nombre || student.nombre || `Estudiante ${studentId}`,
-        email: student.persona?.email || student.email || student.correo || '',
-        createdDate: student.createdAt ? new Date(student.createdAt).toISOString().split('T')[0] : '',
-        semester: student.semestre ?? '',
-        subjects
+        areaId,
+        name: area.nombre || `Área ${areaId}`,
+        progress,
+        contentViewed: completedContents,
+        exercisesCompleted: completedExercises,
+        miniprojectsSubmitted: completedMinis,
+        topics
       };
     });
 
-    res.json({
-      students,
-      areas: areas.map(area => ({ id: area.id, nombre: area.nombre }))
+    return {
+      id: studentId,
+      name: student.persona?.nombre || student.nombre || `Estudiante ${studentId}`,
+      email: student.persona?.email || student.email || student.correo || '',
+      createdDate: student.createdAt ? new Date(student.createdAt).toISOString().split('T')[0] : '',
+      semester: student.semestre ?? '',
+      subjects
+    };
+  });
+
+  const filteredStudents = applyStudentFilters(students, { semester, dateFrom, dateTo });
+
+  return {
+    students: filteredStudents,
+    areas: areas.map(area => ({ id: area.id, nombre: area.nombre }))
+  };
+};
+
+// Resumen general: estudiantes con progreso por área/tema/subtema en un solo llamado
+exports.obtenerResumenGeneralEstudiantes = async (req, res) => {
+  try {
+    const data = await getResumenGeneralData({
+      semester: req.query.semester,
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo
     });
+    res.json(data);
   } catch (error) {
     console.error('❌ Error en obtenerResumenGeneralEstudiantes:', error);
     res.status(500).json({ message: 'Error al obtener resumen general de estudiantes', error: error.message || error });
@@ -1143,6 +1270,11 @@ exports.generarPdfReporte = async (req, res) => {
     if (!['student', 'date', 'activity'].includes(type)) {
       return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'" });
     }
+    const filters = {
+      semester: req.query.semester,
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo
+    };
 
     let reportData = {
       subtitle: `Reporte generado el ${formatDate(new Date())}`,
@@ -1155,67 +1287,202 @@ exports.generarPdfReporte = async (req, res) => {
     };
 
     if (type === 'student') {
-      const estudianteId = parseInt(req.query.estudiante_id || req.params.estudiante_id, 10);
-      if (!estudianteId || isNaN(estudianteId)) {
-        return res.status(400).json({ message: 'estudiante_id es requerido para este tipo de informe' });
+      const rawEstudianteId = req.query.estudiante_id || req.params.estudiante_id;
+      const estudianteId = rawEstudianteId && rawEstudianteId !== 'all' ? parseInt(rawEstudianteId, 10) : null;
+
+      if (estudianteId) {
+        const { students, areas } = await getResumenGeneralData(filters);
+        const estudiante = students.find(student => String(student.id) === String(estudianteId));
+        if (!estudiante) {
+          return res.status(404).json({ message: `Estudiante con id ${estudianteId} no encontrado` });
+        }
+
+        const estudianteNombre = estudiante.name || `Estudiante ${estudianteId}`;
+        const estudianteEmail = estudiante.email || '-';
+
+        const totalContents = estudiante.subjects.reduce((sum, subj) => sum + (subj.contentViewed || 0), 0);
+        const totalExercises = estudiante.subjects.reduce((sum, subj) => sum + (subj.exercisesCompleted || 0), 0);
+        const totalMinis = estudiante.subjects.reduce((sum, subj) => sum + (subj.miniprojectsSubmitted || 0), 0);
+
+        const areaRows = estudiante.subjects.map((subject) => {
+          const progress = Math.round(subject.progress || 0);
+          return `
+            <tr>
+              <td>${escapeHtml(subject.name)}</td>
+              <td>${subject.contentViewed || 0}</td>
+              <td>${subject.exercisesCompleted || 0}</td>
+              <td>${subject.miniprojectsSubmitted || 0}</td>
+              <td>${progress}%</td>
+              <td>
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width:${progress}%; background:${subject.color || '#4A90E2'}"></div>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        const areasTable = `
+          <table class="report-table">
+            <thead>
+              <tr>
+                <th>Área</th>
+                <th>Contenidos vistos</th>
+                <th>Ejercicios</th>
+                <th>Miniproyectos</th>
+                <th>Progreso</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              ${areaRows || '<tr><td colspan="6">Sin datos</td></tr>'}
+            </tbody>
+          </table>
+        `;
+
+        reportData = {
+          ...reportData,
+          stats: [
+            { label: 'Contenidos vistos', value: totalContents, sub: 'Total en la aplicación' },
+            { label: 'Ejercicios completados', value: totalExercises, sub: 'Enviados/Aprobados' },
+            { label: 'Miniproyectos entregados', value: totalMinis, sub: 'Enviados/Completados' }
+          ],
+          sections: [
+            {
+              title: 'Resumen del Estudiante',
+              subtitle: 'Información general y métricas clave',
+              body: `
+                <div class="meta">
+                  <div class="meta-item">Nombre<strong>${escapeHtml(estudianteNombre)}</strong></div>
+                  <div class="meta-item">Correo<strong>${escapeHtml(estudianteEmail)}</strong></div>
+                </div>
+              `
+            },
+            {
+              title: 'Desempeño por Área',
+              subtitle: 'Contenidos vistos, actividades y progreso',
+              body: areasTable
+            }
+          ]
+        };
+      } else {
+        const { students, areas } = await getResumenGeneralData(filters);
+        const totalStudents = students.length;
+
+        const studentSummaries = students.map((student) => {
+          const avg = student.subjects.length
+            ? student.subjects.reduce((acc, subj) => acc + (subj.progress || 0), 0) / student.subjects.length
+            : 0;
+          const status = avg >= 70 ? 'Al día' : avg >= 50 ? 'Regular' : 'Rezagado';
+          return { ...student, avg, status };
+        });
+
+        const avgProgress = totalStudents
+          ? studentSummaries.reduce((sum, s) => sum + s.avg, 0) / totalStudents
+          : 0;
+
+        const statusCounts = studentSummaries.reduce((acc, s) => {
+          if (s.status === 'Al día') acc.ok += 1;
+          else if (s.status === 'Regular') acc.warn += 1;
+          else acc.bad += 1;
+          return acc;
+        }, { ok: 0, warn: 0, bad: 0 });
+
+        const areaLabels = areas.map(area => area.nombre || `Área ${area.id}`);
+        const areaValues = areas.map(area => {
+          const areaId = String(area.id);
+          const values = studentSummaries.map((student) => {
+            const subject = student.subjects.find(subj => String(subj.areaId ?? '') === areaId || subj.name === (area.nombre || `Área ${areaId}`));
+            return subject ? (subject.progress || 0) : 0;
+          });
+          return values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
+        });
+
+        const tableRows = studentSummaries.map((student) => {
+          const statusClass = student.status === 'Al día'
+            ? 'status-ok'
+            : student.status === 'Regular'
+              ? 'status-warn'
+              : 'status-bad';
+          const progress = Math.round(student.avg);
+          return `
+            <tr>
+              <td>${escapeHtml(student.name)}</td>
+              <td>${escapeHtml(student.email || '-')}</td>
+              <td>${progress}%</td>
+              <td>
+                <div class="progress-bar">
+                  <div class="progress-fill" style="width:${progress}%"></div>
+                </div>
+              </td>
+              <td><span class="status-pill ${statusClass}">${escapeHtml(student.status)}</span></td>
+            </tr>
+          `;
+        }).join('');
+
+        const tableHtml = `
+          <table class="report-table">
+            <thead>
+              <tr>
+                <th>Estudiante</th>
+                <th>Correo</th>
+                <th>Promedio</th>
+                <th>Progreso</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows || '<tr><td colspan="5">Sin datos</td></tr>'}
+            </tbody>
+          </table>
+        `;
+
+        reportData = {
+          ...reportData,
+          stats: [
+            { label: 'Total estudiantes', value: totalStudents, sub: 'Filtrados' },
+            { label: 'Promedio general', value: avgProgress.toFixed(1), sub: 'En todas las áreas' },
+            { label: 'Al día', value: statusCounts.ok, sub: '≥ 70% de progreso' }
+          ],
+          sections: [
+            {
+              title: 'Resumen por Estudiante',
+              subtitle: 'Progreso general y estado actual',
+              body: tableHtml
+            }
+          ],
+          charts: [
+            {
+              id: 'areaAvgChart',
+              type: 'bar',
+              title: 'Progreso Promedio por Área',
+              labels: areaLabels,
+              data: areaValues,
+              color: '#4A90E2',
+              showLegend: false
+            },
+            {
+              id: 'statusDistChart',
+              type: 'pie',
+              title: 'Distribución de Estudiantes',
+              labels: ['Al día', 'Regular', 'Rezagado'],
+              data: [statusCounts.ok, statusCounts.warn, statusCounts.bad],
+              colors: ['#7ED6A7', '#FBBF24', '#F5A97F'],
+              showLegend: true,
+              legendPosition: 'bottom'
+            }
+          ]
+        };
       }
-
-      const estudiante = await Estudiante.findByPk(estudianteId, { include: [{ model: Persona, as: 'persona' }] });
-      if (!estudiante) {
-        return res.status(404).json({ message: `Estudiante con id ${estudianteId} no encontrado` });
-      }
-
-      const estudianteNombre = estudiante.persona ? estudiante.persona.nombre : (estudiante.nombre || estudiante.id);
-      const estudianteEmail = estudiante.persona ? estudiante.persona.email : (estudiante.email || estudiante.correo || '-');
-
-      const contenidosVisualizados = await Progreso.count({ where: { estudiante_id: estudianteId, completado: true, estado: 'Visualizado' } });
-      const ejerciciosCompletados = await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: estudianteId, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } });
-      const minisCompletados = await RespuestaEstudianteMiniproyecto.count({ where: { estudiante_id: estudianteId, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } });
-
-      const ultimasEval = await Evaluacion.findAll({ where: { estudiante_id: estudianteId }, order: [['fecha_evaluacion', 'DESC']], limit: 10 });
-      const evaluacionesList = ultimasEval.length
-        ? `<ul class="list">${ultimasEval.map((ev) => {
-            const tipo = ev.ejercicio_id ? 'Ejercicio' : ev.miniproyecto_id ? 'Miniproyecto' : 'Otro';
-            const fecha = ev.fecha_evaluacion ? new Date(ev.fecha_evaluacion).toLocaleString('es-CO') : '-';
-            const calificacion = ev.calificacion ? parseFloat(ev.calificacion).toFixed(2) : '-';
-            return `<li>${escapeHtml(fecha)} — ${escapeHtml(tipo)} — Calificación: ${escapeHtml(calificacion)} — Estado: ${escapeHtml(ev.estado || '-')}</li>`;
-          }).join('')}</ul>`
-        : '<div class="meta-item">No hay evaluaciones recientes</div>';
-
-      reportData = {
-        ...reportData,
-        stats: [
-          { label: 'Contenidos visualizados', value: contenidosVisualizados, sub: 'Total de contenidos' },
-          { label: 'Ejercicios completados', value: ejerciciosCompletados, sub: 'Enviados o aprobados' },
-          { label: 'Miniproyectos entregados', value: minisCompletados, sub: 'Enviados o completados' }
-        ],
-        sections: [
-          {
-            title: 'Resumen del Estudiante',
-            subtitle: 'Información general y métricas clave',
-            body: `
-              <div class="meta">
-                <div class="meta-item">Nombre<strong>${escapeHtml(estudianteNombre)}</strong></div>
-                <div class="meta-item">Correo<strong>${escapeHtml(estudianteEmail)}</strong></div>
-              </div>
-            `
-          },
-          {
-            title: 'Últimas Evaluaciones',
-            subtitle: 'Detalle de las evaluaciones recientes',
-            body: evaluacionesList
-          }
-        ]
-      };
 
     } else if (type === 'date') {
-      const estudiantes = await Estudiante.findAll({ include: [{ model: Persona, as: 'persona' }] });
+      const { students } = await getResumenGeneralData(filters);
       const groups = {};
-      for (const st of estudiantes) {
-        const created = st.createdAt ? new Date(st.createdAt).toISOString().split('T')[0] : 'unknown';
-        groups[created] = groups[created] || [];
-        groups[created].push(st);
-      }
+      students.forEach((student) => {
+        const date = student.createdDate || 'unknown';
+        groups[date] = groups[date] || [];
+        groups[date].push(student);
+      });
 
       const tableRows = [];
       let totalEstudiantes = 0;
@@ -1226,20 +1493,18 @@ exports.generarPdfReporte = async (req, res) => {
 
       for (const date of Object.keys(groups).sort()) {
         const list = groups[date];
-        let sumAvg = 0;
-        for (const st of list) {
-          const contenidos = await Progreso.count({ where: { estudiante_id: st.id, completado: true, estado: 'Visualizado' } });
-          const ejercicios = await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: st.id, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } });
-          const minis = await RespuestaEstudianteMiniproyecto.count({ where: { estudiante_id: st.id, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } });
-          const avg = (contenidos + ejercicios + minis) / 3;
-          sumAvg += avg;
-        }
+        const sumAvg = list.reduce((sum, s) => {
+          const avg = s.subjects.length
+            ? s.subjects.reduce((acc, subj) => acc + (subj.progress || 0), 0) / s.subjects.length
+            : 0;
+          return sum + avg;
+        }, 0);
         const avgCohorte = list.length ? (sumAvg / list.length) : 0;
         totalEstudiantes += list.length;
         totalPromedios += avgCohorte;
-        tableRows.push([date, list.length, avgCohorte.toFixed(2)]);
+        tableRows.push([date, list.length, avgCohorte.toFixed(1)]);
         cohortLabels.push(date);
-        cohortAvgs.push(parseFloat(avgCohorte.toFixed(2)));
+        cohortAvgs.push(parseFloat(avgCohorte.toFixed(1)));
         cohortStudents.push(list.length);
       }
 
@@ -1248,10 +1513,10 @@ exports.generarPdfReporte = async (req, res) => {
         stats: [
           { label: 'Cohortes analizadas', value: Object.keys(groups).length, sub: 'Fechas de creación' },
           { label: 'Total de estudiantes', value: totalEstudiantes, sub: 'Todas las cohortes' },
-          { label: 'Promedio general', value: Object.keys(groups).length ? (totalPromedios / Object.keys(groups).length).toFixed(2) : '0', sub: 'Promedio simple' }
+          { label: 'Promedio general', value: Object.keys(groups).length ? (totalPromedios / Object.keys(groups).length).toFixed(1) : '0', sub: 'Promedio simple' }
         ],
         tableTitle: 'Comparativo por Cohorte',
-        tableSubtitle: 'Promedio simple según contenidos, ejercicios y miniproyectos',
+        tableSubtitle: 'Promedio simple según progreso por áreas',
         tableHeaders: ['Fecha', 'Estudiantes', 'Promedio'],
         tableRows,
         charts: [
@@ -1277,27 +1542,126 @@ exports.generarPdfReporte = async (req, res) => {
       };
 
     } else if (type === 'activity') {
-      const totalContenidos = await Progreso.count({ where: { completado: true, estado: 'Visualizado' } });
-      const totalEjercicios = await RespuestaEstudianteEjercicio.count({ where: { estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } });
-      const totalMinis = await RespuestaEstudianteMiniproyecto.count({ where: { estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } });
+      const { students, areas } = await getResumenGeneralData(filters);
+      const studentIds = students.map(student => student.id);
 
-      const areas = await Area.findAll();
-      const tableRows = [];
-      const areaLabels = [];
-      const areaValues = [];
-      for (const area of areas) {
-        const minisArea = await Miniproyecto.count({ where: { area_id: area.id } });
-        const respuestasMinisArea = await RespuestaEstudianteMiniproyecto.count({
-          include: [{ model: Miniproyecto, as: 'miniproyecto', where: { area_id: area.id } }]
-        });
-        tableRows.push([
-          area.nombre || `Área ${area.id}`,
-          minisArea,
-          respuestasMinisArea
-        ]);
-        areaLabels.push(area.nombre || `Área ${area.id}`);
-        areaValues.push(respuestasMinisArea || 0);
-      }
+      const totalContenidos = studentIds.length
+        ? await Progreso.count({ where: { estudiante_id: { [Op.in]: studentIds }, completado: true, estado: 'Visualizado' } })
+        : 0;
+      const totalEjercicios = studentIds.length
+        ? await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: { [Op.in]: studentIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } })
+        : 0;
+      const totalMinis = studentIds.length
+        ? await RespuestaEstudianteMiniproyecto.count({ where: { estudiante_id: { [Op.in]: studentIds }, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } })
+        : 0;
+
+      const areaRows = areas.map((area) => {
+        const areaName = area.nombre || `Área ${area.id}`;
+        const subjectValues = students.map(student => {
+          const subject = student.subjects.find(subj => String(subj.areaId ?? '') === String(area.id) || subj.name === areaName);
+          return subject || null;
+        }).filter(Boolean);
+
+        const totalContent = subjectValues.reduce((sum, subj) => sum + (subj.contentViewed || 0), 0);
+        const totalExercise = subjectValues.reduce((sum, subj) => sum + (subj.exercisesCompleted || 0), 0);
+        const totalMini = subjectValues.reduce((sum, subj) => sum + (subj.miniprojectsSubmitted || 0), 0);
+        const avgProgress = subjectValues.length
+          ? subjectValues.reduce((sum, subj) => sum + (subj.progress || 0), 0) / subjectValues.length
+          : 0;
+
+        return {
+          areaName,
+          totalContent,
+          totalExercise,
+          totalMini,
+          avgProgress: Math.round(avgProgress)
+        };
+      });
+
+      const activitySections = areas.map((area) => {
+        const areaName = area.nombre || `Área ${area.id}`;
+        const areaRow = areaRows.find(row => row.areaName === areaName);
+        const studentsWithSubject = students.map((student) => {
+          const subject = student.subjects.find(subj => String(subj.areaId ?? '') === String(area.id) || subj.name === areaName);
+          if (!subject) return null;
+          const estimatedGrade = ((subject.progress || 0) / 100) * 5;
+          return {
+            name: student.name,
+            contentViewed: subject.contentViewed || 0,
+            exercisesCompleted: subject.exercisesCompleted || 0,
+            miniprojectsSubmitted: subject.miniprojectsSubmitted || 0,
+            progress: Math.round(subject.progress || 0),
+            grade: estimatedGrade.toFixed(1)
+          };
+        }).filter(Boolean);
+
+        const studentRows = studentsWithSubject.map((row) => `
+          <tr>
+            <td>${escapeHtml(row.name)}</td>
+            <td>${row.contentViewed}</td>
+            <td>${row.exercisesCompleted}</td>
+            <td>${row.miniprojectsSubmitted}</td>
+            <td>${row.progress}%</td>
+            <td>
+              <div class="progress-bar">
+                <div class="progress-fill" style="width:${row.progress}%"></div>
+              </div>
+            </td>
+            <td><span class="grade-pill">${row.grade}/5.0</span></td>
+          </tr>
+        `).join('');
+
+        const statsHtml = areaRow
+          ? `
+            <div class="stat-grid">
+              <div class="stat-card">
+                <div class="label">Progreso promedio</div>
+                <div class="value">${areaRow.avgProgress}%</div>
+                <div class="sub">En el área</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Contenidos visualizados</div>
+                <div class="value">${areaRow.totalContent}</div>
+                <div class="sub">Total agregado</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Ejercicios completados</div>
+                <div class="value">${areaRow.totalExercise}</div>
+                <div class="sub">Total agregado</div>
+              </div>
+            </div>
+          `
+          : '';
+
+        const tableHtml = `
+          ${statsHtml}
+          <table class="report-table">
+            <thead>
+              <tr>
+                <th>Estudiante</th>
+                <th>Contenidos</th>
+                <th>Ejercicios</th>
+                <th>Miniproyectos</th>
+                <th>Progreso</th>
+                <th></th>
+                <th>Calificación Est.</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${studentRows || '<tr><td colspan="7">Sin datos</td></tr>'}
+            </tbody>
+          </table>
+        `;
+
+        return {
+          title: `Desempeño Detallado: ${areaName}`,
+          subtitle: 'Análisis de completitud y calificaciones',
+          body: tableHtml
+        };
+      });
+
+      const areaLabels = areaRows.map(row => row.areaName);
+      const areaValues = areaRows.map(row => row.avgProgress);
 
       reportData = {
         ...reportData,
@@ -1306,10 +1670,19 @@ exports.generarPdfReporte = async (req, res) => {
           { label: 'Ejercicios completados', value: totalEjercicios, sub: 'Enviados o aprobados' },
           { label: 'Miniproyectos entregados', value: totalMinis, sub: 'Enviados o completados' }
         ],
-        tableTitle: 'Resumen por Área',
-        tableSubtitle: 'Miniproyectos y respuestas por área',
-        tableHeaders: ['Área', 'Miniproyectos', 'Respuestas'],
-        tableRows,
+        sections: [
+          {
+            title: 'Notas del Informe',
+            subtitle: 'Contexto de los datos',
+            body: `
+              <div class="meta">
+                <div class="meta-item">Nota<strong>Los valores reflejan el agregado de estudiantes filtrados.</strong></div>
+                <div class="meta-item">Fuente<strong>Registros de contenidos, ejercicios y miniproyectos.</strong></div>
+              </div>
+            `
+          },
+          ...activitySections
+        ],
         charts: [
           {
             id: 'activityDistChart',
@@ -1324,7 +1697,7 @@ exports.generarPdfReporte = async (req, res) => {
           {
             id: 'areaProgressChart',
             type: 'bar',
-            title: 'Progreso por Materia',
+            title: 'Progreso Promedio por Área',
             labels: areaLabels,
             data: areaValues,
             color: '#4A90E2',
@@ -1346,14 +1719,14 @@ exports.generarPdfReporte = async (req, res) => {
     const pdfBuffer = await page.pdf({
       format: 'A4',
       printBackground: true,
-      margin: { top: '16mm', right: '14mm', bottom: '18mm', left: '14mm' }
+      preferCSSPageSize: true,
+      margin: { top: '0', right: '0', bottom: '0', left: '0' }
     });
     await browser.close();
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="reporte_${type}.pdf"`);
     res.end(pdfBuffer);
-
   } catch (error) {
     console.error('❌ Error en generarPdfReporte:', error);
     res.status(500).json({ message: 'Error al generar PDF', error: error.message || error });
