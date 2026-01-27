@@ -487,7 +487,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
       attributes: ['id', 'createdAt', 'semestre'],
       include: [{ model: Persona, as: 'persona', attributes: ['nombre', 'email'] }]
     }),
-    Ejercicio.findAll({ attributes: ['id', 'subtema_id'] }),
+    Ejercicio.findAll({ attributes: ['id', 'contenido_id'] }),
     Miniproyecto.findAll({ attributes: ['id', 'area_id'] })
   ]);
 
@@ -569,8 +569,12 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
 
   const exerciseToArea = new Map();
   const totalExercisesByArea = {};
+  const contenidoById = new Map(contenidos.map(c => [String(c.id), c]));
+  
   ejercicios.forEach((ejercicio) => {
-    const subtema = subtemaById.get(String(ejercicio.subtema_id));
+    const contenido = contenidoById.get(String(ejercicio.contenido_id));
+    if (!contenido) return;
+    const subtema = subtemaById.get(String(contenido.subtema_id));
     if (!subtema) return;
     const tema = temaById.get(String(subtema.tema_id));
     if (!tema) return;
@@ -912,7 +916,9 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
 
       const subtemas = await Subtema.findAll({ where: { tema_id: uId }, attributes: ['id'] });
       const subtemaIds = subtemas.map(s => s.id);
-      const ejercicios = await Ejercicio.findAll({ where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] } }, attributes: ['id'] });
+      const contenidosDelTema = await Contenido.findAll({ where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] } }, attributes: ['id'] });
+      const contenidoIdsDelTema = contenidosDelTema.map(c => c.id);
+      const ejercicios = await Ejercicio.findAll({ where: { contenido_id: { [Op.in]: contenidoIdsDelTema.length > 0 ? contenidoIdsDelTema : [0] } }, attributes: ['id'] });
       ejercicioIds = ejercicios.map(e => e.id);
 
     } else { // subtema
@@ -940,7 +946,7 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
       secuencias.forEach(s => { contenidoIdsEnSecuencia.add(s.contenido_origen_id); contenidoIdsEnSecuencia.add(s.contenido_destino_id); });
       contenidoIds = [...contenidoIdsEnSecuencia].filter(id => contenidoIdsDelSubtema.includes(id));
 
-      const ejercicios = await Ejercicio.findAll({ where: { subtema_id: uId }, attributes: ['id'] });
+      const ejercicios = await Ejercicio.findAll({ where: { contenido_id: { [Op.in]: contenidoIdsDelSubtema.length > 0 ? contenidoIdsDelSubtema : [0] } }, attributes: ['id'] });
       ejercicioIds = ejercicios.map(e => e.id);
     }
 

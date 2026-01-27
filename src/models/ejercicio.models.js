@@ -3,9 +3,10 @@ module.exports = (sequelize, DataTypes) => {
     id: {
       type: DataTypes.BIGINT,
       primaryKey: true,
-      allowNull: false // será el mismo id de Actividad
+      autoIncrement: false, // No auto-incrementa porque hereda el id de Actividad
+      allowNull: false
     },
-    subtema_id: {
+    contenido_id: {
       type: DataTypes.BIGINT,
       allowNull: false
     },
@@ -23,8 +24,10 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Ejercicio.associate = models => {
-    // Aquí NO pongas foreignKey: 'id' otra vez
-    Ejercicio.belongsTo(models.Subtema, { foreignKey: 'subtema_id' });
+    // Herencia: Ejercicio ES UNA Actividad (comparten el mismo id)
+    Ejercicio.belongsTo(models.Actividad, { foreignKey: 'id', as: 'actividad' });
+    // Relación con Contenido
+    Ejercicio.belongsTo(models.Contenido, { foreignKey: 'contenido_id' });
   };
 
   return Ejercicio;

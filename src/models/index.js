@@ -51,7 +51,7 @@ models.Administrador.belongsTo(models.Persona, { foreignKey: "persona_id", as: "
 // --- ESTRUCTURA ACADÉMICA ---
 models.Tema.belongsTo(models.Area, { foreignKey: 'area_id', as: 'area' });
 models.Subtema.belongsTo(models.Tema, { foreignKey: 'tema_id', as: 'tema' });
-models.Ejercicio.belongsTo(models.Subtema, { foreignKey: 'subtema_id', as: 'subtema' });
+models.Ejercicio.belongsTo(models.Contenido, { foreignKey: 'contenido_id', as: 'contenido' });
 
 // =========================================================
 // 4. ASOCIACIONES PARA RESPUESTAS (NUEVO)

@@ -32,6 +32,10 @@ module.exports = (sequelize, DataTypes) => {
       foreignKey: 'tipo_actividad_id',
       as: 'tipo'
     });
+    
+    // Relaciones de herencia con subtipos
+    Actividad.hasOne(models.Ejercicio, { foreignKey: 'id', as: 'ejercicio' });
+    Actividad.hasOne(models.Miniproyecto, { foreignKey: 'id', as: 'miniproyecto' });
   };
 
   return Actividad;

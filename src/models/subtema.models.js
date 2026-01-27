@@ -25,7 +25,6 @@ module.exports = (sequelize, DataTypes) => {
   Subtema.associate = models => {
     Subtema.belongsTo(models.Tema, { foreignKey: 'tema_id' });
     Subtema.hasMany(models.Contenido, { foreignKey: 'subtema_id' });
-    Subtema.hasMany(models.Ejercicio, { foreignKey: 'subtema_id' });
   };
 
   return Subtema;

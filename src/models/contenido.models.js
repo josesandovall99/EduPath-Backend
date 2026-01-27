@@ -45,6 +45,9 @@ module.exports = (sequelize, DataTypes) => {
     
     // Relación con Progreso
     Contenido.hasMany(models.Progreso, { foreignKey: 'contenido_id', as: 'progresos' });
+    
+    // Relación con Ejercicio
+    Contenido.hasMany(models.Ejercicio, { foreignKey: 'contenido_id' });
 
     // Verificamos que el modelo existe antes de asociar para evitar el Error de subclass
     if (models.SecuenciaContenido) {

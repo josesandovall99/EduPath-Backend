@@ -1,4 +1,4 @@
-const { sequelize, Ejercicio, Actividad, Subtema } = require('../models');
+const { sequelize, Ejercicio, Actividad, Contenido } = require('../models');
 
 // Crear ejercicio con su actividad base (herencia con transacción)
 exports.createEjercicio = async (req, res) => {
@@ -6,11 +6,11 @@ exports.createEjercicio = async (req, res) => {
   try {
     const { actividad, ejercicio } = req.body;
 
-    // Validar subtema
-    const subtemaExistente = await Subtema.findByPk(ejercicio.subtema_id);
-    if (!subtemaExistente) {
+    // Validar contenido
+    const contenidoExistente = await Contenido.findByPk(ejercicio.contenido_id);
+    if (!contenidoExistente) {
       await t.rollback();
-      return res.status(400).json({ message: "El subtema especificado no existe" });
+      return res.status(400).json({ message: "El contenido especificado no existe" });
     }
 
     // Crear la actividad primero
@@ -20,7 +20,7 @@ exports.createEjercicio = async (req, res) => {
     const nuevoEjercicio = await Ejercicio.create(
       {
         id: nuevaActividad.id, // herencia: mismo PK que Actividad
-        subtema_id: ejercicio.subtema_id,
+        contenido_id: ejercicio.contenido_id,
         puntos: ejercicio.puntos,
         resultado_ejercicio: ejercicio.resultado_ejercicio
       },
@@ -40,13 +40,13 @@ exports.createEjercicio = async (req, res) => {
   }
 };
 
-// Listar ejercicios con su actividad y subtema
+// Listar ejercicios con su actividad y contenido
 exports.getEjercicios = async (req, res) => {
   try {
     const ejercicios = await Ejercicio.findAll({
       include: [
-        { model: Actividad },
-        { model: Subtema }
+        { model: Actividad, as: 'actividad' },
+        { model: Contenido }
       ]
     });
     res.json(ejercicios);
@@ -60,8 +60,8 @@ exports.getEjercicioById = async (req, res) => {
   try {
     const ejercicio = await Ejercicio.findByPk(req.params.id, {
       include: [
-        { model: Actividad },
-        { model: Subtema }
+        { model: Actividad, as: 'actividad' },
+        { model: Contenido }
       ]
     });
     if (!ejercicio) return res.status(404).json({ message: "Ejercicio no encontrado" });
@@ -87,12 +87,12 @@ exports.updateEjercicio = async (req, res) => {
       return res.status(404).json({ message: "Actividad asociada no encontrada" });
     }
 
-    // Validar subtema si se envía
-    if (req.body.ejercicio?.subtema_id) {
-      const subtemaExistente = await Subtema.findByPk(req.body.ejercicio.subtema_id);
-      if (!subtemaExistente) {
+    // Validar contenido si se envía
+    if (req.body.ejercicio?.contenido_id) {
+      const contenidoExistente = await Contenido.findByPk(req.body.ejercicio.contenido_id);
+      if (!contenidoExistente) {
         await t.rollback();
-        return res.status(400).json({ message: "El subtema especificado no existe" });
+        return res.status(400).json({ message: "El contenido especificado no existe" });
       }
     }
 
