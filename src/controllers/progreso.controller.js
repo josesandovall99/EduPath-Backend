@@ -916,9 +916,9 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
 
       const subtemas = await Subtema.findAll({ where: { tema_id: uId }, attributes: ['id'] });
       const subtemaIds = subtemas.map(s => s.id);
-      const contenidosDelTema = await Contenido.findAll({ where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] } }, attributes: ['id'] });
-      const contenidoIdsDelTema = contenidosDelTema.map(c => c.id);
-      const ejercicios = await Ejercicio.findAll({ where: { contenido_id: { [Op.in]: contenidoIdsDelTema.length > 0 ? contenidoIdsDelTema : [0] } }, attributes: ['id'] });
+      const contenidosDelTemaParaEjercicios = await Contenido.findAll({ where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] } }, attributes: ['id'] });
+      const contenidoIdsParaEjercicios = contenidosDelTemaParaEjercicios.map(c => c.id);
+      const ejercicios = await Ejercicio.findAll({ where: { contenido_id: { [Op.in]: contenidoIdsParaEjercicios.length > 0 ? contenidoIdsParaEjercicios : [0] } }, attributes: ['id'] });
       ejercicioIds = ejercicios.map(e => e.id);
 
     } else { // subtema
