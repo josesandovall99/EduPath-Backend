@@ -30,6 +30,7 @@ exports.create = async (req, res) => {
 
       const nuevoMiniproyecto = await Miniproyecto.create({
         id: nuevaActividad.id,
+        actividad_id: nuevaActividad.id,
         area_id: req.body.area_id,
         entregable: req.body.entregable,
         respuesta_miniproyecto: req.body.respuesta_miniproyecto
@@ -60,16 +61,35 @@ exports.update = async (req, res) => {
 
     const t = await sequelize.transaction();
     try {
-      // Actualizar tabla padre
-      await Actividad.update(req.body, { 
-        where: { id: req.params.id }, 
-        transaction: t 
-      });
-      // Actualizar tabla hija
-      await Miniproyecto.update(req.body, { 
-        where: { id: req.params.id }, 
-        transaction: t 
-      });
+      const actividadPayload = {
+        ...(req.body.titulo !== undefined && { titulo: req.body.titulo }),
+        ...(req.body.descripcion !== undefined && { descripcion: req.body.descripcion }),
+        ...(req.body.nivel_dificultad !== undefined && { nivel_dificultad: req.body.nivel_dificultad }),
+        ...(req.body.fecha_creacion !== undefined && { fecha_creacion: req.body.fecha_creacion }),
+        ...(req.body.tipo_actividad_id !== undefined && { tipo_actividad_id: req.body.tipo_actividad_id })
+      };
+
+      const miniproyectoPayload = {
+        ...(req.body.area_id !== undefined && { area_id: req.body.area_id }),
+        ...(req.body.entregable !== undefined && { entregable: req.body.entregable }),
+        ...(req.body.respuesta_miniproyecto !== undefined && { respuesta_miniproyecto: req.body.respuesta_miniproyecto })
+      };
+
+      // Actualizar tabla padre (Actividad)
+      if (Object.keys(actividadPayload).length > 0) {
+        await Actividad.update(actividadPayload, {
+          where: { id: miniproyecto.actividad_id },
+          transaction: t
+        });
+      }
+
+      // Actualizar tabla hija (Miniproyecto)
+      if (Object.keys(miniproyectoPayload).length > 0) {
+        await Miniproyecto.update(miniproyectoPayload, {
+          where: { id: req.params.id },
+          transaction: t
+        });
+      }
 
       await t.commit();
       res.json({ message: 'Actualizado correctamente' });

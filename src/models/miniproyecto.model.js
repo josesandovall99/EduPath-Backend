@@ -6,6 +6,10 @@ module.exports = (sequelize, DataTypes) => {
             // Importante: autoIncrement false porque hereda el ID de Actividad
             autoIncrement: false 
         },
+        actividad_id: {
+            type: DataTypes.BIGINT,
+            allowNull: false
+        },
         area_id: {
             type: DataTypes.BIGINT,
             allowNull: false

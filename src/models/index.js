@@ -34,8 +34,8 @@ Object.keys(models).forEach((modelName) => {
 // =========================================================
 
 // --- HERENCIA: Actividad <-> Miniproyecto ---
-models.Actividad.hasOne(models.Miniproyecto, { foreignKey: 'id', as: 'detallesMiniproyecto' });
-models.Miniproyecto.belongsTo(models.Actividad, { foreignKey: 'id' });
+models.Actividad.hasOne(models.Miniproyecto, { foreignKey: 'actividad_id', as: 'detallesMiniproyecto' });
+models.Miniproyecto.belongsTo(models.Actividad, { foreignKey: 'actividad_id' });
 
 // --- HERENCIA: Actividad <-> Ejercicio ---
 models.Actividad.hasOne(models.Ejercicio, { foreignKey: 'id', as: 'detallesEjercicio' });
