@@ -36,6 +36,14 @@ const crearRespuestaEjercicio = async (req, res) => {
             return res.status(404).json({ error: "El ejercicio no existe" });
         }
 
+        // Solo válido para tipo "Compilador". Para otros tipos use /ejercicios/:id/resolver
+        if (ejercicio.tipo_ejercicio && ejercicio.tipo_ejercicio !== 'Compilador') {
+            return res.status(400).json({
+                error: "Este endpoint solo aplica a ejercicios de tipo 'Compilador'",
+                sugerencia: `Use POST /ejercicios/${ejercicio_id}/resolver para enviar respuestas de cuestionario`
+            });
+        }
+
         const headers = { 'content-type': 'application/json' };
         if (JUDGE0_KEY) {
             headers['x-rapidapi-key'] = JUDGE0_KEY;

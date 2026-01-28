@@ -10,6 +10,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BIGINT,
       allowNull: false
     },
+    tipo_ejercicio: {
+      type: DataTypes.ENUM('Compilador', 'Diagramas UML', 'Preguntas'),
+      allowNull: false,
+      defaultValue: 'Compilador'
+    },
     puntos: {
       type: DataTypes.INTEGER,
       allowNull: false
@@ -17,6 +22,13 @@ module.exports = (sequelize, DataTypes) => {
     resultado_ejercicio: {
       type: DataTypes.TEXT,
       allowNull: false
+    },
+    configuracion: {
+      // Estructura dinámica para preguntas/respuestas por área
+      // Compilador: { tipo: 'programacion', esperado: '...', lenguajesPermitidos?: [ids] }
+      // Diagramas UML / Preguntas: { tipo: 'cuestionario', preguntas: [{ id, enunciado, tipo, opciones?, respuesta_correcta? }] }
+      type: DataTypes.JSONB,
+      allowNull: true
     }
   }, {
     tableName: 'ejercicios',

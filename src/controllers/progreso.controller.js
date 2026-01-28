@@ -1089,8 +1089,15 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
     });
     const subtemaIds = subtemas.map(s => s.id);
 
-    const ejerciciosArea = await Ejercicio.findAll({
+    // Obtener ejercicios del área a través de contenidos de esos subtemas
+    const contenidosParaEjercicios = await Contenido.findAll({
       where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] } },
+      attributes: ['id']
+    });
+    const contenidoIdsParaEjercicios = contenidosParaEjercicios.map(c => c.id);
+
+    const ejerciciosArea = await Ejercicio.findAll({
+      where: { contenido_id: { [Op.in]: contenidoIdsParaEjercicios.length > 0 ? contenidoIdsParaEjercicios : [0] } },
       attributes: ['id']
     });
     const ejercicioIds = ejerciciosArea.map(e => e.id);

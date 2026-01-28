@@ -46,7 +46,9 @@ app.use('/administrador', require('./routes/administrador.routes'));
 // 3. Progreso y Actividades
 app.use('/miniproyectos', require('./routes/miniproyecto.routes'));
 app.use('/evaluaciones', require('./routes/evaluacion.routes'));
+// Tipo de Actividad: ruta principal y alias compatible con el frontend
 app.use('/tipo-actividades', require('./routes/tipoactividad.routes'));
+app.use('/tipoactividad', require('./routes/tipoactividad.routes'));
 app.use('/actividades', require('./routes/actividad.routes'));
 app.use('/progresos', require('./routes/progreso.routes'));
 app.use('/respuestasEstudianteMiniproyecto', require('./routes/respuestasEstudianteMiniproyecto.routes'));
