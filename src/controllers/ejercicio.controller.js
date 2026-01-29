@@ -1,4 +1,4 @@
-const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad } = require('../models');
+const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion } = require('../models');
 const umlValidator = require('../services/umlValidator');
 
 // Crear ejercicio con su actividad base (herencia con transacción)
@@ -228,11 +228,12 @@ exports.resolverEjercicio = async (req, res) => {
 
     // Evaluación para Diagramas UML
     if (ejercicio.tipo_ejercicio === 'Diagramas UML') {
-      const { diagram } = req.body || {};
+      const { diagram, respuesta: respuestaBody } = req.body || {};
+      const diagramPayload = diagram || (respuestaBody && respuestaBody.diagram);
       const cfg = ejercicio.configuracion || {};
 
       // Validaciones mínimas de entrada y reglas configuradas por el administrador
-      if (!diagram) {
+      if (!diagramPayload) {
         return res.status(400).json({ message: 'El campo "diagram" es requerido para resolver ejercicios UML.' });
       }
       if (!cfg.opciones || typeof cfg.opciones !== 'object') {
@@ -241,7 +242,7 @@ exports.resolverEjercicio = async (req, res) => {
 
       // Aplicar exclusivamente las reglas configuradas por el administrador en el ejercicio
       // Ignoramos opciones del request para evitar que el cliente relaje las validaciones
-      const result = umlValidator.validate(diagram, cfg.opciones);
+      const result = umlValidator.validate(diagramPayload, cfg.opciones);
       const esCorrecta = !!result.success;
       const puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       return res.status(esCorrecta ? 200 : 400).json({
@@ -317,6 +318,135 @@ exports.getRetroalimentacionEjercicio = async (req, res) => {
   } catch (error) {
     res.status(500).json({
       message: "Error al obtener la retroalimentación del ejercicio",
+      error: error.message || error
+    });
+  }
+};
+
+// Enviar respuesta de estudiante: guarda intento y evalúa
+exports.enviarRespuestaEjercicio = async (req, res) => {
+  try {
+    const { ejercicioId } = req.params;
+    const { estudiante_id, respuesta } = req.body;
+
+    if (!estudiante_id || typeof respuesta === 'undefined' || respuesta === null) {
+      return res.status(400).json({ message: 'Faltan campos: estudiante_id y respuesta' });
+    }
+
+    const ejercicio = await Ejercicio.findByPk(ejercicioId);
+    if (!ejercicio) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    // Normalizar respuesta para almacenamiento JSONB
+    const respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
+
+    // Evitar duplicados: un intento por estudiante por ejercicio
+    const intentoExistente = await RespuestaEstudianteEjercicio.findOne({
+      where: { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) }
+    });
+    if (intentoExistente) {
+      return res.status(409).json({
+        message: 'Ya existe una respuesta para este estudiante en este ejercicio',
+        intentoId: intentoExistente.id
+      });
+    }
+
+    // Guardar intento
+    const intento = await RespuestaEstudianteEjercicio.create({
+      respuesta: respuestaPayload,
+      estudiante_id,
+      ejercicio_id: parseInt(ejercicioId, 10),
+      estado: 'ENVIADO'
+    });
+
+    // Evaluar usando la misma lógica de resolver
+    let esCorrecta = false;
+    let puntosObtenidos = 0;
+    let detalle = undefined;
+    let retroalimentacion = undefined;
+
+    if (ejercicio.tipo_ejercicio === 'Compilador') {
+      const normalizarTexto = (texto) =>
+        (texto || '')
+          .toLowerCase()
+          .trim()
+          .replace(/\s+/g, ' ');
+
+      const recibido = typeof respuesta === 'string' ? respuesta : respuesta?.texto;
+      const respuestaEstudiante = normalizarTexto(recibido);
+      const esperado = normalizarTexto(
+        (ejercicio.configuracion && ejercicio.configuracion.esperado) || ejercicio.resultado_ejercicio
+      );
+      esCorrecta = respuestaEstudiante === esperado;
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta
+        ? '¡Respuesta correcta! Bien hecho.'
+        : `Respuesta incorrecta. La salida esperada es: ${esperado}`;
+    } else if (ejercicio.tipo_ejercicio === 'Diagramas UML') {
+      const diagramPayload = req.body.diagram || respuestaPayload?.diagram;
+      const cfg = ejercicio.configuracion || {};
+      if (!diagramPayload) {
+        return res.status(400).json({ message: 'El campo "diagram" es requerido para resolver ejercicios UML.' });
+      }
+      if (!cfg.opciones || typeof cfg.opciones !== 'object') {
+        return res.status(400).json({ message: 'Este ejercicio UML no tiene reglas configuradas (configuracion.opciones). Solicite al administrador que las establezca.' });
+      }
+      const result = require('../services/umlValidator').validate(diagramPayload, cfg.opciones);
+      esCorrecta = !!result.success;
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      detalle = { errors: result.errors, warnings: result.warnings };
+    } else {
+      // Preguntas (cuestionario)
+      const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
+      if (cfg.tipo !== 'cuestionario') {
+        return res.status(400).json({ message: 'Configuración inválida para evaluación no programática.' });
+      }
+      const mapaRespuestas = (respuestaPayload && respuestaPayload.respuestas) || {};
+      let total = cfg.preguntas?.length || 0;
+      let correctas = 0;
+      detalle = [];
+      (cfg.preguntas || []).forEach((p) => {
+        const recibido = mapaRespuestas[p.id];
+        let ok = false;
+        if (p.tipo === 'opcion-multiple') {
+          ok = recibido === p.respuesta_correcta;
+        } else if (p.tipo === 'abierta') {
+          const norm = (t) => (t || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
+          ok = norm(recibido) === norm(p.respuesta_correcta);
+        }
+        if (ok) correctas += 1;
+        detalle.push({ preguntaId: p.id, correcta: ok, recibido });
+      });
+      esCorrecta = total > 0 && correctas === total;
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta
+        ? '¡Excelente! Todas las respuestas son correctas.'
+        : `Correctas ${correctas}/${total}. Revise las respuestas.`;
+    }
+
+    // Si es correcta, registrar Evaluacion aprobada
+    if (esCorrecta) {
+      await Evaluacion.create({
+        calificacion: puntosObtenidos,
+        retroalimentacion: retroalimentacion || null,
+        estudiante_id,
+        ejercicio_id: parseInt(ejercicioId, 10),
+        estado: 'Aprobado'
+      });
+    }
+
+    return res.status(esCorrecta ? 200 : 400).json({
+      intentoId: intento.id,
+      ejercicioId,
+      esCorrecta,
+      puntosObtenidos,
+      detalle,
+      retroalimentacion
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: 'Error al enviar la respuesta del ejercicio',
       error: error.message || error
     });
   }

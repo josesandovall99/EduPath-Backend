@@ -1,34 +1,15 @@
-const axios = require('axios');
 const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio, Evaluacion } = require("../models");
 const { Op } = require('sequelize');
-
-const JUDGE0_URL = process.env.JUDGE0_URL;
-const JUDGE0_KEY = process.env.JUDGE0_KEY;
-
-/* ============================================================
-   UTILIDADES DE CONVERSIÓN (Base64)
-============================================================ */
-const codificar = (texto) => Buffer.from(texto || "").toString('base64');
-
-const decodificar = (base64) => {
-    if (!base64) return "";
-    try {
-        return Buffer.from(base64, 'base64').toString('utf-8').trim();
-    } catch (e) {
-        return base64;
-    }
-};
 
 /* ============================================================
    1. CREAR RESPUESTA (POST)
 ============================================================ */
 const crearRespuestaEjercicio = async (req, res) => {
-    console.log("Petición recibida en el controlador ✅");
     try {
-        const { respuesta, estudiante_id, ejercicio_id, lenguaje_id } = req.body;
+        const { respuesta, estudiante_id, ejercicio_id, estado } = req.body;
 
-        if (!respuesta || !estudiante_id || !ejercicio_id || !lenguaje_id) {
-            return res.status(400).json({ error: "Faltan campos obligatorios" });
+        if (typeof respuesta === 'undefined' || respuesta === null || !estudiante_id || !ejercicio_id) {
+            return res.status(400).json({ error: "Faltan campos obligatorios: respuesta, estudiante_id, ejercicio_id" });
         }
 
         const ejercicio = await Ejercicio.findByPk(ejercicio_id);
@@ -36,118 +17,43 @@ const crearRespuestaEjercicio = async (req, res) => {
             return res.status(404).json({ error: "El ejercicio no existe" });
         }
 
-        // Solo válido para tipo "Compilador". Para otros tipos use /ejercicios/:id/resolver
-        if (ejercicio.tipo_ejercicio && ejercicio.tipo_ejercicio !== 'Compilador') {
-            return res.status(400).json({
-                error: "Este endpoint solo aplica a ejercicios de tipo 'Compilador'",
-                sugerencia: `Use POST /ejercicios/${ejercicio_id}/resolver para enviar respuestas de cuestionario`
+        // Evitar duplicados: un intento por estudiante por ejercicio
+        const existente = await RespuestaEstudianteEjercicio.findOne({
+            where: { estudiante_id, ejercicio_id }
+        });
+        if (existente) {
+            return res.status(409).json({
+                error: "Ya existe una respuesta para este estudiante en este ejercicio",
+                intentoId: existente.id
             });
         }
 
-        const headers = { 'content-type': 'application/json' };
-        if (JUDGE0_KEY) {
-            headers['x-rapidapi-key'] = JUDGE0_KEY;
-            headers['x-rapidapi-host'] = 'judge0-ce.p.rapidapi.com';
-            headers['X-Auth-Token'] = JUDGE0_KEY;
+        // Normalizar respuesta: admitir string/objeto/arreglo
+        let respuestaPayload = respuesta;
+        if (typeof respuesta === 'string') {
+            respuestaPayload = { texto: respuesta };
         }
+        // Nota: si a futuro se reciben archivos, se pueden anexar en respuestaPayload.archivos
 
-        const response = await axios.post(`${JUDGE0_URL}/submissions?base64_encoded=true&wait=false`, {
-            source_code: codificar(respuesta),
-            language_id: lenguaje_id
-        }, { headers });
-
+        // Registrar el intento con estado opcional (por defecto 'ENVIADO')
         const nuevoIntento = await RespuestaEstudianteEjercicio.create({
-            respuesta,
+            respuesta: respuestaPayload,
             estudiante_id,
             ejercicio_id,
-            lenguaje_id,
-            token: response.data.token,
-            estado: 'Processing'
+            estado: estado || 'ENVIADO'
         });
 
         res.status(201).json(nuevoIntento);
     } catch (error) {
-        console.error("Error en crearRespuesta:", error.response?.data || error.message);
-        res.status(error.response?.status || 500).json({ 
-            error: "Error al comunicarse con el motor de ejecución", 
-            detalle: error.response?.data || error.message 
-        });
+        console.error("Error en crearRespuesta:", error.message);
+        res.status(500).json({ error: "Error al crear la respuesta", detalle: error.message });
     }
 };
 
 /* ============================================================
    2. OBTENER RESULTADO (GET)
 ============================================================ */
-const obtenerResultadoJudge0 = async (req, res) => {
-    try {
-        const { token } = req.params;
-        
-        const headers = {};
-        if (JUDGE0_KEY) {
-            headers['x-rapidapi-key'] = JUDGE0_KEY;
-            headers['x-rapidapi-host'] = 'judge0-ce.p.rapidapi.com';
-            headers['X-Auth-Token'] = JUDGE0_KEY;
-        }
-
-        const response = await axios.get(`${JUDGE0_URL}/submissions/${token}?base64_encoded=true`, { headers });
-        const result = response.data;
-
-        if (result.status && result.status.id >= 3) {
-            const registro = await RespuestaEstudianteEjercicio.findOne({
-                where: { token },
-                include: [{ model: Ejercicio, as: 'ejercicio' }]
-            });
-
-            if (registro) {
-                const stdoutHumano = result.stdout ? decodificar(result.stdout) : "";
-                const stderrHumano = result.stderr ? decodificar(result.stderr) : "";
-                const compileOutput = result.compile_output ? decodificar(result.compile_output) : "";
-
-                const limpiarCadena = (str) => str ? str.toString().replace(/[\n\r]/g, "").trim() : "";
-
-                const esperado = limpiarCadena(registro.ejercicio?.resultado_ejercicio);
-                const obtenido = limpiarCadena(stdoutHumano);
-                
-                const esCorrecto = (obtenido === esperado && obtenido !== "" && !result.stderr);
-
-                await registro.update({
-                    stdout: stdoutHumano || stderrHumano || compileOutput,
-                    estado: result.status.description
-                });
-
-                const evaluacionExistente = await Evaluacion.findOne({ 
-                    where: { 
-                        estudiante_id: registro.estudiante_id,
-                        ejercicio_id: registro.ejercicio_id,
-                        retroalimentacion: { [Op.like]: `%${token}%` }
-                    } 
-                });
-
-                if (!evaluacionExistente) {
-                    await Evaluacion.create({
-                        calificacion: esCorrecto ? 5.0 : 0.0,
-                        retroalimentacion: esCorrecto
-                            ? `Aprobado automáticamente (Token: ${token}). Resultado coincide.`
-                            : `Revisión automática (Token: ${token}). Esperado: '${esperado}', Recibido: '${obtenido}'.`,
-                        estudiante_id: registro.estudiante_id,
-                        ejercicio_id: registro.ejercicio_id,
-                        estado: esCorrecto ? 'Aprobado' : 'Reprobado',
-                        fecha_evaluacion: new Date()
-                    });
-                }
-
-                result.stdout = stdoutHumano;
-                result.stderr = stderrHumano || compileOutput;
-                result.evaluacion_final = esCorrecto ? 'Aprobado' : 'Reprobado';
-            }
-        }
-        
-        res.json(result);
-    } catch (error) {
-        console.error("Error en obtenerResultado:", error.message);
-        res.status(500).json({ error: "Error al evaluar", detalle: error.message });
-    }
-};
+// Ya no hay integración con Judge0 en este módulo según el diagrama
 
 /* ============================================================
    3. CRUD ESTÁNDAR (Faltaban estas definiciones)
@@ -274,7 +180,6 @@ const verificarEjercicioCompletado = async (req, res) => {
 ============================================================ */
 module.exports = {
     crearRespuestaEjercicio,
-    obtenerResultadoJudge0,
     obtenerRespuestasEjercicio,
     obtenerRespuestaEjercicioPorId,
     actualizarRespuestaEjercicio,

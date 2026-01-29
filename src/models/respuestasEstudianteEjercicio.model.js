@@ -1,44 +1,51 @@
 module.exports = (sequelize, DataTypes) => {
   const RespuestaEstudianteEjercicio = sequelize.define('RespuestaEstudianteEjercicio', {
     id: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.BIGINT,
       primaryKey: true,
       autoIncrement: true
     },
+    // Respuesta dinámica: permite texto, objetos o colecciones (JSONB)
+    // Ejemplos por tipo:
+    // - Compilador: { codigo: string, lenguaje?: string }
+    // - Diagramas UML: { diagram: {...} }
+    // - Preguntas: { respuestas: { [preguntaId]: valor } }
+    // - Archivos: { archivos: [{ nombre, mime, tamano, ruta }] }
     respuesta: {
-      type: DataTypes.TEXT,
+      type: DataTypes.JSONB,
       allowNull: false
     },
-    token: {
-      type: DataTypes.STRING,
-      allowNull: true
-    },
-    stdout: {
-      type: DataTypes.TEXT,
-      allowNull: true
-    },
-    estado: {
-      type: DataTypes.STRING,
-      defaultValue: 'Processing'
-    },
     estudiante_id: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.BIGINT,
       allowNull: false
     },
     ejercicio_id: {
-      type: DataTypes.INTEGER,
+      type: DataTypes.BIGINT,
       allowNull: false
     },
-    // CAMBIO: De idioma_id a lenguaje_id
-    lenguaje_id: {
-      type: DataTypes.INTEGER,
-      allowNull: false,
-      field: 'lenguaje_id' 
+    estado: {
+      type: DataTypes.TEXT,
+      allowNull: true
+    },
+    // Mapeamos createdAt -> fecha_creacion según diagrama
+    fecha_creacion: {
+      type: DataTypes.DATE,
+      allowNull: true
     }
   }, {
-    tableName: 'respuestas_estudiante_ejercicio', 
+    tableName: 'respuestas_estudiante_ejercicio',
     timestamps: true,
-    underscored: true 
+    createdAt: 'fecha_creacion',
+    updatedAt: false,
+    underscored: true,
+    // Restringe un intento por estudiante por ejercicio
+    indexes: [
+      {
+        unique: true,
+        fields: ['estudiante_id', 'ejercicio_id'],
+        name: 'ux_estudiante_ejercicio'
+      }
+    ]
   });
 
   return RespuestaEstudianteEjercicio;

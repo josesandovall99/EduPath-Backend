@@ -11,6 +11,7 @@ router.delete('/:id', ejercicioController.deleteEjercicio);
 
 // Funcionalidades específicas de ejercicios
 router.post('/:ejercicioId/resolver', ejercicioController.resolverEjercicio);
+router.post('/:ejercicioId/enviar', ejercicioController.enviarRespuestaEjercicio);
 router.get('/:ejercicioId/retroalimentacion', ejercicioController.getRetroalimentacionEjercicio);
 
 module.exports = router;
