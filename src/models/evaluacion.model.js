@@ -35,7 +35,19 @@ module.exports = (sequelize, DataTypes) => {
     }
   }, {
     tableName: 'evaluacion',
-    timestamps: false
+    timestamps: false,
+    indexes: [
+      {
+        unique: true,
+        fields: ['estudiante_id', 'ejercicio_id'],
+        name: 'ux_eval_estudiante_ejercicio'
+      },
+      {
+        unique: true,
+        fields: ['estudiante_id', 'miniproyecto_id'],
+        name: 'ux_eval_estudiante_miniproyecto'
+      }
+    ]
   });
 
   Evaluacion.associate = (models) => {

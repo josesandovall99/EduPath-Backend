@@ -1,4 +1,6 @@
 const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion } = require('../models');
+// Bloqueos en memoria por envío en curso (clave: estudianteId:ejercicioId)
+const submissionLocks = new Map();
 const umlValidator = require('../services/umlValidator');
 
 // Crear ejercicio con su actividad base (herencia con transacción)
@@ -338,27 +340,26 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       return res.status(404).json({ message: 'Ejercicio no encontrado' });
     }
 
-    // Normalizar respuesta para almacenamiento JSONB
-    const respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
+    const key = `${estudiante_id}:${ejercicioId}`;
+    if (submissionLocks.get(key)) {
+      return res.status(429).json({ message: 'Evaluación en curso, intenta nuevamente en unos segundos.' });
+    }
+    submissionLocks.set(key, true);
 
-    // Evitar duplicados: un intento por estudiante por ejercicio
-    const intentoExistente = await RespuestaEstudianteEjercicio.findOne({
+    // Bloquear nuevos envíos si ya existe una respuesta registrada
+    const respuestaExistente = await RespuestaEstudianteEjercicio.findOne({
       where: { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) }
     });
-    if (intentoExistente) {
+    if (respuestaExistente) {
+      submissionLocks.delete(key);
       return res.status(409).json({
-        message: 'Ya existe una respuesta para este estudiante en este ejercicio',
-        intentoId: intentoExistente.id
+        message: 'Ya existe una respuesta registrada para este ejercicio por el estudiante',
+        intentoId: respuestaExistente.id
       });
     }
 
-    // Guardar intento
-    const intento = await RespuestaEstudianteEjercicio.create({
-      respuesta: respuestaPayload,
-      estudiante_id,
-      ejercicio_id: parseInt(ejercicioId, 10),
-      estado: 'ENVIADO'
-    });
+    // Normalizar respuesta para evaluación (se guarda sólo si es correcta)
+    const respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
 
     // Evaluar usando la misma lógica de resolver
     let esCorrecta = false;
@@ -387,9 +388,11 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       const diagramPayload = req.body.diagram || respuestaPayload?.diagram;
       const cfg = ejercicio.configuracion || {};
       if (!diagramPayload) {
+        submissionLocks.delete(key);
         return res.status(400).json({ message: 'El campo "diagram" es requerido para resolver ejercicios UML.' });
       }
       if (!cfg.opciones || typeof cfg.opciones !== 'object') {
+        submissionLocks.delete(key);
         return res.status(400).json({ message: 'Este ejercicio UML no tiene reglas configuradas (configuracion.opciones). Solicite al administrador que las establezca.' });
       }
       const result = require('../services/umlValidator').validate(diagramPayload, cfg.opciones);
@@ -400,6 +403,7 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       // Preguntas (cuestionario)
       const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
       if (cfg.tipo !== 'cuestionario') {
+        submissionLocks.delete(key);
         return res.status(400).json({ message: 'Configuración inválida para evaluación no programática.' });
       }
       const mapaRespuestas = (respuestaPayload && respuestaPayload.respuestas) || {};
@@ -425,18 +429,30 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
         : `Correctas ${correctas}/${total}. Revise las respuestas.`;
     }
 
-    // Si es correcta, registrar Evaluacion aprobada
-    if (esCorrecta) {
-      await Evaluacion.create({
-        calificacion: puntosObtenidos,
-        retroalimentacion: retroalimentacion || null,
-        estudiante_id,
-        ejercicio_id: parseInt(ejercicioId, 10),
-        estado: 'Aprobado'
-      });
+    // Guardar intento y registrar evaluación (Aprobado/Reprobado)
+    const intento = await RespuestaEstudianteEjercicio.create({
+      respuesta: respuestaPayload,
+      estudiante_id,
+      ejercicio_id: parseInt(ejercicioId, 10),
+      estado: 'ENVIADO'
+    });
+    const evalWhere = { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) };
+    const existenteEval = await Evaluacion.findOne({ where: evalWhere });
+    const payloadEval = {
+      calificacion: esCorrecta ? puntosObtenidos : 0,
+      retroalimentacion: retroalimentacion || null,
+      estudiante_id,
+      ejercicio_id: parseInt(ejercicioId, 10),
+      estado: esCorrecta ? 'Aprobado' : 'Reprobado'
+    };
+    if (existenteEval) {
+      await existenteEval.update(payloadEval);
+    } else {
+      await Evaluacion.create(payloadEval);
     }
 
-    return res.status(esCorrecta ? 200 : 400).json({
+    submissionLocks.delete(key);
+    return res.status(200).json({
       intentoId: intento.id,
       ejercicioId,
       esCorrecta,
@@ -445,6 +461,12 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       retroalimentacion
     });
   } catch (error) {
+    // Liberar lock en caso de error
+    try {
+      const { ejercicioId } = req.params;
+      const { estudiante_id } = req.body || {};
+      if (estudiante_id && ejercicioId) submissionLocks.delete(`${estudiante_id}:${ejercicioId}`);
+    } catch {}
     res.status(500).json({
       message: 'Error al enviar la respuesta del ejercicio',
       error: error.message || error

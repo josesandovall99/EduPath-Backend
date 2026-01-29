@@ -17,7 +17,7 @@ const crearRespuestaEjercicio = async (req, res) => {
             return res.status(404).json({ error: "El ejercicio no existe" });
         }
 
-        // Evitar duplicados: un intento por estudiante por ejercicio
+        // Bloquear nuevos intentos si ya existe respuesta registrada
         const existente = await RespuestaEstudianteEjercicio.findOne({
             where: { estudiante_id, ejercicio_id }
         });

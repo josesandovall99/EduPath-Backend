@@ -77,3 +77,23 @@ exports.delete = async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 };
+
+// Búsqueda por query params: estudiante_id, ejercicio_id, miniproyecto_id
+exports.findBy = async (req, res) => {
+  try {
+    const { estudiante_id, ejercicio_id, miniproyecto_id } = req.query;
+    const where = {};
+    if (estudiante_id) where.estudiante_id = parseInt(estudiante_id, 10);
+    if (ejercicio_id) where.ejercicio_id = parseInt(ejercicio_id, 10);
+    if (miniproyecto_id) where.miniproyecto_id = parseInt(miniproyecto_id, 10);
+
+    const data = await Evaluacion.findAll({
+      where,
+      attributes: { exclude: ['estudiante_id', 'ejercicio_id', 'miniproyecto_id'] },
+      include: [{ model: Estudiante }, { model: Ejercicio }, { model: Miniproyecto }]
+    });
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};

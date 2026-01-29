@@ -38,7 +38,7 @@ module.exports = (sequelize, DataTypes) => {
     createdAt: 'fecha_creacion',
     updatedAt: false,
     underscored: true,
-    // Restringe un intento por estudiante por ejercicio
+    // Un solo registro final por estudiante+ejercicio (solo cuando sea correcto)
     indexes: [
       {
         unique: true,
