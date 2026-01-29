@@ -32,7 +32,7 @@ exports.createEjercicio = async (req, res) => {
 
     // Crear el ejercicio usando el mismo id de la actividad
     // Validar tipo_ejercicio
-    const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas'];
+    const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción multiple', 'Ordenar', 'Relacionar'];
     const tipo = ejercicio.tipo_ejercicio || 'Compilador';
     if (!TIPOS_PERMITIDOS.includes(tipo)) {
       await t.rollback();
@@ -46,6 +46,12 @@ exports.createEjercicio = async (req, res) => {
         configuracion = { tipo: 'programacion', esperado: ejercicio.resultado_ejercicio || '' };
       } else if (tipo === 'Diagramas UML') {
         configuracion = { opciones: { minClasses: 2, requireRelationships: false, requireMultiplicities: false } };
+      } else if (tipo === 'Opción multiple') {
+        configuracion = { tipo: 'opcion-multiple', enunciado: '', opciones: [], correctaIndex: 0 };
+      } else if (tipo === 'Ordenar') {
+        configuracion = { tipo: 'ordenar', enunciado: '', items: [] };
+      } else if (tipo === 'Relacionar') {
+        configuracion = { tipo: 'relacionar', enunciado: '', pares: [] };
       } else {
         configuracion = { tipo: 'cuestionario', preguntas: [] };
       }
@@ -255,6 +261,64 @@ exports.resolverEjercicio = async (req, res) => {
       });
     }
 
+    // Opción multiple
+    if (ejercicio.tipo_ejercicio === 'Opción multiple') {
+      const cfg = ejercicio.configuracion || { tipo: 'opcion-multiple', opciones: [], correctaIndex: 0 };
+      const correctValue = (cfg.opciones || [])[cfg.correctaIndex ?? 0];
+      const elegido = req.body?.respuesta?.opcion ?? req.body?.respuestaIndex;
+      const quizValue = req.body?.respuestas && Object.values(req.body.respuestas)[0];
+      const recibido = elegido ?? quizValue;
+      const norm = (t) => (t || '').toString().trim();
+      const esCorrecta = norm(recibido) === norm(correctValue);
+      return res.status(esCorrecta ? 200 : 400).json({
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
+        retroalimentacion: esCorrecta ? '¡Correcto!' : 'Respuesta incorrecta.'
+      });
+    }
+
+    // Ordenar
+    if (ejercicio.tipo_ejercicio === 'Ordenar') {
+      const cfg = ejercicio.configuracion || { tipo: 'ordenar', items: [] };
+      const orden = req.body?.respuesta?.orden || [];
+      const normArr = (arr) => (arr || []).map(x => (x || '').toString().trim());
+      const esCorrecta = JSON.stringify(normArr(orden)) === JSON.stringify(normArr(cfg.items));
+      return res.status(esCorrecta ? 200 : 400).json({
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
+        retroalimentacion: esCorrecta ? 'Orden correcto.' : 'El orden no es correcto.'
+      });
+    }
+
+    // Relacionar
+    if (ejercicio.tipo_ejercicio === 'Relacionar') {
+      const cfg = ejercicio.configuracion || { tipo: 'relacionar', pares: [] };
+      const conceptos = (cfg.pares || []).map(p => p.concepto);
+      const definiciones = (cfg.pares || []).map(p => p.definicion);
+      let ok = true;
+      const parejas = req.body?.respuesta?.parejas;
+      const matches = req.body?.respuesta?.matches;
+      if (Array.isArray(parejas)) {
+        for (const pr of parejas) { if (pr.conceptoIndex !== pr.definicionIndex) { ok = false; break; } }
+      } else if (matches) {
+        for (const [c, d] of Object.entries(matches)) {
+          const idx = conceptos.findIndex(x => x === c);
+          if (idx < 0 || definiciones[idx] !== d) { ok = false; break; }
+        }
+      } else {
+        ok = false;
+      }
+      const esCorrecta = ok;
+      return res.status(esCorrecta ? 200 : 400).json({
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
+        retroalimentacion: esCorrecta ? 'Relaciones correctas.' : 'Relaciones incorrectas.'
+      });
+    }
+
     // Evaluación para Preguntas (cuestionario)
     const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
     if (cfg.tipo !== 'cuestionario') {
@@ -399,6 +463,49 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       esCorrecta = !!result.success;
       puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       detalle = { errors: result.errors, warnings: result.warnings };
+    } else if (ejercicio.tipo_ejercicio === 'Opción multiple') {
+      // Config: { enunciado, opciones: string[], correctaIndex }
+      const cfg = ejercicio.configuracion || { tipo: 'opcion-multiple', opciones: [], correctaIndex: 0 };
+      const correctValue = (cfg.opciones || [])[cfg.correctaIndex ?? 0];
+      const elegido = respuestaPayload?.opcion ?? respuestaPayload?.respuestaIndex;
+      // Fallback si viene como quiz
+      const quizValue = respuestaPayload?.respuestas && Object.values(respuestaPayload.respuestas)[0];
+      const recibido = elegido ?? quizValue;
+      const norm = (t) => (t || '').toString().trim();
+      esCorrecta = norm(recibido) === norm(correctValue);
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta ? '¡Correcto!' : 'Respuesta incorrecta.';
+    } else if (ejercicio.tipo_ejercicio === 'Ordenar') {
+      // Config: { enunciado, items: string[] } en orden correcto
+      const cfg = ejercicio.configuracion || { tipo: 'ordenar', items: [] };
+      const orden = respuestaPayload?.orden || [];
+      const normArr = (arr) => (arr || []).map(x => (x || '').toString().trim());
+      esCorrecta = JSON.stringify(normArr(orden)) === JSON.stringify(normArr(cfg.items));
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta ? 'Orden correcto.' : 'El orden no es correcto.';
+    } else if (ejercicio.tipo_ejercicio === 'Relacionar') {
+      // Config: { enunciado, pares: [{ concepto, definicion }] }
+      const cfg = ejercicio.configuracion || { tipo: 'relacionar', pares: [] };
+      const conceptos = (cfg.pares || []).map(p => p.concepto);
+      const definiciones = (cfg.pares || []).map(p => p.definicion);
+      let ok = true;
+      if (Array.isArray(respuestaPayload?.parejas)) {
+        // Parejas de índices: correcto si conceptoIndex === definicionIndex para cada par
+        for (const pr of respuestaPayload.parejas) {
+          if (pr.conceptoIndex !== pr.definicionIndex) { ok = false; break; }
+        }
+      } else if (respuestaPayload?.matches) {
+        // matches: { concepto: definicion }
+        for (const [c, d] of Object.entries(respuestaPayload.matches)) {
+          const idx = conceptos.findIndex(x => x === c);
+          if (idx < 0 || definiciones[idx] !== d) { ok = false; break; }
+        }
+      } else {
+        ok = false;
+      }
+      esCorrecta = ok;
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta ? 'Relaciones correctas.' : 'Relaciones incorrectas.';
     } else {
       // Preguntas (cuestionario)
       const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };

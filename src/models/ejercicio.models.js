@@ -11,7 +11,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     tipo_ejercicio: {
-      type: DataTypes.ENUM('Compilador', 'Diagramas UML', 'Preguntas'),
+      type: DataTypes.ENUM('Compilador', 'Diagramas UML', 'Preguntas', 'Opción multiple', 'Ordenar', 'Relacionar'),
       allowNull: false,
       defaultValue: 'Compilador'
     },
