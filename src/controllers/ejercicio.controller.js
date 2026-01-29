@@ -346,15 +346,15 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
     }
     submissionLocks.set(key, true);
 
-    // Bloquear nuevos envíos si ya existe una respuesta registrada
-    const respuestaExistente = await RespuestaEstudianteEjercicio.findOne({
-      where: { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) }
+    // Bloquear nuevos intentos si ya está aprobado
+    const evaluacionAprobada = await Evaluacion.findOne({
+      where: { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10), estado: 'Aprobado' }
     });
-    if (respuestaExistente) {
+    if (evaluacionAprobada) {
       submissionLocks.delete(key);
       return res.status(409).json({
-        message: 'Ya existe una respuesta registrada para este ejercicio por el estudiante',
-        intentoId: respuestaExistente.id
+        message: 'Ejercicio ya aprobado para el estudiante',
+        evaluacionId: evaluacionAprobada.id
       });
     }
 
@@ -429,31 +429,42 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
         : `Correctas ${correctas}/${total}. Revise las respuestas.`;
     }
 
-    // Guardar intento y registrar evaluación (Aprobado/Reprobado)
-    const intento = await RespuestaEstudianteEjercicio.create({
-      respuesta: respuestaPayload,
-      estudiante_id,
-      ejercicio_id: parseInt(ejercicioId, 10),
-      estado: 'ENVIADO'
-    });
-    const evalWhere = { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) };
-    const existenteEval = await Evaluacion.findOne({ where: evalWhere });
-    const payloadEval = {
-      calificacion: esCorrecta ? puntosObtenidos : 0,
-      retroalimentacion: retroalimentacion || null,
-      estudiante_id,
-      ejercicio_id: parseInt(ejercicioId, 10),
-      estado: esCorrecta ? 'Aprobado' : 'Reprobado'
-    };
-    if (existenteEval) {
-      await existenteEval.update(payloadEval);
-    } else {
-      await Evaluacion.create(payloadEval);
+    if (esCorrecta) {
+      // Guardar intento solo si es correcto y registrar evaluación Aprobado
+      const intento = await RespuestaEstudianteEjercicio.create({
+        respuesta: respuestaPayload,
+        estudiante_id,
+        ejercicio_id: parseInt(ejercicioId, 10),
+        estado: 'ENVIADO'
+      });
+      const evalWhere = { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) };
+      const existenteEval = await Evaluacion.findOne({ where: evalWhere });
+      const payloadEval = {
+        calificacion: puntosObtenidos,
+        retroalimentacion: retroalimentacion || null,
+        estudiante_id,
+        ejercicio_id: parseInt(ejercicioId, 10),
+        estado: 'Aprobado'
+      };
+      if (existenteEval) {
+        await existenteEval.update(payloadEval);
+      } else {
+        await Evaluacion.create(payloadEval);
+      }
+      submissionLocks.delete(key);
+      return res.status(200).json({
+        intentoId: intento.id,
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos,
+        detalle,
+        retroalimentacion
+      });
     }
 
+    // Incorrecta: no se persiste intento ni evaluación; se libera el lock y se permite reintentar
     submissionLocks.delete(key);
-    return res.status(200).json({
-      intentoId: intento.id,
+    return res.status(400).json({
       ejercicioId,
       esCorrecta,
       puntosObtenidos,
