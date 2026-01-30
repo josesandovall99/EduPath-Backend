@@ -11,7 +11,7 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     tipo_ejercicio: {
-      type: DataTypes.ENUM('Compilador', 'Diagramas UML', 'Preguntas', 'Opción multiple', 'Ordenar', 'Relacionar'),
+      type: DataTypes.ENUM('Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'),
       allowNull: false,
       defaultValue: 'Compilador'
     },
@@ -27,6 +27,9 @@ module.exports = (sequelize, DataTypes) => {
       // Estructura dinámica para preguntas/respuestas por área
       // Compilador: { tipo: 'programacion', esperado: '...', lenguajesPermitidos?: [ids] }
       // Diagramas UML / Preguntas: { tipo: 'cuestionario', preguntas: [{ id, enunciado, tipo, opciones?, respuesta_correcta? }] }
+      // Opción única: { tipo: 'opcion-unica', enunciado: '...', opciones: [...], respuestaCorrecta: '...' }
+      // Ordenar: { tipo: 'ordenar', enunciado: '...', items: [...] }
+      // Relacionar: { tipo: 'relacionar', enunciado: '...', pares: [{ concepto, definicion }] }
       type: DataTypes.JSONB,
       allowNull: true
     }

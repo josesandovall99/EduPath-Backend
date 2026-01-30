@@ -32,7 +32,7 @@ exports.createEjercicio = async (req, res) => {
 
     // Crear el ejercicio usando el mismo id de la actividad
     // Validar tipo_ejercicio
-    const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción multiple', 'Ordenar', 'Relacionar'];
+    const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'];
     const tipo = ejercicio.tipo_ejercicio || 'Compilador';
     if (!TIPOS_PERMITIDOS.includes(tipo)) {
       await t.rollback();
@@ -46,8 +46,8 @@ exports.createEjercicio = async (req, res) => {
         configuracion = { tipo: 'programacion', esperado: ejercicio.resultado_ejercicio || '' };
       } else if (tipo === 'Diagramas UML') {
         configuracion = { opciones: { minClasses: 2, requireRelationships: false, requireMultiplicities: false } };
-      } else if (tipo === 'Opción multiple') {
-        configuracion = { tipo: 'opcion-multiple', enunciado: '', opciones: [], correctaIndex: 0 };
+      } else if (tipo === 'Opción única') {
+        configuracion = { tipo: 'opcion-unica', enunciado: '', opciones: [], respuestaCorrecta: '' };
       } else if (tipo === 'Ordenar') {
         configuracion = { tipo: 'ordenar', enunciado: '', items: [] };
       } else if (tipo === 'Relacionar') {
@@ -261,15 +261,13 @@ exports.resolverEjercicio = async (req, res) => {
       });
     }
 
-    // Opción multiple
-    if (ejercicio.tipo_ejercicio === 'Opción multiple') {
-      const cfg = ejercicio.configuracion || { tipo: 'opcion-multiple', opciones: [], correctaIndex: 0 };
-      const correctValue = (cfg.opciones || [])[cfg.correctaIndex ?? 0];
-      const elegido = req.body?.respuesta?.opcion ?? req.body?.respuestaIndex;
-      const quizValue = req.body?.respuestas && Object.values(req.body.respuestas)[0];
-      const recibido = elegido ?? quizValue;
+    // Opción única
+    if (ejercicio.tipo_ejercicio === 'Opción única') {
+      const cfg = ejercicio.configuracion || { tipo: 'opcion-unica', opciones: [], respuestaCorrecta: '' };
       const norm = (t) => (t || '').toString().trim();
-      const esCorrecta = norm(recibido) === norm(correctValue);
+      const recibido = norm(req.body?.respuesta?.opcion ?? req.body?.respuesta ?? '');
+      const esperado = norm(cfg.respuestaCorrecta ?? '');
+      const esCorrecta = recibido === esperado;
       return res.status(esCorrecta ? 200 : 400).json({
         ejercicioId,
         esCorrecta,
@@ -463,16 +461,13 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       esCorrecta = !!result.success;
       puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       detalle = { errors: result.errors, warnings: result.warnings };
-    } else if (ejercicio.tipo_ejercicio === 'Opción multiple') {
-      // Config: { enunciado, opciones: string[], correctaIndex }
-      const cfg = ejercicio.configuracion || { tipo: 'opcion-multiple', opciones: [], correctaIndex: 0 };
-      const correctValue = (cfg.opciones || [])[cfg.correctaIndex ?? 0];
-      const elegido = respuestaPayload?.opcion ?? respuestaPayload?.respuestaIndex;
-      // Fallback si viene como quiz
-      const quizValue = respuestaPayload?.respuestas && Object.values(respuestaPayload.respuestas)[0];
-      const recibido = elegido ?? quizValue;
+    } else if (ejercicio.tipo_ejercicio === 'Opción única') {
+      // Config: { enunciado, opciones: string[], respuestaCorrecta: string }
+      const cfg = ejercicio.configuracion || { tipo: 'opcion-unica', opciones: [], respuestaCorrecta: '' };
       const norm = (t) => (t || '').toString().trim();
-      esCorrecta = norm(recibido) === norm(correctValue);
+      const recibido = norm(respuestaPayload?.opcion ?? respuestaPayload?.respuesta ?? '');
+      const esperado = norm(cfg.respuestaCorrecta ?? '');
+      esCorrecta = recibido === esperado;
       puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       retroalimentacion = esCorrecta ? '¡Correcto!' : 'Respuesta incorrecta.';
     } else if (ejercicio.tipo_ejercicio === 'Ordenar') {
