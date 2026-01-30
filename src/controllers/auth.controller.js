@@ -23,7 +23,8 @@ const loginEstudiante = async (req, res) => {
         id: estudiante.id,
         personaId: estudiante.persona.id,
         nombre: estudiante.persona.nombre,
-        codigo: estudiante.codigoEstudiantil
+        codigo: estudiante.codigoEstudiantil,
+        semestre: estudiante.semestre
       }
     });
   } catch (error) {
