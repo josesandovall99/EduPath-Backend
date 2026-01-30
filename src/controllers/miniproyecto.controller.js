@@ -106,7 +106,19 @@ exports.update = async (req, res) => {
 
 exports.findAll = async (req, res) => {
   try {
+    const { area_id } = req.query;
+    const where = {};
+
+    if (area_id !== undefined) {
+      const parsedAreaId = parseInt(area_id, 10);
+      if (isNaN(parsedAreaId)) {
+        return res.status(400).json({ error: 'area_id debe ser un número válido' });
+      }
+      where.area_id = parsedAreaId;
+    }
+
     const data = await Miniproyecto.findAll({
+      where,
       attributes: { exclude: ['area_id'] },
       include: [
         { model: Area },
@@ -115,7 +127,7 @@ exports.findAll = async (req, res) => {
           attributes: { exclude: ['tipo_actividad_id'] },
           include: [{ model: TipoActividad, as: 'tipo' }] 
         }
-      ] 
+      ]
     });
     res.json(data);
   } catch (err) {

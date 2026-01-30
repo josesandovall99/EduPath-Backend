@@ -23,6 +23,18 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       });
     }
 
+    const respuestaExistente = await RespuestaEstudianteMiniproyecto.findOne({
+      where: {
+        estudiante_id,
+        miniproyecto_id,
+      }
+    });
+
+    if (respuestaExistente) {
+      await respuestaExistente.update({ respuesta, estado });
+      return res.status(200).json(respuestaExistente);
+    }
+
     const nuevaRespuesta = await RespuestaEstudianteMiniproyecto.create({
       respuesta,
       estudiante_id,

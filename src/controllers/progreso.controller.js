@@ -1112,25 +1112,6 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
     });
 
     // ==========================================
-    // 3. MINIPROYECTOS DEL ÁREA (desde respuestas enviadas o completadas)
-    // ==========================================
-    const respuestasMiniproyectos = await RespuestaEstudianteMiniproyecto.findAll({
-      where: {
-        estudiante_id: esId,
-        estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] }
-      },
-      include: [{
-        model: Miniproyecto,
-        as: 'miniproyecto', // 👈 alias obligatorio
-        where: { area_id: aId },
-        attributes: ['id']
-      }]
-    });
-
-    const totalMiniproyectos = respuestasMiniproyectos.length;
-    const miniproyectosCompletados = totalMiniproyectos;
-
-    // ==========================================
     // 4. CÁLCULO DE PORCENTAJE
     // ==========================================
     let totalItems = 0;
@@ -1144,11 +1125,6 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
     if (totalEjercicios > 0) {
       totalItems += totalEjercicios;
       itemsCompletados += ejerciciosCompletados;
-    }
-
-    if (totalMiniproyectos > 0) {
-      totalItems += totalMiniproyectos;
-      itemsCompletados += miniproyectosCompletados;
     }
 
     let porcentajeProgreso = 0;
@@ -1171,14 +1147,6 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
         total: totalEjercicios,
         completados: ejerciciosCompletados,
         porcentaje: Math.round((ejerciciosCompletados / totalEjercicios) * 100)
-      };
-    }
-
-    if (totalMiniproyectos > 0) {
-      progresoDetallado.miniproyectos = {
-        total: totalMiniproyectos,
-        completados: miniproyectosCompletados,
-        porcentaje: Math.round((miniproyectosCompletados / totalMiniproyectos) * 100)
       };
     }
 
