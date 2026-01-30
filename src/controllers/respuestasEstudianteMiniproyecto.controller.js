@@ -1,5 +1,137 @@
 const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto } = require("../models");
 
+const normalizeText = (text = '') => text
+  .toString()
+  .normalize('NFD')
+  .replace(/[\u0300-\u036f]/g, '')
+  .toLowerCase();
+
+const buildCriteriaFromExpected = (expected = '') => {
+  const raw = expected.toString();
+  const parts = raw
+    .split(/\n|•|\-|\d+\.|\r/g)
+    .map(p => p.trim())
+    .filter(Boolean);
+
+  if (parts.length >= 2) return parts;
+
+  return raw
+    .split(/[.!?]/)
+    .map(p => p.trim())
+    .filter(Boolean);
+};
+
+const extractKeywords = (criteriaText = '') => {
+  return normalizeText(criteriaText)
+    .split(/\s+/)
+    .map(w => w.replace(/[^a-z0-9]/g, ''))
+    .filter(w => w.length >= 4);
+};
+
+const tryParseJson = (value) => {
+  if (typeof value !== 'string') return value;
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    return value;
+  }
+};
+
+const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '') => {
+  if (!expectedResponseValue) return null;
+
+  const expectedParsed = tryParseJson(expectedResponseValue);
+  const studentParsed = typeof studentResponseValue === 'string'
+    ? tryParseJson(studentResponseValue)
+    : studentResponseValue;
+
+  const hasStructuredExpected = expectedParsed && typeof expectedParsed === 'object' && (
+    expectedParsed.stakeholders || expectedParsed.requisitosFuncionales || expectedParsed.requisitosNoFuncionales ||
+    expectedParsed.alcance || expectedParsed.cronograma || expectedParsed.costos
+  );
+
+  if (hasStructuredExpected) {
+    const sections = [
+      {
+        label: 'Stakeholders',
+        expected: expectedParsed.stakeholders,
+        student: studentParsed?.stakeholders
+      },
+      {
+        label: 'Requisitos funcionales',
+        expected: expectedParsed.requisitosFuncionales,
+        student: studentParsed?.requisitosFuncionales
+      },
+      {
+        label: 'Requisitos no funcionales',
+        expected: expectedParsed.requisitosNoFuncionales,
+        student: studentParsed?.requisitosNoFuncionales
+      },
+      {
+        label: 'Alcance del proyecto',
+        expected: expectedParsed.alcance,
+        student: studentParsed?.alcance
+      },
+      {
+        label: 'Cronograma del proyecto',
+        expected: expectedParsed.cronograma,
+        student: studentParsed?.cronograma
+      },
+      {
+        label: 'Costos y recursos',
+        expected: expectedParsed.costos,
+        student: studentParsed?.costos
+      }
+    ].filter(section => section.expected);
+
+    if (sections.length === 0) return null;
+
+    const results = sections.map((section) => {
+      const keywords = extractKeywords(section.expected);
+      const normalizedStudent = normalizeText(section.student || '');
+      const matches = keywords.filter(keyword => normalizedStudent.includes(keyword)).length;
+      const minRequired = Math.min(3, keywords.length || 0);
+      const ratioRequired = Math.ceil((keywords.length || 0) * 0.5);
+      const matched = matches >= minRequired && matches >= ratioRequired && minRequired > 0;
+      return { criterio: section.label, cumplido: matched };
+    });
+
+    const cumplidos = results.filter(r => r.cumplido).length;
+    const puntaje = Math.round((cumplidos / results.length) * 100);
+
+    return {
+      puntaje,
+      totalCriterios: results.length,
+      criteriosCumplidos: cumplidos,
+      criterios: results
+    };
+  }
+
+  const expectedText = expectedParsed?.toString?.() ?? expectedResponseValue?.toString?.() ?? '';
+  const criteria = buildCriteriaFromExpected(expectedText);
+  if (criteria.length === 0) return null;
+
+  const normalizedStudent = normalizeText(studentParsed || '');
+  const results = criteria.map((criterion) => {
+    const keywords = extractKeywords(criterion);
+    const matches = keywords.filter(keyword => normalizedStudent.includes(keyword)).length;
+    const minRequired = Math.min(3, keywords.length || 0);
+    const ratioRequired = Math.ceil((keywords.length || 0) * 0.5);
+    const matched = matches >= minRequired && matches >= ratioRequired && minRequired > 0;
+    return { criterio: criterion, cumplido: matched };
+  });
+
+  const cumplidos = results.filter(r => r.cumplido).length;
+  const puntaje = Math.round((cumplidos / results.length) * 100);
+
+  return {
+    puntaje,
+    totalCriterios: results.length,
+    criteriosCumplidos: cumplidos,
+    criterios: results
+  };
+};
+
 /* =========================
    CREAR RESPUESTA
 ========================= */
@@ -30,13 +162,40 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       }
     });
 
+    let studentResponseText = '';
+    let studentResponseValue = '';
+    try {
+      const parsed = typeof respuesta === 'string' ? JSON.parse(respuesta) : respuesta;
+      studentResponseValue = parsed?.respuestaEstudiante || '';
+    } catch (e) {
+      studentResponseValue = typeof respuesta === 'string' ? respuesta : '';
+    }
+
+    if (studentResponseValue && typeof studentResponseValue === 'object') {
+      studentResponseText = [
+        studentResponseValue.stakeholders,
+        studentResponseValue.requisitosFuncionales,
+        studentResponseValue.requisitosNoFuncionales
+      ]
+        .filter(Boolean)
+        .join(' ');
+    } else {
+      studentResponseText = studentResponseValue || '';
+    }
+
+    const evaluacion = evaluateResponse(studentResponseValue, miniproyecto.respuesta_miniproyecto);
+    const respuestaPayload = JSON.stringify({
+      respuestaEstudiante: studentResponseText,
+      evaluacion
+    });
+
     if (respuestaExistente) {
-      await respuestaExistente.update({ respuesta, estado });
+      await respuestaExistente.update({ respuesta: respuestaPayload, estado });
       return res.status(200).json(respuestaExistente);
     }
 
     const nuevaRespuesta = await RespuestaEstudianteMiniproyecto.create({
-      respuesta,
+      respuesta: respuestaPayload,
       estudiante_id,
       miniproyecto_id,
       estado,
@@ -106,10 +265,10 @@ const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
 const actualizarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
-    const { estudiante_id, miniproyecto_id } = req.body;
+    const { estudiante_id, miniproyecto_id, respuesta: respuestaBody } = req.body;
 
-    const respuesta = await RespuestaEstudianteMiniproyecto.findByPk(id);
-    if (!respuesta) {
+    const respuestaRegistro = await RespuestaEstudianteMiniproyecto.findByPk(id);
+    if (!respuestaRegistro) {
       return res.status(404).json({
         mensaje: "Respuesta de miniproyecto no encontrada",
       });
@@ -134,11 +293,48 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
       }
     }
 
-    await respuesta.update(req.body);
+    let respuestaPayload = respuestaBody;
+    if (respuestaBody !== undefined) {
+      let studentResponseText = '';
+      let studentResponseValue = '';
+      try {
+        const parsed = typeof respuestaBody === 'string' ? JSON.parse(respuestaBody) : respuestaBody;
+        studentResponseValue = parsed?.respuestaEstudiante || '';
+      } catch (e) {
+        studentResponseValue = typeof respuestaBody === 'string' ? respuestaBody : '';
+      }
+
+      if (studentResponseValue && typeof studentResponseValue === 'object') {
+        studentResponseText = [
+          studentResponseValue.stakeholders,
+          studentResponseValue.requisitosFuncionales,
+          studentResponseValue.requisitosNoFuncionales
+        ]
+          .filter(Boolean)
+          .join(' ');
+      } else {
+        studentResponseText = studentResponseValue || '';
+      }
+
+      const targetMiniproyectoId = miniproyecto_id || respuestaRegistro.miniproyecto_id;
+      const miniproyecto = targetMiniproyectoId
+        ? await Miniproyecto.findByPk(targetMiniproyectoId)
+        : null;
+      const evaluacion = evaluateResponse(studentResponseValue, miniproyecto?.respuesta_miniproyecto);
+      respuestaPayload = JSON.stringify({
+        respuestaEstudiante: studentResponseText,
+        evaluacion
+      });
+    }
+
+    await respuestaRegistro.update({
+      ...req.body,
+      ...(respuestaBody !== undefined && { respuesta: respuestaPayload })
+    });
 
     res.json({
       mensaje: "Respuesta actualizada correctamente",
-      respuesta,
+      respuesta: respuestaRegistro,
     });
   } catch (error) {
     res.status(500).json({
