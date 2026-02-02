@@ -1,6 +1,7 @@
 const { Area, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido, Persona } = require('../models');
 const { Op } = require('sequelize');
 const puppeteer = require('puppeteer');
+const desbloqueoService = require('../services/desbloqueo.service');
 
 const escapeHtml = (value) => {
   if (value === null || value === undefined) return '';
@@ -1714,5 +1715,275 @@ exports.generarPdfReporte = async (req, res) => {
   }
 };
 
+// ==================== NUEVOS ENDPOINTS DE DESBLOQUEO ====================
 
+/**
+ * Verifica si un contenido está desbloqueado para un estudiante
+ * GET /api/progreso/verificar-contenido-desbloqueado?estudiante_id=X&contenido_id=Y
+ */
+exports.verificarContenidoDesbloqueado = async (req, res) => {
+  try {
+    const { estudiante_id, contenido_id } = req.query;
 
+    if (!estudiante_id || !contenido_id) {
+      return res.status(400).json({ 
+        message: "estudiante_id y contenido_id son requeridos como parámetros de query" 
+      });
+    }
+
+    const estudianteId = parseInt(estudiante_id, 10);
+    const contenidoId = parseInt(contenido_id, 10);
+
+    if (isNaN(estudianteId) || isNaN(contenidoId)) {
+      return res.status(400).json({ 
+        message: "estudiante_id y contenido_id deben ser números válidos" 
+      });
+    }
+
+    const resultado = await desbloqueoService.verificarContenidoDesbloqueado(estudianteId, contenidoId);
+    res.json(resultado);
+
+  } catch (error) {
+    console.error('❌ Error en verificarContenidoDesbloqueado:', error);
+    res.status(500).json({ 
+      message: 'Error al verificar contenido desbloqueado', 
+      error: error.message || error 
+    });
+  }
+};
+
+/**
+ * Verifica si un subtema está completo para un estudiante
+ * GET /api/progreso/verificar-subtema-completo?estudiante_id=X&subtema_id=Y
+ */
+exports.verificarSubtemaCompleto = async (req, res) => {
+  try {
+    const { estudiante_id, subtema_id } = req.query;
+
+    if (!estudiante_id || !subtema_id) {
+      return res.status(400).json({ 
+        message: "estudiante_id y subtema_id son requeridos como parámetros de query" 
+      });
+    }
+
+    const estudianteId = parseInt(estudiante_id, 10);
+    const subtemaId = parseInt(subtema_id, 10);
+
+    if (isNaN(estudianteId) || isNaN(subtemaId)) {
+      return res.status(400).json({ 
+        message: "estudiante_id y subtema_id deben ser números válidos" 
+      });
+    }
+
+    const resultado = await desbloqueoService.verificarSubtemaCompleto(estudianteId, subtemaId);
+    res.json(resultado);
+
+  } catch (error) {
+    console.error('❌ Error en verificarSubtemaCompleto:', error);
+    res.status(500).json({ 
+      message: 'Error al verificar subtema completo', 
+      error: error.message || error 
+    });
+  }
+};
+
+/**
+ * Verifica si un tema está completo para un estudiante
+ * GET /api/progreso/verificar-tema-completo?estudiante_id=X&tema_id=Y
+ */
+exports.verificarTemaCompleto = async (req, res) => {
+  try {
+    const { estudiante_id, tema_id } = req.query;
+
+    if (!estudiante_id || !tema_id) {
+      return res.status(400).json({ 
+        message: "estudiante_id y tema_id son requeridos como parámetros de query" 
+      });
+    }
+
+    const estudianteId = parseInt(estudiante_id, 10);
+    const temaId = parseInt(tema_id, 10);
+
+    if (isNaN(estudianteId) || isNaN(temaId)) {
+      return res.status(400).json({ 
+        message: "estudiante_id y tema_id deben ser números válidos" 
+      });
+    }
+
+    const resultado = await desbloqueoService.verificarTemaCompleto(estudianteId, temaId);
+    res.json(resultado);
+
+  } catch (error) {
+    console.error('❌ Error en verificarTemaCompleto:', error);
+    res.status(500).json({ 
+      message: 'Error al verificar tema completo', 
+      error: error.message || error 
+    });
+  }
+};
+
+/**
+ * Obtiene el estado de todos los contenidos de un tema para un estudiante
+ * GET /api/progreso/estado-contenidos-tema?estudiante_id=X&tema_id=Y
+ */
+exports.obtenerEstadoContenidosTema = async (req, res) => {
+  try {
+    const { estudiante_id, tema_id } = req.query;
+
+    if (!estudiante_id || !tema_id) {
+      return res.status(400).json({ 
+        message: "estudiante_id y tema_id son requeridos como parámetros de query" 
+      });
+    }
+
+    const estudianteId = parseInt(estudiante_id, 10);
+    const temaId = parseInt(tema_id, 10);
+
+    if (isNaN(estudianteId) || isNaN(temaId)) {
+      return res.status(400).json({ 
+        message: "estudiante_id y tema_id deben ser números válidos" 
+      });
+    }
+
+    const resultado = await desbloqueoService.obtenerEstadoContenidosTema(estudianteId, temaId);
+    res.json({
+      estudiante_id: estudianteId,
+      tema_id: temaId,
+      contenidos: resultado
+    });
+
+  } catch (error) {
+    console.error('❌ Error en obtenerEstadoContenidosTema:', error);
+    res.status(500).json({ 
+      message: 'Error al obtener estado de contenidos del tema', 
+      error: error.message || error 
+    });
+  }
+};
+
+/**
+ * Obtiene el estado de todos los subtemas de un tema para un estudiante
+ * GET /api/progreso/estado-subtemas-tema?estudiante_id=X&tema_id=Y
+ */
+exports.obtenerEstadoSubtemasTema = async (req, res) => {
+  try {
+    const { estudiante_id, tema_id } = req.query;
+
+    if (!estudiante_id || !tema_id) {
+      return res.status(400).json({ 
+        message: "estudiante_id y tema_id son requeridos como parámetros de query" 
+      });
+    }
+
+    const estudianteId = parseInt(estudiante_id, 10);
+    const temaId = parseInt(tema_id, 10);
+
+    if (isNaN(estudianteId) || isNaN(temaId)) {
+      return res.status(400).json({ 
+        message: "estudiante_id y tema_id deben ser números válidos" 
+      });
+    }
+
+    const resultado = await desbloqueoService.obtenerEstadoSubtemasTema(estudianteId, temaId);
+    res.json({
+      estudiante_id: estudianteId,
+      tema_id: temaId,
+      subtemas: resultado
+    });
+
+  } catch (error) {
+    console.error('❌ Error en obtenerEstadoSubtemasTema:', error);
+    res.status(500).json({ 
+      message: 'Error al obtener estado de subtemas del tema', 
+      error: error.message || error 
+    });
+  }
+};
+
+/**
+ * Obtiene el estado de todos los temas de un área para un estudiante
+ * GET /api/progreso/estado-temas-area?estudiante_id=X&area_id=Y
+ */
+exports.obtenerEstadoTemasArea = async (req, res) => {
+  try {
+    const { estudiante_id, area_id } = req.query;
+
+    if (!estudiante_id || !area_id) {
+      return res.status(400).json({ 
+        message: "estudiante_id y area_id son requeridos como parámetros de query" 
+      });
+    }
+
+    const estudianteId = parseInt(estudiante_id, 10);
+    const areaId = parseInt(area_id, 10);
+
+    if (isNaN(estudianteId) || isNaN(areaId)) {
+      return res.status(400).json({ 
+        message: "estudiante_id y area_id deben ser números válidos" 
+      });
+    }
+
+    const resultado = await desbloqueoService.obtenerEstadoTemasArea(estudianteId, areaId);
+    res.json({
+      estudiante_id: estudianteId,
+      area_id: areaId,
+      temas: resultado
+    });
+
+  } catch (error) {
+    console.error('❌ Error en obtenerEstadoTemasArea:', error);
+    res.status(500).json({ 
+      message: 'Error al obtener estado de temas del área', 
+      error: error.message || error 
+    });
+  }
+};
+
+/**
+ * Obtiene el siguiente contenido disponible para un estudiante en un tema
+ * GET /api/progreso/siguiente-contenido?estudiante_id=X&tema_id=Y
+ */
+exports.obtenerSiguienteContenido = async (req, res) => {
+  try {
+    const { estudiante_id, tema_id } = req.query;
+
+    if (!estudiante_id || !tema_id) {
+      return res.status(400).json({ 
+        message: "estudiante_id y tema_id son requeridos como parámetros de query" 
+      });
+    }
+
+    const estudianteId = parseInt(estudiante_id, 10);
+    const temaId = parseInt(tema_id, 10);
+
+    if (isNaN(estudianteId) || isNaN(temaId)) {
+      return res.status(400).json({ 
+        message: "estudiante_id y tema_id deben ser números válidos" 
+      });
+    }
+
+    const resultado = await desbloqueoService.obtenerSiguienteContenido(estudianteId, temaId);
+    
+    if (!resultado) {
+      return res.json({
+        estudiante_id: estudianteId,
+        tema_id: temaId,
+        siguiente_contenido: null,
+        mensaje: 'No hay contenidos disponibles o todos están completados'
+      });
+    }
+
+    res.json({
+      estudiante_id: estudianteId,
+      tema_id: temaId,
+      siguiente_contenido: resultado
+    });
+
+  } catch (error) {
+    console.error('❌ Error en obtenerSiguienteContenido:', error);
+    res.status(500).json({ 
+      message: 'Error al obtener siguiente contenido', 
+      error: error.message || error 
+    });
+  }
+};
