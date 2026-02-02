@@ -87,6 +87,29 @@ const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '')
     if (sections.length === 0) return null;
 
     const results = sections.map((section) => {
+      const expectedArray = Array.isArray(section.expected) ? section.expected : null;
+      const studentArray = Array.isArray(section.student) ? section.student : null;
+
+      if (expectedArray && studentArray) {
+        const expectedItems = expectedArray.map(item => item?.toString?.() ?? '').filter(Boolean);
+        const studentItems = studentArray.map(item => item?.toString?.() ?? '').filter(Boolean);
+
+        const matchesPerItem = expectedItems.map((expectedItem) => {
+          const keywords = extractKeywords(expectedItem);
+          if (keywords.length === 0) return false;
+          return studentItems.some((studentItem) => {
+            const normalizedStudent = normalizeText(studentItem);
+            const matches = keywords.filter(keyword => normalizedStudent.includes(keyword)).length;
+            const minRequired = Math.ceil((keywords.length || 0) * 0.5);
+            return matches >= minRequired && minRequired > 0;
+          });
+        });
+
+        const matchedCount = matchesPerItem.filter(Boolean).length;
+        const requiredItems = Math.max(1, Math.ceil(expectedItems.length * 0.5));
+        return { criterio: section.label, cumplido: matchedCount >= requiredItems };
+      }
+
       const keywords = extractKeywords(section.expected);
       const normalizedStudent = normalizeText(section.student || '');
       const matches = keywords.filter(keyword => normalizedStudent.includes(keyword)).length;
