@@ -21,11 +21,13 @@
   },
   "homepage": "https://github.com/josesandovall99/EduPath-Backend#readme",
   "dependencies": {
+    "acorn": "^8.15.0",
     "axios": "^1.13.2",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "java-parser": "^3.0.1",
     "multer": "^2.0.2",
     "nodemailer": "^7.0.12",
     "pdfkit": "^0.17.2",

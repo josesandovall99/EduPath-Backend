@@ -17,6 +17,17 @@ const crearRespuestaEjercicio = async (req, res) => {
             return res.status(404).json({ error: "El ejercicio no existe" });
         }
 
+        // Verificar evaluación aprobada (solo se guardan respuestas correctas)
+        const evaluacionAprobada = await Evaluacion.findOne({
+            where: { estudiante_id, ejercicio_id, estado: 'Aprobado' }
+        });
+        if (!evaluacionAprobada) {
+            return res.status(409).json({
+                error: "La respuesta solo se registra cuando el ejercicio está aprobado",
+                estado: "Pendiente o reprobado"
+            });
+        }
+
         // Bloquear nuevos intentos si ya existe respuesta registrada
         const existente = await RespuestaEstudianteEjercicio.findOne({
             where: { estudiante_id, ejercicio_id }

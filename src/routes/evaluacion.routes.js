@@ -2,6 +2,7 @@ const router = require('express').Router();
 const controller = require('../controllers/evaluacion.controller');
 
 router.post('/', controller.create);
+router.post('/compilador', controller.evaluarCompilador);
 router.get('/', controller.findAll);
 router.get('/by', controller.findBy);
 router.get('/:id', controller.findOne);

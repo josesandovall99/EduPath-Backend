@@ -1,4 +1,5 @@
 const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion } = require('../models');
+const evaluacionController = require('./evaluacion.controller');
 // Bloqueos en memoria por envío en curso (clave: estudianteId:ejercicioId)
 const submissionLocks = new Map();
 const umlValidator = require('../services/umlValidator');
@@ -393,13 +394,21 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
     const { ejercicioId } = req.params;
     const { estudiante_id, respuesta } = req.body;
 
-    if (!estudiante_id || typeof respuesta === 'undefined' || respuesta === null) {
-      return res.status(400).json({ message: 'Faltan campos: estudiante_id y respuesta' });
-    }
-
     const ejercicio = await Ejercicio.findByPk(ejercicioId);
     if (!ejercicio) {
       return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    const codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto;
+    const respuestaVacia = typeof respuesta === 'undefined' || respuesta === null;
+    if (!estudiante_id) {
+      return res.status(400).json({ message: 'Faltan campos: estudiante_id' });
+    }
+    if (ejercicio.tipo_ejercicio !== 'Compilador' && respuestaVacia) {
+      return res.status(400).json({ message: 'Faltan campos: respuesta' });
+    }
+    if (ejercicio.tipo_ejercicio === 'Compilador' && !codigo) {
+      return res.status(400).json({ message: 'Faltan campos: codigo' });
     }
 
     const key = `${estudiante_id}:${ejercicioId}`;
@@ -420,6 +429,13 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       });
     }
 
+    // Para compilador, delegamos en el controlador de evaluación
+    if (ejercicio.tipo_ejercicio === 'Compilador') {
+      if (!req.body.ejercicio_id) req.body.ejercicio_id = parseInt(ejercicioId, 10);
+      submissionLocks.delete(key);
+      return evaluacionController.evaluarCompilador(req, res);
+    }
+
     // Normalizar respuesta para evaluación (se guarda sólo si es correcta)
     const respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
 
@@ -429,24 +445,7 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
     let detalle = undefined;
     let retroalimentacion = undefined;
 
-    if (ejercicio.tipo_ejercicio === 'Compilador') {
-      const normalizarTexto = (texto) =>
-        (texto || '')
-          .toLowerCase()
-          .trim()
-          .replace(/\s+/g, ' ');
-
-      const recibido = typeof respuesta === 'string' ? respuesta : respuesta?.texto;
-      const respuestaEstudiante = normalizarTexto(recibido);
-      const esperado = normalizarTexto(
-        (ejercicio.configuracion && ejercicio.configuracion.esperado) || ejercicio.resultado_ejercicio
-      );
-      esCorrecta = respuestaEstudiante === esperado;
-      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
-      retroalimentacion = esCorrecta
-        ? '¡Respuesta correcta! Bien hecho.'
-        : `Respuesta incorrecta. La salida esperada es: ${esperado}`;
-    } else if (ejercicio.tipo_ejercicio === 'Diagramas UML') {
+    if (ejercicio.tipo_ejercicio === 'Diagramas UML') {
       const diagramPayload = req.body.diagram || respuestaPayload?.diagram;
       const cfg = ejercicio.configuracion || {};
       if (!diagramPayload) {
