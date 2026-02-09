@@ -526,3 +526,84 @@ exports.evaluarCompilador = async (req, res) => {
     res.status(500).json({ error: e.message || e });
   }
 };
+
+// Evaluar compilador para miniproyectos (sin Ejercicio asociado)
+exports.evaluateCompilerSubmission = async ({ codigo, lenguaje_id, configuracion, esperado, salidaManual }) => {
+  const lenguajeIdNum = parseInt(lenguaje_id, 10);
+  if (!lenguaje_id || isNaN(lenguajeIdNum) || !codigo) {
+    return { status: 400, message: 'Faltan campos: lenguaje_id, codigo' };
+  }
+
+  const cfg = configuracion || {};
+  const lenguajesPermitidos = cfg.lenguajesPermitidos;
+  if (Array.isArray(lenguajesPermitidos) && lenguajesPermitidos.length > 0) {
+    if (!lenguajesPermitidos.includes(lenguajeIdNum)) {
+      return { status: 400, message: 'Lenguaje no permitido para este ejercicio' };
+    }
+  }
+
+  const validacionSintaxis = validarSintaxis(codigo, cfg, lenguajeIdNum);
+  if (!validacionSintaxis.ok) {
+    return {
+      status: 400,
+      data: {
+        esCorrecta: false,
+        estado: 'Sintaxis invalida',
+        erroresSintaxis: validacionSintaxis.errores
+      }
+    };
+  }
+
+  if (!JUDGE0_URL) {
+    return { status: 500, message: 'JUDGE0_URL no esta configurada.' };
+  }
+
+  let result = {};
+  let stdoutHumano = '';
+  let stderrHumano = '';
+  let compileOutput = '';
+
+  if (typeof salidaManual === 'string') {
+    stdoutHumano = salidaManual;
+    result.status = { id: 3, description: 'Manual' };
+  } else {
+    const usarRapidApi = !!JUDGE0_KEY;
+    const headers = usarRapidApi
+      ? {
+          'x-rapidapi-key': JUDGE0_KEY,
+          'x-rapidapi-host': 'judge0-ce.p.rapidapi.com'
+        }
+      : undefined;
+
+    const response = await axios.post(
+      `${JUDGE0_URL}/submissions?base64_encoded=true&wait=true`,
+      {
+        source_code: codificar(codigo),
+        language_id: lenguajeIdNum
+      },
+      headers ? { headers } : undefined
+    );
+
+    result = response.data || {};
+    stdoutHumano = result.stdout ? decodificar(result.stdout) : '';
+    stderrHumano = result.stderr ? decodificar(result.stderr) : '';
+    compileOutput = result.compile_output ? decodificar(result.compile_output) : '';
+  }
+
+  const esperadoFinal = normalizarSalida(cfg.esperado || esperado || '');
+  const obtenido = normalizarSalida(stdoutHumano);
+  const sinErrores = !stderrHumano && !compileOutput && result.status?.id === 3;
+  const esCorrecta = sinErrores && obtenido === esperadoFinal && esperadoFinal !== '';
+
+  return {
+    status: esCorrecta ? 200 : 400,
+    data: {
+      esCorrecta,
+      stdout: stdoutHumano,
+      stderr: stderrHumano || compileOutput,
+      esperado: esperadoFinal,
+      obtenido,
+      estado: result.status?.description || (esCorrecta ? 'Aprobado' : 'Reprobado')
+    }
+  };
+};

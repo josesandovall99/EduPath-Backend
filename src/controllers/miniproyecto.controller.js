@@ -1,5 +1,6 @@
 const db = require('../models');
-const { Actividad, Miniproyecto, TipoActividad, Area, sequelize } = db;
+const { Actividad, Miniproyecto, TipoActividad, Area, Evaluacion, Estudiante, RespuestaEstudianteMiniproyecto, sequelize } = db;
+const evaluacionController = require('./evaluacion.controller');
 
 // Función auxiliar para validar FKs (Evita repetir código)
 const validarRelaciones = async (tipo_id, area_id) => {
@@ -162,5 +163,124 @@ exports.delete = async (req, res) => {
     res.json({ message: 'Eliminado correctamente' });
   } catch (err) {
     res.status(500).json({ error: err.message });
+  }
+};
+
+// Enviar respuesta para miniproyecto de programacion
+exports.enviarMiniproyectoProgramacion = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { estudiante_id } = req.body || {};
+    const codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto || '';
+    const lenguaje_id = req.body?.lenguaje_id || req.body?.respuesta?.lenguaje_id;
+
+    if (!estudiante_id || !codigo || !lenguaje_id) {
+      return res.status(400).json({ message: 'Faltan campos: estudiante_id, lenguaje_id, codigo' });
+    }
+
+    const estudiante = await Estudiante.findByPk(estudiante_id);
+    if (!estudiante) {
+      return res.status(400).json({ message: `El estudiante_id (${estudiante_id}) no existe.` });
+    }
+
+    const miniproyecto = await Miniproyecto.findByPk(id);
+    if (!miniproyecto) {
+      return res.status(404).json({ message: 'Miniproyecto no encontrado' });
+    }
+
+    // Validar que sea miniproyecto de programacion (actividad_id = 12)
+    if (Number(miniproyecto.actividad_id) !== 12) {
+      return res.status(400).json({ message: 'El miniproyecto no es de programacion' });
+    }
+
+    const evalExistente = await Evaluacion.findOne({
+      where: { estudiante_id, miniproyecto_id: parseInt(id, 10), estado: 'APROBADO' }
+    });
+    if (evalExistente) {
+      return res.status(409).json({ message: 'Miniproyecto ya aprobado para el estudiante' });
+    }
+
+    let esperado = miniproyecto.respuesta_miniproyecto || '';
+    let configuracion = {};
+
+    if (miniproyecto.respuesta_miniproyecto) {
+      try {
+        const parsed = JSON.parse(miniproyecto.respuesta_miniproyecto);
+        if (parsed && typeof parsed === 'object') {
+          if (parsed.tipo === 'programacion' || parsed.esperado || parsed.lenguajesPermitidos || parsed.sintaxis) {
+            esperado = parsed.esperado || '';
+            configuracion = {
+              esperado,
+              sintaxis: parsed.sintaxis || [],
+              lenguajesPermitidos: parsed.lenguajesPermitidos || []
+            };
+          }
+        }
+      } catch (err) {
+        // Si no es JSON, se deja como texto esperado
+      }
+    }
+
+    const evaluacion = await evaluacionController.evaluateCompilerSubmission({
+      codigo,
+      lenguaje_id,
+      configuracion,
+      esperado
+    });
+
+    if (!evaluacion || evaluacion.status === 500) {
+      return res.status(500).json({ message: evaluacion?.message || 'Error evaluando el miniproyecto' });
+    }
+
+    if (evaluacion.status !== 200) {
+      return res.status(400).json({
+        esCorrecta: false,
+        ...evaluacion.data,
+        message: evaluacion.message || 'Respuesta incorrecta'
+      });
+    }
+
+    const respuestaPayload = JSON.stringify({
+      codigo,
+      lenguaje_id,
+      stdout: evaluacion.data?.stdout || ''
+    });
+
+    const existenteRespuesta = await RespuestaEstudianteMiniproyecto.findOne({
+      where: { estudiante_id, miniproyecto_id: parseInt(id, 10) }
+    });
+
+    if (existenteRespuesta) {
+      await existenteRespuesta.update({ respuesta: respuestaPayload, estado: 'COMPLETADO' });
+    } else {
+      await RespuestaEstudianteMiniproyecto.create({
+        respuesta: respuestaPayload,
+        estudiante_id,
+        miniproyecto_id: parseInt(id, 10),
+        estado: 'COMPLETADO'
+      });
+    }
+
+    const evalPayload = {
+      calificacion: 100,
+      retroalimentacion: 'Aprobado automaticamente. Salida y sintaxis correctas.',
+      estudiante_id,
+      miniproyecto_id: parseInt(id, 10),
+      estado: 'APROBADO'
+    };
+    const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10) } });
+    if (evalPrev) {
+      await evalPrev.update(evalPayload);
+    } else {
+      await Evaluacion.create(evalPayload);
+    }
+
+    return res.status(200).json({
+      esCorrecta: true,
+      puntosObtenidos: 100,
+      ...evaluacion.data
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Error al evaluar miniproyecto', error: err.message || err });
   }
 };
