@@ -386,11 +386,13 @@ exports.evaluarCompilador = async (req, res) => {
       req.body?.respuesta?.texto ||
       '';
 
-    if (!estudiante_id || !ejercicio_id || !lenguaje_id || isNaN(lenguajeIdNum) || !codigo) {
-      return res.status(400).json({ message: 'Faltan campos: estudiante_id, ejercicio_id, lenguaje_id, codigo' });
+    if (!ejercicio_id || !lenguaje_id || isNaN(lenguajeIdNum) || !codigo) {
+      return res.status(400).json({ message: 'Faltan campos: ejercicio_id, lenguaje_id, codigo' });
     }
 
-    await validarFKs(estudiante_id, ejercicio_id, null);
+    if (estudiante_id) {
+      await validarFKs(estudiante_id, ejercicio_id, null);
+    }
 
     const ejercicio = await Ejercicio.findByPk(ejercicio_id);
     if (!ejercicio) {
@@ -420,28 +422,39 @@ exports.evaluarCompilador = async (req, res) => {
     if (!JUDGE0_URL) {
       return res.status(500).json({ message: 'JUDGE0_URL no está configurada.' });
     }
+    const salidaManual = req.body?.salida || req.body?.stdout || req.body?.output;
 
-    const usarRapidApi = !!JUDGE0_KEY;
-    const headers = usarRapidApi
-      ? {
-          'x-rapidapi-key': JUDGE0_KEY,
-          'x-rapidapi-host': 'judge0-ce.p.rapidapi.com'
-        }
-      : undefined;
+    let result = {};
+    let stdoutHumano = '';
+    let stderrHumano = '';
+    let compileOutput = '';
 
-    const response = await axios.post(
-      `${JUDGE0_URL}/submissions?base64_encoded=true&wait=true`,
-      {
-        source_code: codificar(codigo),
-        language_id: lenguajeIdNum
-      },
-      headers ? { headers } : undefined
-    );
+    if (typeof salidaManual === 'string') {
+      stdoutHumano = salidaManual;
+      result.status = { id: 3, description: 'Manual' };
+    } else {
+      const usarRapidApi = !!JUDGE0_KEY;
+      const headers = usarRapidApi
+        ? {
+            'x-rapidapi-key': JUDGE0_KEY,
+            'x-rapidapi-host': 'judge0-ce.p.rapidapi.com'
+          }
+        : undefined;
 
-    const result = response.data || {};
-    const stdoutHumano = result.stdout ? decodificar(result.stdout) : '';
-    const stderrHumano = result.stderr ? decodificar(result.stderr) : '';
-    const compileOutput = result.compile_output ? decodificar(result.compile_output) : '';
+      const response = await axios.post(
+        `${JUDGE0_URL}/submissions?base64_encoded=true&wait=true`,
+        {
+          source_code: codificar(codigo),
+          language_id: lenguajeIdNum
+        },
+        headers ? { headers } : undefined
+      );
+
+      result = response.data || {};
+      stdoutHumano = result.stdout ? decodificar(result.stdout) : '';
+      stderrHumano = result.stderr ? decodificar(result.stderr) : '';
+      compileOutput = result.compile_output ? decodificar(result.compile_output) : '';
+    }
     const esperado = normalizarSalida(configuracion.esperado || ejercicio.resultado_ejercicio);
     const obtenido = normalizarSalida(stdoutHumano);
 
@@ -449,6 +462,16 @@ exports.evaluarCompilador = async (req, res) => {
     const esCorrecta = sinErrores && obtenido === esperado && esperado !== '';
 
     if (esCorrecta) {
+      if (!estudiante_id) {
+        return res.status(200).json({
+          esCorrecta,
+          puntosObtenidos: ejercicio.puntos,
+          stdout: stdoutHumano,
+          stderr: stderrHumano || compileOutput,
+          esperado,
+          obtenido
+        });
+      }
       const existenteRespuesta = await RespuestaEstudianteEjercicio.findOne({
         where: { estudiante_id, ejercicio_id }
       });

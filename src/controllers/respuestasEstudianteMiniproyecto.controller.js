@@ -1,4 +1,4 @@
-const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto } = require("../models");
+const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto, Evaluacion } = require("../models");
 
 const normalizeText = (text = '') => text
   .toString()
@@ -26,6 +26,206 @@ const extractKeywords = (criteriaText = '') => {
     .split(/\s+/)
     .map(w => w.replace(/[^a-z0-9]/g, ''))
     .filter(w => w.length >= 4);
+};
+
+const extractDates = (text = '') => {
+  const matches = text.toString().match(/(\d{4}-\d{2}-\d{2}|\d{2}\/\d{2}\/\d{4})/g) || [];
+  return matches
+    .map((value) => {
+      if (/\d{4}-\d{2}-\d{2}/.test(value)) {
+        const date = new Date(value);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+      if (/\d{2}\/\d{2}\/\d{4}/.test(value)) {
+        const [day, month, year] = value.split('/').map(Number);
+        const date = new Date(year, month - 1, day);
+        return Number.isNaN(date.getTime()) ? null : date;
+      }
+      return null;
+    })
+    .filter(Boolean);
+};
+
+const normalizeNumberString = (value = '') => {
+  let normalized = value.replace(/[^0-9.,]/g, '');
+  if (normalized.includes(',')) {
+    normalized = normalized.replace(/\./g, '').replace(',', '.');
+  } else {
+    const dotCount = (normalized.match(/\./g) || []).length;
+    if (dotCount > 1) {
+      normalized = normalized.replace(/\./g, '');
+    } else if (dotCount === 1 && /\d+\.\d{3}$/.test(normalized)) {
+      normalized = normalized.replace(/\./g, '');
+    }
+  }
+  return normalized;
+};
+
+const normalizeIntegerString = (value = '') =>
+  value.replace(/[^0-9]/g, '');
+
+const extractLabeledNumber = (text = '', label = '') => {
+  const safeText = text.toString().replace(/\u00A0/g, ' ');
+  const regex = new RegExp(`${label}\s*:?\s*[\$€£]?\s*([0-9.,]+)`, 'i');
+  const match = safeText.match(regex);
+  if (!match || !match[1]) return null;
+  const normalized = normalizeNumberString(match[1]);
+  const value = Number(normalized);
+  return Number.isNaN(value) ? null : value;
+};
+
+const extractNumbersFromText = (text = '') => {
+  const safeText = text.toString().replace(/\u00A0/g, ' ');
+  const matches = safeText.match(/[0-9][0-9.,]*/g) || [];
+  return matches
+    .map((value) => Number(normalizeNumberString(value)))
+    .filter((value) => !Number.isNaN(value));
+};
+
+const numberWithinTolerance = (expected, actual, toleranceRatio = 0.2) => {
+  if (expected === null || actual === null) return false;
+  if (expected === 0) return actual === 0;
+  const diff = Math.abs(expected - actual);
+  return diff / expected <= toleranceRatio;
+};
+
+const daysBetween = (a, b) => Math.abs(Math.round((a.getTime() - b.getTime()) / (1000 * 60 * 60 * 24)));
+
+const datesAreConcordant = (expectedText = '', studentText = '', toleranceDays = 3) => {
+  const expectedDates = extractDates(expectedText);
+  const studentDates = extractDates(studentText);
+  if (expectedDates.length === 0 || studentDates.length === 0) return false;
+
+  const expectedStart = expectedDates[0];
+  const expectedEnd = expectedDates[1];
+  const studentStart = studentDates[0];
+  const studentEnd = studentDates[1];
+
+  const startOk = expectedStart && studentStart
+    ? daysBetween(expectedStart, studentStart) <= toleranceDays
+    : false;
+  const endOk = expectedEnd && studentEnd
+    ? daysBetween(expectedEnd, studentEnd) <= toleranceDays
+    : false;
+
+  if (expectedStart && expectedEnd && studentStart && studentEnd) {
+    if (expectedStart > expectedEnd) return false;
+    return startOk && endOk;
+  }
+
+  return startOk || endOk;
+};
+
+const isTotalLine = (text = '') => normalizeText(text).includes('total general');
+
+const extractTotalGeneral = (items = []) => {
+  const totalLine = items.find(item => typeof item === 'string' && isTotalLine(item));
+  if (!totalLine) return null;
+  const safeText = totalLine.toString().replace(/\u00A0/g, ' ');
+  const regex = /total\s*general\s*:?\s*[\$€£]?\s*([0-9.,]+)/i;
+  const match = safeText.match(regex);
+  if (!match || !match[1]) return null;
+  const normalized = normalizeIntegerString(match[1]);
+  const value = Number(normalized);
+  return Number.isNaN(value) ? null : value;
+};
+
+const computeCostsTotal = (items = []) => {
+  let total = 0;
+  let hasAny = false;
+  items.forEach((item) => {
+    if (!item || isTotalLine(item)) return;
+    if (typeof item === 'object') {
+      const qtyRaw = item.quantity ?? item.cantidad ?? null;
+      const unitRaw = item.unitCost ?? item.costoUnitario ?? null;
+      const qty = qtyRaw !== null ? Number(normalizeNumberString(String(qtyRaw))) : null;
+      const unit = unitRaw !== null ? Number(normalizeNumberString(String(unitRaw))) : null;
+      if (qty !== null && unit !== null && !Number.isNaN(qty) && !Number.isNaN(unit)) {
+        total += qty * unit;
+        hasAny = true;
+        return;
+      }
+      if (typeof item.descripcion === 'string') {
+        const parsed = parseCostItem(item.descripcion);
+        if (parsed.quantity !== null && parsed.unit !== null) {
+          total += parsed.quantity * parsed.unit;
+          hasAny = true;
+        } else {
+          const numbers = extractNumbersFromText(item.descripcion);
+          if (numbers.length >= 2) {
+            total += numbers[0] * numbers[1];
+            hasAny = true;
+          }
+        }
+      }
+      return;
+    }
+    const subtotal = extractLabeledNumber(item, 'Subtotal');
+    if (subtotal !== null) {
+      total += subtotal;
+      hasAny = true;
+      return;
+    }
+    const qty = extractLabeledNumber(item, 'Cantidad');
+    const unit = extractLabeledNumber(item, 'Costo unitario');
+    if (qty !== null && unit !== null) {
+      total += qty * unit;
+      hasAny = true;
+      return;
+    }
+    const numbers = extractNumbersFromText(item);
+    if (numbers.length >= 2) {
+      total += numbers[0] * numbers[1];
+      hasAny = true;
+    }
+  });
+  return hasAny ? total : null;
+};
+
+const computeCostsTotalFromText = (text = '') => {
+  if (!text) return null;
+  const lines = text.toString().split(/\n|,/).map(t => t.trim()).filter(Boolean);
+  return computeCostsTotal(lines);
+};
+
+const normalizeCostItemsToStrings = (items = []) =>
+  items.map((item) => {
+    if (!item) return '';
+    if (typeof item === 'string') return item;
+    const qty = item.quantity ?? item.cantidad ?? '';
+    const unit = item.unitCost ?? item.costoUnitario ?? '';
+    const concept = item.concept ?? item.concepto ?? item.descripcion ?? '';
+    return `Concepto: ${concept} | Cantidad: ${qty} | Costo unitario: ${unit}`;
+  }).filter(Boolean);
+
+const computeCostsTotalSafe = (items = []) => {
+  const normalizedItems = normalizeCostItemsToStrings(items);
+  let total = extractTotalGeneral(normalizedItems) ?? computeCostsTotal(normalizedItems);
+  if (total === null) {
+    total = computeCostsTotalFromText(normalizedItems.join(', '));
+  }
+  if (total !== null && total < 1000) {
+    const fallback = computeCostsTotalFromText(normalizedItems.join(', '));
+    if (fallback && fallback >= 1000) {
+      total = fallback;
+    }
+  }
+  return total;
+};
+
+const parseCostItem = (text = '') => {
+  const normalized = normalizeText(text);
+  const concept = normalized
+    .replace(/costo\s*\d*:?/g, '')
+    .split('|')[0]
+    .replace(/tipo:.*/g, '')
+    .trim();
+  const type = normalized.includes('material') ? 'material'
+    : normalized.includes('humano') ? 'humano'
+    : null;
+  const quantity = extractLabeledNumber(text, 'Cantidad');
+  const unit = extractLabeledNumber(text, 'Costo unitario');
+  return { concept, type, quantity, unit };
 };
 
 const tryParseJson = (value) => {
@@ -91,8 +291,14 @@ const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '')
       const studentArray = Array.isArray(section.student) ? section.student : null;
 
       if (expectedArray && studentArray) {
-        const expectedItems = expectedArray.map(item => item?.toString?.() ?? '').filter(Boolean);
-        const studentItems = studentArray.map(item => item?.toString?.() ?? '').filter(Boolean);
+        const expectedItems = expectedArray
+          .map(item => item?.toString?.() ?? '')
+          .filter(Boolean)
+          .filter(item => !(section.label === 'Costos y recursos' && isTotalLine(item)));
+        const studentItems = studentArray
+          .map(item => item?.toString?.() ?? '')
+          .filter(Boolean)
+          .filter(item => !(section.label === 'Costos y recursos' && isTotalLine(item)));
 
         const matchesPerItem = expectedItems.map((expectedItem) => {
           const keywords = extractKeywords(expectedItem);
@@ -101,12 +307,98 @@ const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '')
             const normalizedStudent = normalizeText(studentItem);
             const matches = keywords.filter(keyword => normalizedStudent.includes(keyword)).length;
             const minRequired = Math.ceil((keywords.length || 0) * 0.5);
-            return matches >= minRequired && minRequired > 0;
+            const keywordMatch = matches >= minRequired && minRequired > 0;
+
+            if (section.label === 'Cronograma del proyecto') {
+              const expectedDates = extractDates(expectedItem);
+              const studentDates = extractDates(studentItem);
+              if (expectedDates.length === 0 || studentDates.length === 0) {
+                return keywordMatch;
+              }
+              if (expectedDates.length >= 2 && expectedDates[0] > expectedDates[1]) {
+                return keywordMatch;
+              }
+              const dateMatch = datesAreConcordant(expectedItem, studentItem, 3);
+              return keywordMatch && dateMatch;
+            }
+
+            return keywordMatch;
           });
         });
 
         const matchedCount = matchesPerItem.filter(Boolean).length;
-        const requiredItems = Math.max(1, Math.ceil(expectedItems.length * 0.5));
+        const requiredItems = Math.max(1, Math.ceil(expectedItems.length * 0.7));
+
+        if (section.label === 'Costos y recursos') {
+          const expectedRaw = expectedArray.filter(Boolean);
+          const studentRaw = studentArray.filter(Boolean);
+          const expectedTotal = computeCostsTotalSafe(expectedRaw);
+          const studentTotal = computeCostsTotalSafe(studentRaw);
+          if (expectedTotal !== null && studentTotal !== null) {
+            const diffRatio = Math.abs(expectedTotal - studentTotal) / expectedTotal;
+            console.log('[COSTOS] Total esperado vs estudiante:', {
+              esperado: expectedTotal,
+              estudiante: studentTotal,
+              diferencia: diffRatio
+            });
+            if (diffRatio > 0.30) {
+              return { criterio: section.label, cumplido: false };
+            }
+          } else {
+            console.log('[COSTOS] Total no disponible para validar:', {
+              esperado: expectedTotal,
+              estudiante: studentTotal,
+              esperadoRaw: expectedRaw,
+              estudianteRaw: studentRaw
+            });
+          }
+
+          let conceptMisses = 0;
+          let unitMisses = 0;
+
+          expectedItems.forEach((expectedItem) => {
+            const expectedParsedItem = parseCostItem(expectedItem);
+            const expectedConceptKeywords = extractKeywords(expectedParsedItem.concept);
+            const bestMatch = studentItems.find((studentItem) => {
+              const studentParsedItem = parseCostItem(studentItem);
+              const conceptMatches = expectedConceptKeywords.filter(keyword => studentParsedItem.concept.includes(keyword)).length;
+              const conceptRequired = Math.ceil((expectedConceptKeywords.length || 0) * 0.5);
+              return expectedConceptKeywords.length === 0 ? true : conceptMatches >= conceptRequired;
+            });
+
+            if (!bestMatch) {
+              console.log('[COSTOS] Concepto NO coincide:', { esperado: expectedItem });
+              conceptMisses += 1;
+              unitMisses += 1;
+              return;
+            }
+
+            const studentParsedItem = parseCostItem(bestMatch);
+            console.log('[COSTOS] Concepto OK:', {
+              esperado: expectedItem,
+              estudiante: bestMatch
+            });
+            if (expectedParsedItem.unit !== null) {
+              if (studentParsedItem.unit === null || !numberWithinTolerance(expectedParsedItem.unit, studentParsedItem.unit, 0.2)) {
+                console.log('[COSTOS] Costo unitario NO coincide:', {
+                  esperado: expectedParsedItem.unit,
+                  estudiante: studentParsedItem.unit
+                });
+                unitMisses += 1;
+              } else {
+                console.log('[COSTOS] Costo unitario OK:', {
+                  esperado: expectedParsedItem.unit,
+                  estudiante: studentParsedItem.unit
+                });
+              }
+            }
+          });
+
+          if (conceptMisses >= 2 || unitMisses >= 2) {
+            return { criterio: section.label, cumplido: false };
+          }
+        }
+
         return { criterio: section.label, cumplido: matchedCount >= requiredItems };
       }
 
@@ -155,6 +447,34 @@ const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '')
   };
 };
 
+const upsertEvaluacionMiniproyecto = async ({ estudianteId, miniproyectoId, evaluacion, estadoSolicitud }) => {
+  if (!evaluacion || !estudianteId || !miniproyectoId) return;
+  if (estadoSolicitud !== 'COMPLETADO') return;
+
+  const calificacion = Number.isFinite(evaluacion.puntaje) ? evaluacion.puntaje : 0;
+  const estadoEvaluacion = calificacion >= 70 ? 'APROBADO' : 'REPROBADO';
+
+  const existing = await Evaluacion.findOne({
+    where: { estudiante_id: estudianteId, miniproyecto_id: miniproyectoId }
+  });
+
+  if (existing) {
+    await existing.update({
+      calificacion,
+      estado: estadoEvaluacion,
+      fecha_evaluacion: new Date()
+    });
+    return;
+  }
+
+  await Evaluacion.create({
+    calificacion,
+    estado: estadoEvaluacion,
+    estudiante_id: estudianteId,
+    miniproyecto_id: miniproyectoId
+  });
+};
+
 /* =========================
    CREAR RESPUESTA
 ========================= */
@@ -198,7 +518,10 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       studentResponseText = [
         studentResponseValue.stakeholders,
         studentResponseValue.requisitosFuncionales,
-        studentResponseValue.requisitosNoFuncionales
+        studentResponseValue.requisitosNoFuncionales,
+        studentResponseValue.alcance,
+        studentResponseValue.cronograma,
+        studentResponseValue.costos
       ]
         .filter(Boolean)
         .join(' ');
@@ -207,8 +530,15 @@ const crearRespuestaMiniproyecto = async (req, res) => {
     }
 
     const evaluacion = evaluateResponse(studentResponseValue, miniproyecto.respuesta_miniproyecto);
+    await upsertEvaluacionMiniproyecto({
+      estudianteId: estudiante_id,
+      miniproyectoId: miniproyecto_id,
+      evaluacion,
+      estadoSolicitud: estado
+    });
     const respuestaPayload = JSON.stringify({
-      respuestaEstudiante: studentResponseText,
+      respuestaEstudiante: studentResponseValue,
+      resumen: studentResponseText,
       evaluacion
     });
 
@@ -331,7 +661,10 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
         studentResponseText = [
           studentResponseValue.stakeholders,
           studentResponseValue.requisitosFuncionales,
-          studentResponseValue.requisitosNoFuncionales
+          studentResponseValue.requisitosNoFuncionales,
+          studentResponseValue.alcance,
+          studentResponseValue.cronograma,
+          studentResponseValue.costos
         ]
           .filter(Boolean)
           .join(' ');
@@ -344,8 +677,17 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
         ? await Miniproyecto.findByPk(targetMiniproyectoId)
         : null;
       const evaluacion = evaluateResponse(studentResponseValue, miniproyecto?.respuesta_miniproyecto);
+      const targetEstudianteId = estudiante_id || respuestaRegistro.estudiante_id;
+      const estadoSolicitud = estado || respuestaRegistro.estado;
+      await upsertEvaluacionMiniproyecto({
+        estudianteId: targetEstudianteId,
+        miniproyectoId: targetMiniproyectoId,
+        evaluacion,
+        estadoSolicitud
+      });
       respuestaPayload = JSON.stringify({
-        respuestaEstudiante: studentResponseText,
+        respuestaEstudiante: studentResponseValue,
+        resumen: studentResponseText,
         evaluacion
       });
     }
