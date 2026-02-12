@@ -4,6 +4,7 @@ const cors = require('cors');
 const app = express();
 const sequelize = require('./config/database');
 const db = require('./models');
+const { initializeRAG } = require('./controllers/chatbot.controller');
 
 // --- CONFIGURACIÓN DE MIDDLEWARES ---
 app.set('strict routing', false); 
@@ -56,6 +57,9 @@ app.use('/respuestasEstudianteMiniproyecto', require('./routes/respuestasEstudia
 // 4. Diagramas (Añadido desde la versión remota)
 app.use('/diagrams', require('./routes/diagram.routes'));
 
+// 5. Chatbot RAG con Groq
+app.use('/chatbot', require('./routes/chatbot.routes'));
+
 // --- RUTA DE MONITOREO ---
 app.get('/debug', (req, res) => {
     res.json({ mensaje: "El servidor responde ✅", estado: "Online", puerto: 4000 });
@@ -67,8 +71,12 @@ const PORT = process.env.PORT || 4000;
 // Sincronizamos con la base de datos antes de iniciar el servidor
 // .sync({ alter: true }) creará las tablas automáticamente en la nueva BD de Render
 db.sequelize.sync({ alter: true })
-    .then(() => {
+    .then(async () => {
         console.log('✅ Base de datos sincronizada con éxito en Render');
+        
+        // Inicializar Chatbot RAG
+        await initializeRAG();
+        
         app.listen(PORT, () => {
             console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
         });
