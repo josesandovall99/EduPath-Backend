@@ -36,6 +36,12 @@ module.exports = (sequelize, DataTypes) => {
     Area.hasMany(models.Miniproyecto, { 
       foreignKey: 'area_id' 
     });
+
+    // Relación con Docentes (1:N)
+    Area.hasMany(models.Docente, {
+      foreignKey: 'area_id',
+      as: 'docentes'
+    });
   };
 
   return Area;

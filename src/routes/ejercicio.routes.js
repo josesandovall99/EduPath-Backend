@@ -1,13 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const ejercicioController = require('../controllers/ejercicio.controller');
+const autorizacionDocente = require('../middlewares/autorizacionDocente');
 
 // CRUD básico
-router.post('/', ejercicioController.createEjercicio);
+router.post('/', autorizacionDocente, ejercicioController.createEjercicio);
 router.get('/', ejercicioController.getEjercicios);
 router.get('/:id', ejercicioController.getEjercicioById);
-router.put('/:id', ejercicioController.updateEjercicio);
-router.delete('/:id', ejercicioController.deleteEjercicio);
+router.put('/:id', autorizacionDocente, ejercicioController.updateEjercicio);
+router.delete('/:id', autorizacionDocente, ejercicioController.deleteEjercicio);
 
 // Funcionalidades específicas de ejercicios
 router.post('/:ejercicioId/resolver', ejercicioController.resolverEjercicio);

@@ -11,6 +11,7 @@ const models = {
   Persona: require('./persona.model')(sequelize, DataTypes),
   Estudiante: require('./estudiante.model')(sequelize, DataTypes),
   Administrador: require('./administrador.model')(sequelize, DataTypes),
+  Docente: require('./docente.model')(sequelize, DataTypes),
   RespuestaEstudianteMiniproyecto: require('./respuestasEstudianteMiniproyecto.model')(sequelize, DataTypes),
   RespuestaEstudianteEjercicio: require('./respuestasEstudianteEjercicio.model')(sequelize, DataTypes),
   Area: require('./area.model')(sequelize, DataTypes),
@@ -47,6 +48,12 @@ models.Estudiante.belongsTo(models.Persona, { foreignKey: "persona_id", as: "per
 
 models.Persona.hasOne(models.Administrador, { foreignKey: "persona_id", as: "administrador" });
 models.Administrador.belongsTo(models.Persona, { foreignKey: "persona_id", as: "persona" });
+
+models.Persona.hasOne(models.Docente, { foreignKey: "persona_id", as: "docente" });
+models.Docente.belongsTo(models.Persona, { foreignKey: "persona_id", as: "persona" });
+
+// --- DOCENTE <-> AREA (1:N) ---
+models.Docente.belongsTo(models.Area, { foreignKey: "area_id", as: "area" });
 
 // --- ESTRUCTURA ACADÉMICA ---
 models.Tema.belongsTo(models.Area, { foreignKey: 'area_id', as: 'area' });

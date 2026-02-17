@@ -43,6 +43,7 @@ app.use('/ejercicios', require('./routes/ejercicio.routes'));
 app.use('/persona', require('./routes/persona.routes'));
 app.use('/estudiante', require('./routes/estudiante.routes'));
 app.use('/administrador', require('./routes/administrador.routes'));
+app.use('/docente', require('./routes/docente.routes'));
 
 // 3. Progreso y Actividades
 app.use('/miniproyectos', require('./routes/miniproyecto.routes'));

@@ -1,5 +1,5 @@
 const bcrypt = require('bcryptjs');
-const { Estudiante, Persona, Administrador } = require('../models');
+const { Estudiante, Persona, Administrador, Docente, Area } = require('../models');
 
 const loginEstudiante = async (req, res) => {
   try {
@@ -67,9 +67,6 @@ const cambiarContraseñaPrimerIngreso = async (req, res) => {
   }
 };
 
-// No olvides exportarla
-module.exports = { loginEstudiante, cambiarContraseñaPrimerIngreso };
-
 /* =========================
    LOGIN ADMINISTRADOR
    Nota: se devuelve `primerIngreso` pero no se fuerza cambio
@@ -108,4 +105,49 @@ const loginAdministrador = async (req, res) => {
   }
 };
 
-module.exports = { loginEstudiante, cambiarContraseñaPrimerIngreso, loginAdministrador };
+/* =========================
+   LOGIN DOCENTE
+   Nota: se devuelve `primerIngreso` pero no se fuerza cambio
+   de contraseña en este login (según requerimiento).
+========================= */
+const loginDocente = async (req, res) => {
+  try {
+    const { codigoAcceso, contraseña } = req.body;
+
+    const persona = await Persona.findOne({
+      where: { codigoAcceso, tipoUsuario: 'DOCENTE' },
+      include: {
+        model: Docente,
+        as: 'docente',
+        include: {
+          model: Area,
+          as: 'area',
+        },
+      },
+    });
+
+    if (!persona || !persona.docente) {
+      return res.status(404).json({ mensaje: 'Docente no encontrado' });
+    }
+
+    const passwordValido = await bcrypt.compare(contraseña, persona.contraseña);
+    if (!passwordValido) return res.status(401).json({ mensaje: 'Contraseña incorrecta' });
+
+    res.json({
+      mensaje: 'Bienvenido docente',
+      primerIngreso: persona.primer_ingreso,
+      docente: {
+        id: persona.docente.id,
+        personaId: persona.id,
+        nombre: persona.nombre,
+        email: persona.email,
+        especialidad: persona.docente.especialidad,
+        area: persona.docente.area || null,
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ mensaje: 'Error en el servidor', error: error.message });
+  }
+};
+
+module.exports = { loginEstudiante, cambiarContraseñaPrimerIngreso, loginAdministrador, loginDocente };
