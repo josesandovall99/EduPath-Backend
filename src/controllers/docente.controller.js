@@ -1,6 +1,8 @@
 const sequelize = require("../config/database");
 const bcrypt = require("bcryptjs");
 const { Persona, Docente, Area } = require("../models");
+const { generarPassword } = require("../utils/generarCredenciales");
+const enviarCorreoBienvenidaDocente = require("../utils/enviarCorreoBienvenidaDocente");
 
 /* =========================
    CREAR DOCENTE
@@ -9,7 +11,14 @@ const crearDocente = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const { nombre, email, codigoAcceso, contraseña, especialidad, areaId } = req.body;
+    const { nombre, email, codigoAcceso, especialidad, areaId } = req.body;
+
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        mensaje: "Email invalido",
+      });
+    }
 
     if (!areaId) {
       await transaction.rollback();
@@ -26,8 +35,9 @@ const crearDocente = async (req, res) => {
       });
     }
 
+    const passwordPlano = generarPassword();
     const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(contraseña, salt);
+    const passwordHash = await bcrypt.hash(passwordPlano, salt);
 
     const persona = await Persona.create(
       {
@@ -48,6 +58,13 @@ const crearDocente = async (req, res) => {
       },
       { transaction }
     );
+
+    await enviarCorreoBienvenidaDocente({
+      email,
+      nombre,
+      codigoAcceso,
+      password: passwordPlano
+    });
 
     await transaction.commit();
 
