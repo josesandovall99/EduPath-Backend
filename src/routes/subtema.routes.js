@@ -9,7 +9,7 @@ router.post('/', autenticacionUsuario, autorizacionDocente, subtemaController.cr
 router.get('/', autenticacionUsuario, subtemaController.getSubtemas);
 router.get('/por-tema/:temaId', autenticacionUsuario, subtemaController.getSubtemasByTema);
 router.get('/:id', autenticacionUsuario, subtemaController.getSubtemaById);
-router.put('/:id', autorizacionDocente, subtemaController.updateSubtema);
-router.delete('/:id', autorizacionDocente, subtemaController.deleteSubtema);
+router.put('/:id', autenticacionUsuario, autorizacionDocente, subtemaController.updateSubtema);
+router.delete('/:id', autenticacionUsuario, autorizacionDocente, subtemaController.deleteSubtema);
 
 module.exports = router;

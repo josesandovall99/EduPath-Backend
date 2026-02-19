@@ -1,7 +1,9 @@
-const { Docente, Persona } = require("../models");
+const { Docente } = require("../models");
 
 /**
- * Middleware para autorizar que un docente solo gestione su area asignada
+ * Middleware para autorizar gestión por ADMINISTRADOR o DOCENTE
+ * - ADMINISTRADOR: acceso completo
+ * - DOCENTE: solo su área asignada
  * 
  * Uso: aplicar a rutas que requieran validación de area
  * 
@@ -11,6 +13,19 @@ const { Docente, Persona } = require("../models");
  */
 const createAutorizacionDocente = (allowMissingDocente = false) => async (req, res, next) => {
   try {
+    // ADMINISTRADOR puede gestionar sin restricción de área
+    if (req.tipoUsuario === "ADMINISTRADOR") {
+      return next();
+    }
+
+    // Si viene autenticado pero no es docente/admin, negar
+    if (req.tipoUsuario && req.tipoUsuario !== "DOCENTE") {
+      return res.status(403).json({
+        mensaje: "Acceso denegado: se requiere ser administrador o docente",
+        tipoUsuarioActual: req.tipoUsuario,
+      });
+    }
+
     // Obtener docente_id desde el request
     const docenteId = req.docenteId || req.body.docente_id || req.headers["x-docente-id"];
 

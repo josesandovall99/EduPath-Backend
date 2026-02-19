@@ -9,8 +9,8 @@ router.post('/', autenticacionUsuario, autorizacionDocente, temaController.creat
 router.get('/', autenticacionUsuario, temaController.getTemas);
 router.get('/por-area/:areaId', autenticacionUsuario, temaController.getTemasByArea);
 router.get('/:id', autenticacionUsuario, temaController.getTemaById);
-router.put('/reordenar', autorizacionDocente, temaController.reordenarTemas);
-router.put('/:id', autorizacionDocente, temaController.updateTema);
-router.delete('/:id', autorizacionDocente, temaController.deleteTema);
+router.put('/reordenar', autenticacionUsuario, autorizacionDocente, temaController.reordenarTemas);
+router.put('/:id', autenticacionUsuario, autorizacionDocente, temaController.updateTema);
+router.delete('/:id', autenticacionUsuario, autorizacionDocente, temaController.deleteTema);
 
 module.exports = router;
