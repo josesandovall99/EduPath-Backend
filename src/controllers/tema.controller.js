@@ -28,7 +28,14 @@ exports.createTema = async (req, res) => {
 // Listar todos los temas
 exports.getTemas = async (req, res) => {
   try {
-    const temas = await Tema.findAll();
+    const where = {};
+    // Solo docentes están limitados a su área
+    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId) {
+      where.area_id = req.docenteAreaId;
+    }
+    // Admin y otros usuarios ven todos
+
+    const temas = await Tema.findAll({ where });
     res.json(temas);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener los temas", error });
@@ -38,7 +45,17 @@ exports.getTemas = async (req, res) => {
 // Obtener un tema por ID
 exports.getTemaById = async (req, res) => {
   try {
-    const tema = await Tema.findByPk(req.params.id);
+    let tema = null;
+    // Solo docentes están limitados a su área
+    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId) {
+      tema = await Tema.findOne({
+        where: { id: req.params.id, area_id: req.docenteAreaId }
+      });
+    } else {
+      // Admin y otros usuarios ven cualquier tema
+      tema = await Tema.findByPk(req.params.id);
+    }
+
     if (!tema) return res.status(404).json({ message: "Tema no encontrado" });
     res.json(tema);
   } catch (error) {
@@ -84,6 +101,11 @@ exports.deleteTema = async (req, res) => {
 exports.getTemasByArea = async (req, res) => {
   try {
     const { areaId } = req.params;
+
+    // Docente solo puede ver temas de su área
+    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId && parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+    }
 
     // Validar que el área exista
     const areaExistente = await Area.findByPk(areaId);

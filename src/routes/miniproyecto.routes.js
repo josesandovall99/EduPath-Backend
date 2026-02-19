@@ -2,13 +2,14 @@
 const express = require('express');
 const router = express.Router();
 const controller = require('../controllers/miniproyecto.controller');
+const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 const autorizacionDocente = require('../middlewares/autorizacionDocente');
 
-router.post('/', autorizacionDocente, controller.create);
-router.post('/:id/enviar', controller.enviarMiniproyectoProgramacion);
-router.get('/', controller.findAll);
-router.get('/:id', controller.findOne);
-router.put('/:id', autorizacionDocente, controller.update);
-router.delete('/:id', autorizacionDocente, controller.delete);
+router.post('/', autenticacionUsuario, autorizacionDocente, controller.create);
+router.post('/:id/enviar', autenticacionUsuario, controller.enviarMiniproyectoProgramacion);
+router.get('/', autenticacionUsuario, controller.findAll);
+router.get('/:id', autenticacionUsuario, controller.findOne);
+router.put('/:id', autenticacionUsuario, autorizacionDocente, controller.update);
+router.delete('/:id', autenticacionUsuario, autorizacionDocente, controller.delete);
 
 module.exports = router;

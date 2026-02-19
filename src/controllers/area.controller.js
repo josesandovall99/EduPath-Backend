@@ -1,6 +1,6 @@
 const { Area } = require('../models');
 
-// Crear un área
+// Crear un área (solo ADMINISTRADOR)
 exports.createArea = async (req, res) => {
   try {
     const area = await Area.create(req.body);
@@ -13,7 +13,17 @@ exports.createArea = async (req, res) => {
 // Listar todas las áreas
 exports.getAreas = async (req, res) => {
   try {
-    const areas = await Area.findAll();
+    const where = {};
+    
+    // Admin ve todas las áreas
+    // Docente ve solo su área
+    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId) {
+      where.id = req.docenteAreaId;
+    }
+    // Administrador no tiene restricción
+    // Otros tipos de usuario (estudiante) tampoco tienen restricción en GET
+
+    const areas = await Area.findAll({ where });
     res.json(areas);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener las áreas", error });
@@ -23,6 +33,11 @@ exports.getAreas = async (req, res) => {
 // Obtener un área por ID
 exports.getAreaById = async (req, res) => {
   try {
+    // Docente solo puede ver su propia área
+    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId && parseInt(req.params.id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+    }
+
     const area = await Area.findByPk(req.params.id);
     if (!area) return res.status(404).json({ message: "Área no encontrada" });
     res.json(area);
@@ -31,7 +46,7 @@ exports.getAreaById = async (req, res) => {
   }
 };
 
-// Actualizar un área
+// Actualizar un área (solo ADMINISTRADOR)
 exports.updateArea = async (req, res) => {
   try {
     const area = await Area.findByPk(req.params.id);
@@ -44,7 +59,7 @@ exports.updateArea = async (req, res) => {
   }
 };
 
-// Eliminar un área
+// Eliminar un área (solo ADMINISTRADOR)
 exports.deleteArea = async (req, res) => {
   try {
     const area = await Area.findByPk(req.params.id);

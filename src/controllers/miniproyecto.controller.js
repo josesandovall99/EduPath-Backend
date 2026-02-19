@@ -19,6 +19,10 @@ exports.create = async (req, res) => {
     // 1. Validar existencia de FKs antes de iniciar
     await validarRelaciones(req.body.tipo_actividad_id, req.body.area_id);
 
+    if (req.docenteAreaId && parseInt(req.body.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
+    }
+
     const t = await sequelize.transaction();
     try {
       const nuevaActividad = await Actividad.create({
@@ -59,6 +63,14 @@ exports.update = async (req, res) => {
     // 2. Verificar si el registro existe antes de editar
     const miniproyecto = await Miniproyecto.findByPk(req.params.id);
     if (!miniproyecto) return res.status(404).json({ message: "Miniproyecto no encontrado" });
+
+    if (req.docenteAreaId && parseInt(miniproyecto.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
+    }
+
+    if (req.docenteAreaId && req.body.area_id !== undefined && parseInt(req.body.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
+    }
 
     const t = await sequelize.transaction();
     try {
@@ -110,7 +122,9 @@ exports.findAll = async (req, res) => {
     const { area_id } = req.query;
     const where = {};
 
-    if (area_id !== undefined) {
+    if (req.docenteAreaId) {
+      where.area_id = parseInt(req.docenteAreaId, 10);
+    } else if (area_id !== undefined) {
       const parsedAreaId = parseInt(area_id, 10);
       if (isNaN(parsedAreaId)) {
         return res.status(400).json({ error: 'area_id debe ser un número válido' });
@@ -138,8 +152,9 @@ exports.findAll = async (req, res) => {
 
 exports.findOne = async (req, res) => {
   try {
+    const attributes = req.docenteAreaId ? undefined : { exclude: ['area_id'] };
     const data = await Miniproyecto.findByPk(req.params.id, {
-      attributes: { exclude: ['area_id'] },
+      attributes,
       include: [
         { model: Area },
         { 
@@ -150,6 +165,17 @@ exports.findOne = async (req, res) => {
       ]
     });
     if (!data) return res.status(404).json({ message: "Miniproyecto no encontrado" });
+
+    if (req.docenteAreaId && parseInt(data.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
+    }
+
+    if (req.docenteAreaId) {
+      const payload = data.toJSON();
+      delete payload.area_id;
+      return res.json(payload);
+    }
+
     res.json(data);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -158,6 +184,15 @@ exports.findOne = async (req, res) => {
 
 exports.delete = async (req, res) => {
   try {
+    if (req.docenteAreaId) {
+      const miniproyecto = await Miniproyecto.findByPk(req.params.id);
+      if (!miniproyecto) return res.status(404).json({ message: "Registro no encontrado" });
+
+      if (parseInt(miniproyecto.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+        return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
+      }
+    }
+
     const deleted = await Actividad.destroy({ where: { id: req.params.id } });
     if (deleted === 0) return res.status(404).json({ message: "Registro no encontrado" });
     res.json({ message: 'Eliminado correctamente' });

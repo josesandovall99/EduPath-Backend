@@ -9,12 +9,16 @@ const { Docente, Persona } = require("../models");
  * - req.docenteId (del token/sesión)
  * - req.body.area_id OR req.params.areaId OR req.query.areaId (el area a validar)
  */
-const autorizacionDocente = async (req, res, next) => {
+const createAutorizacionDocente = (allowMissingDocente = false) => async (req, res, next) => {
   try {
     // Obtener docente_id desde el request
     const docenteId = req.docenteId || req.body.docente_id || req.headers["x-docente-id"];
 
     if (!docenteId) {
+      if (allowMissingDocente) {
+        return next();
+      }
+
       return res.status(401).json({
         mensaje: "No autorizado: docente_id requerido",
       });
@@ -33,6 +37,7 @@ const autorizacionDocente = async (req, res, next) => {
     const areaIdAGestionar =
       req.body.area_id ||
       req.params.areaId ||
+      req.params.id ||
       req.query.areaId ||
       req.body.actividad?.area_id;
 
@@ -64,5 +69,8 @@ const autorizacionDocente = async (req, res, next) => {
     });
   }
 };
+
+const autorizacionDocente = createAutorizacionDocente(false);
+autorizacionDocente.optional = createAutorizacionDocente(true);
 
 module.exports = autorizacionDocente;

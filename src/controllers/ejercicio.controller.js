@@ -1,4 +1,4 @@
-const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion } = require('../models');
+const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion, Tema } = require('../models');
 const evaluacionController = require('./evaluacion.controller');
 // Bloqueos en memoria por envío en curso (clave: estudianteId:ejercicioId)
 const submissionLocks = new Map();
@@ -11,10 +11,20 @@ exports.createEjercicio = async (req, res) => {
     const { actividad, ejercicio } = req.body;
 
     // Validar contenido
-    const contenidoExistente = await Contenido.findByPk(ejercicio.contenido_id);
+    const contenidoExistente = await Contenido.findByPk(ejercicio.contenido_id, {
+      include: [{ model: Tema, attributes: ['area_id'] }]
+    });
     if (!contenidoExistente) {
       await t.rollback();
       return res.status(400).json({ message: "El contenido especificado no existe" });
+    }
+
+    if (req.docenteAreaId) {
+      const areaId = contenidoExistente.Tema?.area_id;
+      if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
+        await t.rollback();
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
     }
 
     // Validar tipo_actividad_id
@@ -86,12 +96,45 @@ exports.createEjercicio = async (req, res) => {
 // Listar ejercicios con su actividad y contenido
 exports.getEjercicios = async (req, res) => {
   try {
-    const ejercicios = await Ejercicio.findAll({
-      include: [
-        { model: Actividad, as: 'actividad' },
-        { model: Contenido }
-      ]
-    });
+    let ejercicios = [];
+
+    if (req.docenteAreaId) {
+      const temas = await Tema.findAll({
+        where: { area_id: req.docenteAreaId },
+        attributes: ['id']
+      });
+      const temaIds = temas.map((tema) => tema.id);
+
+      if (temaIds.length === 0) {
+        return res.json([]);
+      }
+
+      const contenidos = await Contenido.findAll({
+        where: { tema_id: temaIds },
+        attributes: ['id']
+      });
+      const contenidoIds = contenidos.map((contenido) => contenido.id);
+
+      if (contenidoIds.length === 0) {
+        return res.json([]);
+      }
+
+      ejercicios = await Ejercicio.findAll({
+        where: { contenido_id: contenidoIds },
+        include: [
+          { model: Actividad, as: 'actividad' },
+          { model: Contenido }
+        ]
+      });
+    } else {
+      ejercicios = await Ejercicio.findAll({
+        include: [
+          { model: Actividad, as: 'actividad' },
+          { model: Contenido }
+        ]
+      });
+    }
+
     res.json(ejercicios);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener los ejercicios", error: error.message || error });
@@ -101,12 +144,30 @@ exports.getEjercicios = async (req, res) => {
 // Obtener un ejercicio por ID
 exports.getEjercicioById = async (req, res) => {
   try {
-    const ejercicio = await Ejercicio.findByPk(req.params.id, {
-      include: [
-        { model: Actividad, as: 'actividad' },
-        { model: Contenido }
-      ]
-    });
+    let ejercicio = null;
+
+    if (req.docenteAreaId) {
+      ejercicio = await Ejercicio.findByPk(req.params.id, {
+        include: [
+          { model: Actividad, as: 'actividad' },
+          { model: Contenido, include: [{ model: Tema, attributes: ['area_id'] }] }
+        ]
+      });
+      if (ejercicio?.Contenido?.Tema) {
+        const areaId = ejercicio.Contenido.Tema.area_id;
+        if (parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
+          return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+        }
+      }
+    } else {
+      ejercicio = await Ejercicio.findByPk(req.params.id, {
+        include: [
+          { model: Actividad, as: 'actividad' },
+          { model: Contenido }
+        ]
+      });
+    }
+
     if (!ejercicio) return res.status(404).json({ message: "Ejercicio no encontrado" });
     res.json(ejercicio);
   } catch (error) {
@@ -124,6 +185,17 @@ exports.updateEjercicio = async (req, res) => {
       return res.status(404).json({ message: "Ejercicio no encontrado" });
     }
 
+    if (req.docenteAreaId) {
+      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
+        include: [{ model: Tema, attributes: ['area_id'] }]
+      });
+      const areaId = contenidoActual?.Tema?.area_id;
+      if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
+        await t.rollback();
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
+    }
+
     const actividad = await Actividad.findByPk(req.params.id);
     if (!actividad) {
       await t.rollback();
@@ -132,10 +204,20 @@ exports.updateEjercicio = async (req, res) => {
 
     // Validar contenido si se envía
     if (req.body.ejercicio?.contenido_id) {
-      const contenidoExistente = await Contenido.findByPk(req.body.ejercicio.contenido_id);
+      const contenidoExistente = await Contenido.findByPk(req.body.ejercicio.contenido_id, {
+        include: [{ model: Tema, attributes: ['area_id'] }]
+      });
       if (!contenidoExistente) {
         await t.rollback();
         return res.status(400).json({ message: "El contenido especificado no existe" });
+      }
+
+      if (req.docenteAreaId) {
+        const areaId = contenidoExistente.Tema?.area_id;
+        if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
+          await t.rollback();
+          return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+        }
       }
     }
 
@@ -179,6 +261,17 @@ exports.deleteEjercicio = async (req, res) => {
     if (!ejercicio) {
       await t.rollback();
       return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    if (req.docenteAreaId) {
+      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
+        include: [{ model: Tema, attributes: ['area_id'] }]
+      });
+      const areaId = contenidoActual?.Tema?.area_id;
+      if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
+        await t.rollback();
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
     }
 
     const actividad = await Actividad.findByPk(req.params.id);

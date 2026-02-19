@@ -118,6 +118,10 @@ exports.createContenido = async (req, res) => {
       return res.status(400).json({ message: "El tema especificado no existe" });
     }
 
+    if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+    }
+
     // Validar que el subtema exista
     const subtemaExistente = await Subtema.findByPk(subtema_id);
     if (!subtemaExistente) {
@@ -143,7 +147,24 @@ exports.createContenido = async (req, res) => {
 // Listar todos los contenidos
 exports.getContenidos = async (req, res) => {
   try {
-    const contenidos = await Contenido.findAll();
+    let contenidos = [];
+
+    if (req.docenteAreaId) {
+      const temas = await Tema.findAll({
+        where: { area_id: req.docenteAreaId },
+        attributes: ['id']
+      });
+      const temaIds = temas.map((tema) => tema.id);
+
+      if (temaIds.length === 0) {
+        return res.json([]);
+      }
+
+      contenidos = await Contenido.findAll({ where: { tema_id: temaIds } });
+    } else {
+      contenidos = await Contenido.findAll();
+    }
+
     res.json(contenidos);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener los contenidos", error });
@@ -155,6 +176,14 @@ exports.getContenidoById = async (req, res) => {
   try {
     const contenido = await Contenido.findByPk(req.params.id);
     if (!contenido) return res.status(404).json({ message: "Contenido no encontrado" });
+
+    if (req.docenteAreaId) {
+      const temaActual = await Tema.findByPk(contenido.tema_id);
+      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
+    }
+
     res.json(contenido);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener el contenido", error });
@@ -167,11 +196,22 @@ exports.updateContenido = async (req, res) => {
     const contenido = await Contenido.findByPk(req.params.id);
     if (!contenido) return res.status(404).json({ message: "Contenido no encontrado" });
 
+    if (req.docenteAreaId) {
+      const temaActual = await Tema.findByPk(contenido.tema_id);
+      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
+    }
+
     // Si se envía un tema_id, validar que exista
     if (req.body.tema_id) {
       const temaExistente = await Tema.findByPk(req.body.tema_id);
       if (!temaExistente) {
         return res.status(400).json({ message: "El tema especificado no existe" });
+      }
+
+      if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
       }
     }
 
@@ -180,6 +220,13 @@ exports.updateContenido = async (req, res) => {
       const subtemaExistente = await Subtema.findByPk(req.body.subtema_id);
       if (!subtemaExistente) {
         return res.status(400).json({ message: "El subtema especificado no existe" });
+      }
+
+      if (req.docenteAreaId) {
+        const temaDelSubtema = await Tema.findByPk(subtemaExistente.tema_id);
+        if (!temaDelSubtema || parseInt(temaDelSubtema.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+          return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+        }
       }
     }
 
@@ -195,6 +242,13 @@ exports.deleteContenido = async (req, res) => {
   try {
     const contenido = await Contenido.findByPk(req.params.id);
     if (!contenido) return res.status(404).json({ message: "Contenido no encontrado" });
+
+    if (req.docenteAreaId) {
+      const temaActual = await Tema.findByPk(contenido.tema_id);
+      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
+    }
 
     // Manejar la redirección automática de secuencias
     const resultadoRedirecccion = await handleSecuenciaRedirecccion(req.params.id);
@@ -220,6 +274,13 @@ exports.getContenidosPorSubtema = async (req, res) => {
     const subtema = await Subtema.findByPk(subtemaId);
     if (!subtema) {
       return res.status(404).json({ message: "Subtema no encontrado" });
+    }
+
+    if (req.docenteAreaId) {
+      const temaActual = await Tema.findByPk(subtema.tema_id);
+      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
     }
 
     // Buscar contenidos asociados al subtema
@@ -281,9 +342,23 @@ exports.getContenidosPorCategoria = async (req, res) => {
   try {
     const { categoria } = req.params;
 
-    const contenidos = await Contenido.findAll({
-      where: { tipo: categoria }
-    });
+    const where = { tipo: categoria };
+
+    if (req.docenteAreaId) {
+      const temas = await Tema.findAll({
+        where: { area_id: req.docenteAreaId },
+        attributes: ['id']
+      });
+      const temaIds = temas.map((tema) => tema.id);
+
+      if (temaIds.length === 0) {
+        return res.status(404).json({ message: "No se encontraron contenidos para esta categoría" });
+      }
+
+      where.tema_id = temaIds;
+    }
+
+    const contenidos = await Contenido.findAll({ where });
 
     if (contenidos.length === 0) {
       return res.status(404).json({ message: "No se encontraron contenidos para esta categoría" });
@@ -304,6 +379,10 @@ exports.getContenidosPorAreaNombre = async (req, res) => {
     const area = await Area.findOne({ where: { nombre: nombreArea } });
     if (!area) {
       return res.status(404).json({ message: "Área no encontrada" });
+    }
+
+    if (req.docenteAreaId && parseInt(area.id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
     }
 
     // Buscar temas de esa área

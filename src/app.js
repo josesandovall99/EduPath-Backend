@@ -12,8 +12,9 @@ app.set('strict routing', false);
 // Habilita CORS para permitir peticiones desde tu frontend (Puerto 3000)
 app.use(cors({ 
     origin: 'http://localhost:3000', 
-    methods: ['GET', 'POST', 'PUT', 'DELETE'], 
-    allowedHeaders: ['Content-Type'] 
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], 
+    allowedHeaders: ['Content-Type', 'x-persona-id', 'x-docente-id', 'x-tipo-usuario'],
+    credentials: true
 }));
 
 app.use(express.json());
