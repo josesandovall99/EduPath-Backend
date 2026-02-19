@@ -3,11 +3,12 @@ const router = express.Router();
 const contenidoController = require('../controllers/contenido.controller');
 const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 const autorizacionDocente = require('../middlewares/autorizacionDocente');
+const requiereEstudiante = require('../middlewares/requiereEstudiante');
 
 // Definición de rutas CRUD - Rutas específicas ANTES de rutas con parámetros
 router.post('/', autenticacionUsuario, autorizacionDocente, contenidoController.createContenido);
 router.get('/', autenticacionUsuario, contenidoController.getContenidos);
-router.post('/marcar-visualizado', autenticacionUsuario, autorizacionDocente, contenidoController.marcarContenidoVisualizado);
+router.post('/marcar-visualizado', autenticacionUsuario, requiereEstudiante, contenidoController.marcarContenidoVisualizado);
 router.get('/verificar-visualizacion', autenticacionUsuario, contenidoController.obtenerEstadoVisualizacion);
 router.put('/:id/toggle-estado', autenticacionUsuario, autorizacionDocente, contenidoController.toggleEstadoContenido);
 router.get('/subtema/:subtemaId', autenticacionUsuario, contenidoController.getContenidosPorSubtema);
