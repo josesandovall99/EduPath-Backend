@@ -28,6 +28,14 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.STRING,
         allowNull: false,
       },
+        resetPasswordTokenHash: {
+          type: DataTypes.STRING,
+          allowNull: true,
+        },
+        resetPasswordExpiresAt: {
+          type: DataTypes.DATE,
+          allowNull: true,
+        },
 
       
       primer_ingreso: {
