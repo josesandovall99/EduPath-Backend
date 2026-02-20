@@ -1,4 +1,4 @@
-const { SecuenciaSubtema, Subtema } = require('../models');
+const { SecuenciaSubtema, Subtema, sequelize } = require('../models');
 const { Op } = require('sequelize');
 
 /**
@@ -31,38 +31,106 @@ async function validarSecuenciaSubtema(
   };
 
   try {
+    const origenId = Number(subtema_origen_id);
+    const destinoId = Number(subtema_destino_id);
+    const excludeId = excludeSecuenciaId ? Number(excludeSecuenciaId) : null;
+
+    if (!Number.isInteger(origenId) || !Number.isInteger(destinoId)) {
+      resultado.valido = false;
+      resultado.error = 'Los IDs de origen y destino deben ser numéricos';
+      return resultado;
+    }
+
     // ========== VALIDACIÓN 1: Existencia de subtemas ==========
-    const subtemaOrigen = await Subtema.findByPk(subtema_origen_id);
+    const subtemaOrigen = await Subtema.findByPk(origenId);
     if (!subtemaOrigen) {
       resultado.valido = false;
-      resultado.error = `Subtema origen con ID ${subtema_origen_id} no existe`;
+      resultado.error = `Subtema origen con ID ${origenId} no existe`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V1: Existencia de subtema origen');
 
-    const subtemaDestino = await Subtema.findByPk(subtema_destino_id);
+    const subtemaDestino = await Subtema.findByPk(destinoId);
     if (!subtemaDestino) {
       resultado.valido = false;
-      resultado.error = `Subtema destino con ID ${subtema_destino_id} no existe`;
+      resultado.error = `Subtema destino con ID ${destinoId} no existe`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V2: Subtema destino existe');
 
-    // ========== VALIDACIÓN 2: Relación consigo mismo ==========
-    if (subtema_origen_id === subtema_destino_id) {
+    // ========== VALIDACIÓN 1.1: Mismo tema ==========
+    if (Number(subtemaOrigen.tema_id) !== Number(subtemaDestino.tema_id)) {
       resultado.valido = false;
-      resultado.error = `No se permite A → A. Origen y destino son el mismo subtema (ID: ${subtema_origen_id})`;
+      resultado.error = 'Origen y destino deben pertenecer al mismo tema';
+      return resultado;
+    }
+    resultado.validacionesRealizadas.push('✅ V2.1: Mismo tema');
+
+    // ========== VALIDACIÓN 1.2: Continuidad de cadena (lineal) ==========
+    const subtemasDelTema = await Subtema.findAll({
+      where: { tema_id: subtemaOrigen.tema_id },
+      attributes: ['id']
+    });
+    const idsTema = subtemasDelTema.map((subtema) => Number(subtema.id));
+
+    const whereClauseTema = {
+      subtema_origen_id: { [Op.in]: idsTema },
+      subtema_destino_id: { [Op.in]: idsTema }
+    };
+
+    if (excludeId) {
+      whereClauseTema.id = { [Op.ne]: excludeId };
+    }
+
+    const secuenciasTema = await SecuenciaSubtema.findAll({
+      where: whereClauseTema,
+      attributes: ['id', 'subtema_origen_id', 'subtema_destino_id']
+    });
+
+    if (secuenciasTema.length > 0) {
+      const origenes = new Set(secuenciasTema.map((secuencia) => Number(secuencia.subtema_origen_id)));
+      const destinos = new Set(secuenciasTema.map((secuencia) => Number(secuencia.subtema_destino_id)));
+      const conectados = new Set([...origenes, ...destinos]);
+
+      const colaActual = [...destinos].filter((destino) => !origenes.has(destino));
+
+      if (colaActual.length !== 1) {
+        resultado.valido = false;
+        resultado.error = 'La cadena actual está fragmentada. Reorganiza antes de crear una nueva secuencia';
+        return resultado;
+      }
+
+      const ultimoDestinoActual = Number(colaActual[0]);
+      if (origenId !== ultimoDestinoActual) {
+        resultado.valido = false;
+        resultado.error = `El origen debe ser el último destino actual (ID: ${ultimoDestinoActual})`;
+        return resultado;
+      }
+
+      if (conectados.has(destinoId)) {
+        resultado.valido = false;
+        resultado.error = 'El destino ya participa en la cadena actual';
+        return resultado;
+      }
+    }
+
+    resultado.validacionesRealizadas.push('✅ V2.2: Continuidad lineal de cadena');
+
+    // ========== VALIDACIÓN 2: Relación consigo mismo ==========
+    if (origenId === destinoId) {
+      resultado.valido = false;
+      resultado.error = `No se permite A → A. Origen y destino son el mismo subtema (ID: ${origenId})`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V3: No es relación consigo mismo');
 
     // ========== VALIDACIÓN 3: Duplicados exactos ==========
     const whereClauseDuplicados = {
-      subtema_origen_id,
-      subtema_destino_id
+      subtema_origen_id: origenId,
+      subtema_destino_id: destinoId
     };
-    if (excludeSecuenciaId) {
-      whereClauseDuplicados.id = { [Op.ne]: excludeSecuenciaId };
+    if (excludeId) {
+      whereClauseDuplicados.id = { [Op.ne]: excludeId };
     }
 
     const secuenciaDuplicada = await SecuenciaSubtema.findOne({
@@ -71,32 +139,35 @@ async function validarSecuenciaSubtema(
 
     if (secuenciaDuplicada) {
       resultado.valido = false;
-      resultado.error = `Ya existe secuencia duplicada ${subtema_origen_id} → ${subtema_destino_id} (ID: ${secuenciaDuplicada.id})`;
+      resultado.error = `Ya existe secuencia duplicada ${origenId} → ${destinoId} (ID: ${secuenciaDuplicada.id})`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V4: No hay duplicados');
 
     // ========== VALIDACIÓN 4: Relaciones inversas directas ==========
-    const secuenciaInversa = await SecuenciaSubtema.findOne({
-      where: {
-        subtema_origen_id: subtema_destino_id,
-        subtema_destino_id: subtema_origen_id
-      }
-    });
+    const whereClauseInversa = {
+      subtema_origen_id: destinoId,
+      subtema_destino_id: origenId
+    };
+    if (excludeId) {
+      whereClauseInversa.id = { [Op.ne]: excludeId };
+    }
+
+    const secuenciaInversa = await SecuenciaSubtema.findOne({ where: whereClauseInversa });
 
     if (secuenciaInversa) {
       resultado.valido = false;
-      resultado.error = `No se permite relación inversa. Ya existe ${subtema_destino_id} → ${subtema_origen_id} (ID: ${secuenciaInversa.id})`;
+      resultado.error = `No se permite relación inversa. Ya existe ${destinoId} → ${origenId} (ID: ${secuenciaInversa.id})`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V5: No hay relación inversa');
 
     // ========== VALIDACIÓN 5: Múltiples salidas desde un subtema ==========
     const whereClauseSalidas = {
-      subtema_origen_id
+      subtema_origen_id: origenId
     };
-    if (excludeSecuenciaId) {
-      whereClauseSalidas.id = { [Op.ne]: excludeSecuenciaId };
+    if (excludeId) {
+      whereClauseSalidas.id = { [Op.ne]: excludeId };
     }
 
     const salidasExistentes = await SecuenciaSubtema.findAll({
@@ -106,17 +177,17 @@ async function validarSecuenciaSubtema(
     if (salidasExistentes && salidasExistentes.length > 0) {
       resultado.valido = false;
       const destinos = salidasExistentes.map(s => `${s.subtema_destino_id} (ID:${s.id})`).join(', ');
-      resultado.error = `Subtema ${subtema_origen_id} ya tiene salidas a: ${destinos}. No se permiten múltiples salidas`;
+      resultado.error = `Subtema ${origenId} ya tiene salidas a: ${destinos}. No se permiten múltiples salidas`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V6: Sin múltiples salidas');
 
     // ========== VALIDACIÓN 6: Múltiples entradas hacia un subtema ==========
     const whereClaseEntradas = {
-      subtema_destino_id
+      subtema_destino_id: destinoId
     };
-    if (excludeSecuenciaId) {
-      whereClaseEntradas.id = { [Op.ne]: excludeSecuenciaId };
+    if (excludeId) {
+      whereClaseEntradas.id = { [Op.ne]: excludeId };
     }
 
     const entradasExistentes = await SecuenciaSubtema.findAll({
@@ -126,16 +197,16 @@ async function validarSecuenciaSubtema(
     if (entradasExistentes && entradasExistentes.length > 0) {
       resultado.valido = false;
       const origenes = entradasExistentes.map(s => `${s.subtema_origen_id} (ID:${s.id})`).join(', ');
-      resultado.error = `Subtema ${subtema_destino_id} ya recibe desde: ${origenes}. No se permiten múltiples entradas`;
+      resultado.error = `Subtema ${destinoId} ya recibe desde: ${origenes}. No se permiten múltiples entradas`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V7: Sin múltiples entradas');
 
     // ========== VALIDACIÓN 7: Ciclos indirectos ==========
-    const existeCiclo = await detectarCicloIndirecto(subtema_destino_id, subtema_origen_id);
+    const existeCiclo = await detectarCicloIndirecto(destinoId, origenId);
     if (existeCiclo) {
       resultado.valido = false;
-      resultado.error = `Ciclo detectado: ${subtema_destino_id} → ... → ${subtema_origen_id}. Crear ${subtema_origen_id} → ${subtema_destino_id} formaría bucle`;
+      resultado.error = `Ciclo detectado: ${destinoId} → ... → ${origenId}. Crear ${origenId} → ${destinoId} formaría bucle`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V8: Sin ciclos indirectos');
@@ -419,6 +490,50 @@ exports.updateSecuenciaSubtema = async (req, res) => {
 
     console.log(`[UPDATE] ID ${secuencia.id}: (${secuencia.subtema_origen_id}→${secuencia.subtema_destino_id}) a (${nuevoOrigen}→${nuevoDestino})`);
 
+    const origenAnterior = Number(secuencia.subtema_origen_id);
+    const destinoAnterior = Number(secuencia.subtema_destino_id);
+    const cambiaOrigen = subtema_origen_id !== undefined && Number(subtema_origen_id) !== origenAnterior;
+    const cambiaDestino = subtema_destino_id !== undefined && Number(subtema_destino_id) !== destinoAnterior;
+
+    // Caso especial: inversión de tramo (ej. 1→2→3 al cambiar 1 por 3 => 3→2→1)
+    if (cambiaOrigen && !cambiaDestino) {
+      const secuenciaSiguiente = await SecuenciaSubtema.findOne({
+        where: {
+          id: { [Op.ne]: secuencia.id },
+          subtema_origen_id: destinoAnterior,
+          subtema_destino_id: Number(nuevoOrigen)
+        }
+      });
+
+      if (secuenciaSiguiente) {
+        const transaction = await sequelize.transaction();
+        try {
+          await secuencia.update({
+            subtema_origen_id: Number(nuevoOrigen),
+            subtema_destino_id: destinoAnterior,
+            descripcion: descripcion !== undefined ? descripcion : secuencia.descripcion,
+            estado: estado !== undefined ? estado : secuencia.estado
+          }, { transaction });
+
+          await secuenciaSiguiente.update({
+            subtema_origen_id: destinoAnterior,
+            subtema_destino_id: origenAnterior,
+            estado: secuenciaSiguiente.estado
+          }, { transaction });
+
+          await transaction.commit();
+
+          return res.json({
+            message: "Secuencia actualizada correctamente",
+            secuencia
+          });
+        } catch (swapError) {
+          await transaction.rollback();
+          throw swapError;
+        }
+      }
+    }
+
     // Validar si hay cambios en los subtemas
     if (subtema_origen_id || subtema_destino_id) {
       const validacion = await validarSecuenciaSubtema(
@@ -472,14 +587,29 @@ exports.reorderSequences = async (req, res) => {
       });
     }
 
+    const uniqueSubtemas = new Set(subtemas.map(Number));
+    if (uniqueSubtemas.size !== subtemas.length) {
+      return res.status(400).json({
+        message: "El nuevo orden no puede contener subtemas repetidos"
+      });
+    }
+
     // Validar que todos los subtemas existan
     const subtemasValidos = await Subtema.findAll({
-      where: { id: subtemas }
+      where: { id: subtemas },
+      attributes: ['id', 'tema_id']
     });
 
     if (subtemasValidos.length !== subtemas.length) {
       return res.status(400).json({ 
         message: "Uno o más subtemas especificados no existen" 
+      });
+    }
+
+    const temasEnOrden = new Set(subtemasValidos.map((subtema) => Number(subtema.tema_id)));
+    if (temasEnOrden.size !== 1) {
+      return res.status(400).json({
+        message: "El nuevo orden debe contener subtemas de un mismo tema"
       });
     }
 
