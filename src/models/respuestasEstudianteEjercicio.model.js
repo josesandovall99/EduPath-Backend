@@ -27,6 +27,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
+    contador: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 1
+    },
     // Mapeamos createdAt -> fecha_creacion según diagrama
     fecha_creacion: {
       type: DataTypes.DATE,
@@ -38,7 +43,7 @@ module.exports = (sequelize, DataTypes) => {
     createdAt: 'fecha_creacion',
     updatedAt: false,
     underscored: true,
-    // Un solo registro final por estudiante+ejercicio (solo cuando sea correcto)
+    // Un solo registro por estudiante+ejercicio; se actualiza en cada intento
     indexes: [
       {
         unique: true,

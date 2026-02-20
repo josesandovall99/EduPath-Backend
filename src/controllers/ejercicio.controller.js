@@ -529,7 +529,7 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       return evaluacionController.evaluarCompilador(req, res);
     }
 
-    // Normalizar respuesta para evaluación (se guarda sólo si es correcta)
+    // Normalizar respuesta para evaluación
     const respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
 
     // Evaluar usando la misma lógica de resolver
@@ -623,21 +623,53 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
         : `Correctas ${correctas}/${total}. Revise las respuestas.`;
     }
 
-    if (esCorrecta) {
-      // Guardar intento solo si es correcto y registrar evaluación Aprobado
-      const intento = await RespuestaEstudianteEjercicio.create({
-        respuesta: respuestaPayload,
-        estudiante_id,
-        ejercicio_id: parseInt(ejercicioId, 10),
-        estado: 'ENVIADO'
+    const ejercicioIdNum = parseInt(ejercicioId, 10);
+    const registrarIntento = async () => {
+      const payloadRespuesta = {
+        ...(respuestaPayload || {}),
+        esCorrecta,
+        puntosObtenidos,
+        detalle,
+        retroalimentacion
+      };
+
+      const existente = await RespuestaEstudianteEjercicio.findOne({
+        where: {
+          estudiante_id,
+          ejercicio_id: ejercicioIdNum
+        }
       });
+
+      if (existente) {
+        const nuevoContador = (existente.contador || 0) + 1;
+        await existente.update({
+          respuesta: payloadRespuesta,
+          estado: esCorrecta ? 'APROBADO' : 'REPROBADO',
+          contador: nuevoContador
+        });
+        return { id: existente.id, contador: nuevoContador };
+      }
+
+      const creado = await RespuestaEstudianteEjercicio.create({
+        respuesta: payloadRespuesta,
+        estudiante_id,
+        ejercicio_id: ejercicioIdNum,
+        estado: esCorrecta ? 'APROBADO' : 'REPROBADO',
+        contador: 1
+      });
+      return { id: creado.id, contador: 1 };
+    };
+
+    const intento = await registrarIntento();
+
+    if (esCorrecta) {
       const evalWhere = { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) };
       const existenteEval = await Evaluacion.findOne({ where: evalWhere });
       const payloadEval = {
         calificacion: puntosObtenidos,
         retroalimentacion: retroalimentacion || null,
         estudiante_id,
-        ejercicio_id: parseInt(ejercicioId, 10),
+        ejercicio_id: ejercicioIdNum,
         estado: 'Aprobado'
       };
       if (existenteEval) {
@@ -648,6 +680,7 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       submissionLocks.delete(key);
       return res.status(200).json({
         intentoId: intento.id,
+        contador: intento.contador,
         ejercicioId,
         esCorrecta,
         puntosObtenidos,
@@ -656,9 +689,11 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       });
     }
 
-    // Incorrecta: no se persiste intento ni evaluación; se libera el lock y se permite reintentar
+    // Incorrecta: se persiste intento y se permite reintentar
     submissionLocks.delete(key);
     return res.status(400).json({
+      intentoId: intento.id,
+      contador: intento.contador,
       ejercicioId,
       esCorrecta,
       puntosObtenidos,

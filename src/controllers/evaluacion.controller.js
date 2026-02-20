@@ -403,15 +403,65 @@ exports.evaluarCompilador = async (req, res) => {
     }
 
     const configuracion = ejercicio.configuracion || {};
+
+    const registrarIntentoEjercicio = async ({ estadoIntento, meta = {} }) => {
+      if (!estudiante_id) return null;
+
+      const respuestaPayload = {
+        codigo,
+        lenguaje_id: lenguajeIdNum,
+        ...meta
+      };
+
+      const existenteRespuesta = await RespuestaEstudianteEjercicio.findOne({
+        where: { estudiante_id, ejercicio_id }
+      });
+
+      if (existenteRespuesta) {
+        const nuevoContador = (existenteRespuesta.contador || 0) + 1;
+        await existenteRespuesta.update({
+          respuesta: respuestaPayload,
+          estado: estadoIntento,
+          contador: nuevoContador
+        });
+        return { id: existenteRespuesta.id, contador: nuevoContador };
+      }
+
+      const creado = await RespuestaEstudianteEjercicio.create({
+        respuesta: respuestaPayload,
+        estudiante_id,
+        ejercicio_id,
+        estado: estadoIntento,
+        contador: 1
+      });
+
+      return { id: creado.id, contador: 1 };
+    };
+
     const lenguajesPermitidos = configuracion.lenguajesPermitidos;
     if (Array.isArray(lenguajesPermitidos) && lenguajesPermitidos.length > 0) {
       if (!lenguajesPermitidos.includes(lenguajeIdNum)) {
+        await registrarIntentoEjercicio({
+          estadoIntento: 'REPROBADO',
+          meta: {
+            esCorrecta: false,
+            motivo: 'Lenguaje no permitido'
+          }
+        });
         return res.status(400).json({ message: 'Lenguaje no permitido para este ejercicio' });
       }
     }
 
     const validacionSintaxis = validarSintaxis(codigo, configuracion, lenguajeIdNum);
     if (!validacionSintaxis.ok) {
+      await registrarIntentoEjercicio({
+        estadoIntento: 'REPROBADO',
+        meta: {
+          esCorrecta: false,
+          estado: 'Sintaxis inválida',
+          erroresSintaxis: validacionSintaxis.errores
+        }
+      });
       return res.status(400).json({
         esCorrecta: false,
         estado: 'Sintaxis inválida',
@@ -461,6 +511,18 @@ exports.evaluarCompilador = async (req, res) => {
     const sinErrores = !stderrHumano && !compileOutput && result.status?.id === 3;
     const esCorrecta = sinErrores && obtenido === esperado && esperado !== '';
 
+    const intentoActual = await registrarIntentoEjercicio({
+      estadoIntento: esCorrecta ? 'APROBADO' : 'REPROBADO',
+      meta: {
+        esCorrecta,
+        stdout: stdoutHumano,
+        stderr: stderrHumano || compileOutput,
+        esperado,
+        obtenido,
+        estado: esCorrecta ? 'Aprobado' : (result.status?.description || 'Reprobado')
+      }
+    });
+
     if (esCorrecta) {
       if (!estudiante_id) {
         return res.status(200).json({
@@ -470,21 +532,6 @@ exports.evaluarCompilador = async (req, res) => {
           stderr: stderrHumano || compileOutput,
           esperado,
           obtenido
-        });
-      }
-      const existenteRespuesta = await RespuestaEstudianteEjercicio.findOne({
-        where: { estudiante_id, ejercicio_id }
-      });
-      if (!existenteRespuesta) {
-        await RespuestaEstudianteEjercicio.create({
-          respuesta: {
-            codigo,
-            lenguaje_id: lenguajeIdNum,
-            stdout: stdoutHumano
-          },
-          estudiante_id,
-          ejercicio_id,
-          estado: 'ENVIADO'
         });
       }
 
@@ -506,6 +553,7 @@ exports.evaluarCompilador = async (req, res) => {
       return res.status(200).json({
         esCorrecta,
         puntosObtenidos: ejercicio.puntos,
+        contador: intentoActual?.contador,
         stdout: stdoutHumano,
         stderr: stderrHumano || compileOutput,
         esperado,
@@ -516,6 +564,7 @@ exports.evaluarCompilador = async (req, res) => {
     return res.status(400).json({
       esCorrecta,
       puntosObtenidos: 0,
+      contador: intentoActual?.contador,
       stdout: stdoutHumano,
       stderr: stderrHumano || compileOutput,
       esperado,

@@ -1,5 +1,4 @@
-const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio, Evaluacion } = require("../models");
-const { Op } = require('sequelize');
+const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio } = require("../models");
 
 /* ============================================================
    1. CREAR RESPUESTA (POST)
@@ -17,28 +16,6 @@ const crearRespuestaEjercicio = async (req, res) => {
             return res.status(404).json({ error: "El ejercicio no existe" });
         }
 
-        // Verificar evaluación aprobada (solo se guardan respuestas correctas)
-        const evaluacionAprobada = await Evaluacion.findOne({
-            where: { estudiante_id, ejercicio_id, estado: 'Aprobado' }
-        });
-        if (!evaluacionAprobada) {
-            return res.status(409).json({
-                error: "La respuesta solo se registra cuando el ejercicio está aprobado",
-                estado: "Pendiente o reprobado"
-            });
-        }
-
-        // Bloquear nuevos intentos si ya existe respuesta registrada
-        const existente = await RespuestaEstudianteEjercicio.findOne({
-            where: { estudiante_id, ejercicio_id }
-        });
-        if (existente) {
-            return res.status(409).json({
-                error: "Ya existe una respuesta para este estudiante en este ejercicio",
-                intentoId: existente.id
-            });
-        }
-
         // Normalizar respuesta: admitir string/objeto/arreglo
         let respuestaPayload = respuesta;
         if (typeof respuesta === 'string') {
@@ -46,15 +23,38 @@ const crearRespuestaEjercicio = async (req, res) => {
         }
         // Nota: si a futuro se reciben archivos, se pueden anexar en respuestaPayload.archivos
 
-        // Registrar el intento con estado opcional (por defecto 'ENVIADO')
+        // Registrar todos los intentos en un único registro por estudiante+ejercicio
+        const existente = await RespuestaEstudianteEjercicio.findOne({
+            where: { estudiante_id, ejercicio_id }
+        });
+
+        if (existente) {
+            const nuevoContador = (existente.contador || 0) + 1;
+            await existente.update({
+                respuesta: respuestaPayload,
+                estado: estado || 'ENVIADO',
+                contador: nuevoContador
+            });
+
+            return res.status(200).json({
+                ...existente.toJSON(),
+                contador: nuevoContador,
+                mensaje: 'Intento actualizado correctamente'
+            });
+        }
+
         const nuevoIntento = await RespuestaEstudianteEjercicio.create({
             respuesta: respuestaPayload,
             estudiante_id,
             ejercicio_id,
-            estado: estado || 'ENVIADO'
+            estado: estado || 'ENVIADO',
+            contador: 1
         });
 
-        res.status(201).json(nuevoIntento);
+        res.status(201).json({
+            ...nuevoIntento.toJSON(),
+            mensaje: 'Intento creado correctamente'
+        });
     } catch (error) {
         console.error("Error en crearRespuesta:", error.message);
         res.status(500).json({ error: "Error al crear la respuesta", detalle: error.message });
