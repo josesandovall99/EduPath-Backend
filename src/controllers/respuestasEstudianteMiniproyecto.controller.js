@@ -498,6 +498,15 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       });
     }
 
+    const evalExistente = await Evaluacion.findOne({
+      where: { estudiante_id, miniproyecto_id, estado: 'APROBADO' }
+    });
+    if (evalExistente) {
+      return res.status(409).json({
+        mensaje: 'Miniproyecto ya aprobado para el estudiante'
+      });
+    }
+
     const respuestaExistente = await RespuestaEstudianteMiniproyecto.findOne({
       where: {
         estudiante_id,
@@ -543,7 +552,14 @@ const crearRespuestaMiniproyecto = async (req, res) => {
     });
 
     if (respuestaExistente) {
-      await respuestaExistente.update({ respuesta: respuestaPayload, estado });
+      const contadorActual = Number.isFinite(respuestaExistente.contador)
+        ? respuestaExistente.contador
+        : 0;
+      await respuestaExistente.update({
+        respuesta: respuestaPayload,
+        estado,
+        contador: contadorActual + 1
+      });
       return res.status(200).json(respuestaExistente);
     }
 
@@ -552,6 +568,7 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       estudiante_id,
       miniproyecto_id,
       estado,
+      contador: 1,
     });
 
     res.status(201).json(nuevaRespuesta);
@@ -797,27 +814,6 @@ const verificarMiniproyectoCompletado = async (req, res) => {
     });
   }
 };
-
-
-Estudiante.hasMany(RespuestaEstudianteMiniproyecto, {
-  foreignKey: "estudiante_id",
-  as: "respuestasMiniproyecto",
-});
-
-RespuestaEstudianteMiniproyecto.belongsTo(Estudiante, {
-  foreignKey: "estudiante_id",
-  as: "estudiante",
-});
-
-Miniproyecto.hasMany(RespuestaEstudianteMiniproyecto, {
-  foreignKey: "miniproyecto_id",
-  as: "respuestasEstudiante",
-});
-
-RespuestaEstudianteMiniproyecto.belongsTo(Miniproyecto, {
-  foreignKey: "miniproyecto_id",
-  as: "miniproyecto",
-});
 
 
 module.exports = {

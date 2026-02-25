@@ -72,6 +72,14 @@ models.RespuestaEstudianteEjercicio.belongsTo(models.Estudiante, { foreignKey: '
 models.Ejercicio.hasMany(models.RespuestaEstudianteEjercicio, { foreignKey: 'ejercicio_id', as: 'respuestas' });
 models.RespuestaEstudianteEjercicio.belongsTo(models.Ejercicio, { foreignKey: 'ejercicio_id', as: 'ejercicio' });
 
+// RespuestaMiniproyecto <-> Estudiante
+models.Estudiante.hasMany(models.RespuestaEstudianteMiniproyecto, { foreignKey: 'estudiante_id', as: 'respuestasMiniproyecto' });
+models.RespuestaEstudianteMiniproyecto.belongsTo(models.Estudiante, { foreignKey: 'estudiante_id', as: 'estudiante' });
+
+// RespuestaMiniproyecto <-> Miniproyecto
+models.Miniproyecto.hasMany(models.RespuestaEstudianteMiniproyecto, { foreignKey: 'miniproyecto_id', as: 'respuestas' });
+models.RespuestaEstudianteMiniproyecto.belongsTo(models.Miniproyecto, { foreignKey: 'miniproyecto_id', as: 'miniproyecto' });
+
 module.exports = {
   sequelize,
   ...models
