@@ -223,8 +223,8 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
       return res.status(404).json({ message: 'Miniproyecto no encontrado' });
     }
 
-    // Validar que sea miniproyecto de programacion (actividad_id = 12)
-    if (Number(miniproyecto.actividad_id) !== 12) {
+    // Validar que sea miniproyecto de programacion (actividad_id = 1)
+    if (Number(miniproyecto.actividad_id) !== 1) {
       return res.status(400).json({ message: 'El miniproyecto no es de programacion' });
     }
 
@@ -268,6 +268,52 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
     }
 
     if (evaluacion.status !== 200) {
+      const respuestaPayload = JSON.stringify({
+        codigo,
+        lenguaje_id,
+        stdout: evaluacion.data?.stdout || '',
+        stderr: evaluacion.data?.stderr || '',
+        esperado: evaluacion.data?.esperado,
+        obtenido: evaluacion.data?.obtenido
+      });
+
+      const existenteRespuesta = await RespuestaEstudianteMiniproyecto.findOne({
+        where: { estudiante_id, miniproyecto_id: parseInt(id, 10) }
+      });
+
+      if (existenteRespuesta) {
+        const contadorActual = Number.isFinite(existenteRespuesta.contador)
+          ? existenteRespuesta.contador
+          : 0;
+        await existenteRespuesta.update({
+          respuesta: respuestaPayload,
+          estado: 'REPROBADO',
+          contador: contadorActual + 1
+        });
+      } else {
+        await RespuestaEstudianteMiniproyecto.create({
+          respuesta: respuestaPayload,
+          estudiante_id,
+          miniproyecto_id: parseInt(id, 10),
+          estado: 'REPROBADO',
+          contador: 1
+        });
+      }
+
+      const evalPayload = {
+        calificacion: 0,
+        retroalimentacion: evaluacion.data?.estado || evaluacion.message || 'Respuesta incorrecta',
+        estudiante_id,
+        miniproyecto_id: parseInt(id, 10),
+        estado: 'REPROBADO'
+      };
+      const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10) } });
+      if (evalPrev) {
+        await evalPrev.update(evalPayload);
+      } else {
+        await Evaluacion.create(evalPayload);
+      }
+
       return res.status(400).json({
         esCorrecta: false,
         ...evaluacion.data,
@@ -286,13 +332,21 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
     });
 
     if (existenteRespuesta) {
-      await existenteRespuesta.update({ respuesta: respuestaPayload, estado: 'COMPLETADO' });
+      const contadorActual = Number.isFinite(existenteRespuesta.contador)
+        ? existenteRespuesta.contador
+        : 0;
+      await existenteRespuesta.update({
+        respuesta: respuestaPayload,
+        estado: 'COMPLETADO',
+        contador: contadorActual + 1
+      });
     } else {
       await RespuestaEstudianteMiniproyecto.create({
         respuesta: respuestaPayload,
         estudiante_id,
         miniproyecto_id: parseInt(id, 10),
-        estado: 'COMPLETADO'
+        estado: 'COMPLETADO',
+        contador: 1
       });
     }
 

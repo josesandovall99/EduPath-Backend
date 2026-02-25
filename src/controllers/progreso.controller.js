@@ -1,4 +1,4 @@
-const { Area, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido, Persona } = require('../models');
+const { Area, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido, Persona, Actividad } = require('../models');
 const { Op } = require('sequelize');
 const puppeteer = require('puppeteer');
 const desbloqueoService = require('../services/desbloqueo.service');
@@ -22,12 +22,28 @@ const formatDate = (value) => {
   }
 };
 
+const isApprovedStatus = (estado) => String(estado || '').toUpperCase() === 'APROBADO';
+
+const toSafeInt = (value) => {
+  if (Number.isFinite(value)) return value;
+  const parsed = parseInt(value, 10);
+  return Number.isFinite(parsed) ? parsed : 0;
+};
+
+const computeFallos = (contador, aprobado) => {
+  const total = toSafeInt(contador);
+  if (total <= 0) return 0;
+  return aprobado ? Math.max(total - 1, 0) : total;
+};
+
 const buildReportHtml = ({ type, data }) => {
   const headerTitle = type === 'student'
     ? 'Progreso por Estudiante'
     : type === 'date'
       ? 'Progreso por Fecha de Creación'
-      : 'Desempeño por Actividad';
+      : type === 'activity'
+        ? 'Desempeño por Actividad'
+        : 'Fallos por Actividad';
 
   const stats = data.stats || [];
   const cards = stats.map((stat) => `
@@ -446,6 +462,194 @@ const buildReportHtml = ({ type, data }) => {
     ${chartsScript}
   </body>
   </html>`;
+};
+
+const buildFailuresReportData = async ({ estudianteId }) => {
+  const respuestaWhere = estudianteId ? { estudiante_id: estudianteId } : {};
+  const evaluacionWhere = estudianteId ? { estudiante_id: estudianteId } : {};
+
+  const [areas, evaluaciones, respuestasEjercicio, respuestasMiniproyecto] = await Promise.all([
+    Area.findAll({ attributes: ['id', 'nombre'] }),
+    Evaluacion.findAll({
+      where: evaluacionWhere,
+      attributes: ['estudiante_id', 'ejercicio_id', 'miniproyecto_id', 'estado']
+    }),
+    RespuestaEstudianteEjercicio.findAll({
+      where: respuestaWhere,
+      include: [
+        {
+          model: Ejercicio,
+          as: 'ejercicio',
+          include: [
+            { model: Contenido, include: [{ model: Tema }] },
+            { model: Actividad, as: 'actividad' }
+          ]
+        }
+      ]
+    }),
+    RespuestaEstudianteMiniproyecto.findAll({
+      where: respuestaWhere,
+      include: [
+        {
+          model: Miniproyecto,
+          as: 'miniproyecto',
+          include: [
+            { model: Area },
+            { model: Actividad }
+          ]
+        }
+      ]
+    })
+  ]);
+
+  const areaMap = new Map(areas.map((area) => [String(area.id), area.nombre]));
+  const approvedExercises = new Set();
+  const approvedMinis = new Set();
+
+  evaluaciones.forEach((evaluacion) => {
+    if (!isApprovedStatus(evaluacion.estado)) return;
+    if (evaluacion.ejercicio_id) {
+      approvedExercises.add(`${evaluacion.estudiante_id}:${evaluacion.ejercicio_id}`);
+    }
+    if (evaluacion.miniproyecto_id) {
+      approvedMinis.add(`${evaluacion.estudiante_id}:${evaluacion.miniproyecto_id}`);
+    }
+  });
+
+  const items = [];
+
+  respuestasEjercicio.forEach((respuesta) => {
+    const ejercicio = respuesta.ejercicio;
+    const contenido = ejercicio?.Contenido || ejercicio?.contenido;
+    const tema = contenido?.Tema || contenido?.tema;
+    const areaId = tema?.area_id ?? null;
+    const areaName = areaId ? (areaMap.get(String(areaId)) || `Area ${areaId}`) : 'Sin area';
+    const titulo = ejercicio?.actividad?.titulo || ejercicio?.Actividad?.titulo || `Ejercicio ${ejercicio?.id ?? respuesta.ejercicio_id}`;
+    const key = `${respuesta.estudiante_id}:${respuesta.ejercicio_id}`;
+    const aprobado = approvedExercises.has(key);
+    const intentos = toSafeInt(respuesta.contador);
+    const fallos = computeFallos(intentos, aprobado);
+    const aciertos = Math.max(intentos - fallos, 0);
+    items.push({
+      tipo: 'ejercicio',
+      actividad_id: respuesta.ejercicio_id,
+      estudiante_id: respuesta.estudiante_id,
+      titulo,
+      area_id: areaId,
+      area_name: areaName,
+      intentos,
+      fallos,
+      aciertos,
+      aprobado
+    });
+  });
+
+  respuestasMiniproyecto.forEach((respuesta) => {
+    const miniproyecto = respuesta.miniproyecto;
+    const areaId = miniproyecto?.area_id ?? null;
+    const areaName = areaId ? (areaMap.get(String(areaId)) || `Area ${areaId}`) : 'Sin area';
+    const titulo = miniproyecto?.Actividad?.titulo || miniproyecto?.actividad?.titulo || `Miniproyecto ${miniproyecto?.id ?? respuesta.miniproyecto_id}`;
+    const key = `${respuesta.estudiante_id}:${respuesta.miniproyecto_id}`;
+    const aprobado = approvedMinis.has(key);
+    const intentos = toSafeInt(respuesta.contador);
+    const fallos = computeFallos(intentos, aprobado);
+    const aciertos = Math.max(intentos - fallos, 0);
+    items.push({
+      tipo: 'miniproyecto',
+      actividad_id: respuesta.miniproyecto_id,
+      estudiante_id: respuesta.estudiante_id,
+      titulo,
+      area_id: areaId,
+      area_name: areaName,
+      intentos,
+      fallos,
+      aciertos,
+      aprobado
+    });
+  });
+
+  const totals = items.reduce((acc, item) => {
+    acc.intentos += item.intentos;
+    acc.fallos += item.fallos;
+    acc.aciertos += item.aciertos;
+    return acc;
+  }, { intentos: 0, fallos: 0, aciertos: 0 });
+
+  const byType = {
+    ejercicios: { intentos: 0, fallos: 0, aciertos: 0 },
+    miniproyectos: { intentos: 0, fallos: 0, aciertos: 0 }
+  };
+
+  const byAreaMap = new Map();
+  items.forEach((item) => {
+    const tipoKey = item.tipo === 'ejercicio' ? 'ejercicios' : 'miniproyectos';
+    byType[tipoKey].intentos += item.intentos;
+    byType[tipoKey].fallos += item.fallos;
+    byType[tipoKey].aciertos += item.aciertos;
+
+    const areaKey = item.area_id ? String(item.area_id) : 'sin-area';
+    const current = byAreaMap.get(areaKey) || {
+      area_id: item.area_id,
+      area_name: item.area_name,
+      intentos: 0,
+      fallos: 0,
+      aciertos: 0,
+      ejercicios: 0,
+      miniproyectos: 0
+    };
+    current.intentos += item.intentos;
+    current.fallos += item.fallos;
+    current.aciertos += item.aciertos;
+    if (item.tipo === 'ejercicio') current.ejercicios += 1;
+    else current.miniproyectos += 1;
+    byAreaMap.set(areaKey, current);
+  });
+
+  const byArea = Array.from(byAreaMap.values()).sort((a, b) => b.fallos - a.fallos);
+
+  const estudianteIds = Array.from(new Set(items.map((item) => item.estudiante_id)));
+  const estudiantes = estudianteIds.length
+    ? await Estudiante.findAll({
+        where: { id: { [Op.in]: estudianteIds } },
+        include: [{ model: Persona, as: 'persona' }]
+      })
+    : [];
+  const estudianteMap = new Map(
+    estudiantes.map((est) => [
+      String(est.id),
+      {
+        id: est.id,
+        nombre: est.persona?.nombre || est.nombre || `Estudiante ${est.id}`,
+        email: est.persona?.email || est.email || est.correo || ''
+      }
+    ])
+  );
+
+  const byStudentMap = new Map();
+  items.forEach((item) => {
+    const key = String(item.estudiante_id);
+    const info = estudianteMap.get(key) || { id: item.estudiante_id, nombre: `Estudiante ${item.estudiante_id}`, email: '' };
+    const current = byStudentMap.get(key) || {
+      estudiante_id: info.id,
+      nombre: info.nombre,
+      email: info.email,
+      intentos: 0,
+      fallos: 0,
+      aciertos: 0,
+      ejercicios: 0,
+      miniproyectos: 0
+    };
+    current.intentos += item.intentos;
+    current.fallos += item.fallos;
+    current.aciertos += item.aciertos;
+    if (item.tipo === 'ejercicio') current.ejercicios += 1;
+    else current.miniproyectos += 1;
+    byStudentMap.set(key, current);
+  });
+
+  const byStudent = Array.from(byStudentMap.values()).sort((a, b) => b.fallos - a.fallos);
+
+  return { totals, byType, byArea, byStudent, items };
 };
 
 const incrementNestedCount = (store, keyA, keyB, delta = 1) => {
@@ -1112,6 +1316,24 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
       }
     });
 
+    const totalMiniproyectos = await Miniproyecto.count({ where: { area_id: aId } });
+    const miniproyectosAprobados = await Evaluacion.count({
+      where: {
+        estudiante_id: esId,
+        estado: 'APROBADO',
+        miniproyecto_id: { [Op.ne]: null }
+      },
+      include: [{ model: Miniproyecto, where: { area_id: aId }, required: true }]
+    });
+    const miniproyectosDesaprobados = await Evaluacion.count({
+      where: {
+        estudiante_id: esId,
+        estado: 'REPROBADO',
+        miniproyecto_id: { [Op.ne]: null }
+      },
+      include: [{ model: Miniproyecto, where: { area_id: aId }, required: true }]
+    });
+
     // ==========================================
     // 4. CÁLCULO DE PORCENTAJE
     // ==========================================
@@ -1158,6 +1380,11 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
       },
       estudiante_id: esId,
       progreso: progresoDetallado,
+      miniproyectos: {
+        total: totalMiniproyectos,
+        aprobados: miniproyectosAprobados,
+        desaprobados: miniproyectosDesaprobados
+      },
       resumen: {
         totalItems,
         itemsCompletados,
@@ -1242,15 +1469,38 @@ exports.getCalificacionEstimada = async (req, res) => {
   }
 };
 
-// Generar PDF con tipo de reporte: 'student' | 'date' | 'activity'
+// Reporte JSON de fallos por actividad (ejercicio/miniproyecto)
+exports.obtenerReporteFallos = async (req, res) => {
+  try {
+    const rawEstudianteId = req.query.estudiante_id;
+    const estudianteId = rawEstudianteId && rawEstudianteId !== 'all'
+      ? parseInt(rawEstudianteId, 10)
+      : null;
+
+    if (rawEstudianteId && rawEstudianteId !== 'all' && isNaN(estudianteId)) {
+      return res.status(400).json({ message: 'estudiante_id debe ser numerico o "all"' });
+    }
+
+    const data = await buildFailuresReportData({ estudianteId });
+    res.json({
+      estudiante_id: estudianteId || 'all',
+      ...data
+    });
+  } catch (error) {
+    console.error('❌ Error en obtenerReporteFallos:', error);
+    res.status(500).json({ message: 'Error al generar reporte de fallos', error: error.message || error });
+  }
+};
+
+// Generar PDF con tipo de reporte: 'student' | 'date' | 'activity' | 'failures'
 // Query params:
-// - type: 'student'|'date'|'activity' (required)
+// - type: 'student'|'date'|'activity'|'failures' (required)
 // - estudiante_id: required when type='student'
 exports.generarPdfReporte = async (req, res) => {
   try {
     const type = (req.query.type || '').toString().toLowerCase();
-    if (!['student', 'date', 'activity'].includes(type)) {
-      return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'" });
+    if (!['student', 'date', 'activity', 'failures'].includes(type)) {
+      return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'|'failures'" });
     }
     const filters = {
       semester: req.query.semester,
@@ -1684,6 +1934,182 @@ exports.generarPdfReporte = async (req, res) => {
             data: areaValues,
             color: '#4A90E2',
             showLegend: false
+          }
+        ]
+      };
+    } else if (type === 'failures') {
+      const rawEstudianteId = req.query.estudiante_id || req.params.estudiante_id;
+      const estudianteId = rawEstudianteId && rawEstudianteId !== 'all'
+        ? parseInt(rawEstudianteId, 10)
+        : null;
+      if (rawEstudianteId && rawEstudianteId !== 'all' && isNaN(estudianteId)) {
+        return res.status(400).json({ message: 'estudiante_id debe ser numerico o "all"' });
+      }
+
+      const failuresData = await buildFailuresReportData({ estudianteId });
+      const totalIntentos = failuresData.totals.intentos;
+      const totalFallos = failuresData.totals.fallos;
+      const totalAciertos = failuresData.totals.aciertos;
+      const tasaFallos = totalIntentos > 0 ? Math.round((totalFallos / totalIntentos) * 100) : 0;
+      const tasaAciertos = totalIntentos > 0 ? Math.round((totalAciertos / totalIntentos) * 100) : 0;
+
+      const itemsOrdenados = [...failuresData.items].sort((a, b) => {
+        if (b.fallos !== a.fallos) return b.fallos - a.fallos;
+        return b.intentos - a.intentos;
+      });
+      const itemsListados = estudianteId ? itemsOrdenados : itemsOrdenados.slice(0, 20);
+
+      const activityRows = itemsListados.map((item) => `
+        <tr>
+          <td>${escapeHtml(item.tipo)}</td>
+          <td>${escapeHtml(item.titulo)}</td>
+          <td>${escapeHtml(item.area_name || '-')}</td>
+          <td>${item.intentos}</td>
+          <td>${item.aciertos}</td>
+          <td>${item.fallos}</td>
+          <td>${item.aprobado ? 'Si' : 'No'}</td>
+        </tr>
+      `).join('');
+
+      const activityTable = `
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th>Tipo</th>
+              <th>Actividad</th>
+              <th>Área</th>
+              <th>Intentos</th>
+              <th>Aciertos</th>
+              <th>Fallos</th>
+              <th>Aprobado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${activityRows || '<tr><td colspan="7">Sin datos</td></tr>'}
+          </tbody>
+        </table>
+      `;
+
+      const areaRows = failuresData.byArea.map((area) => `
+        <tr>
+          <td>${escapeHtml(area.area_name || 'Sin area')}</td>
+          <td>${area.intentos}</td>
+          <td>${area.aciertos}</td>
+          <td>${area.fallos}</td>
+          <td>${area.ejercicios}</td>
+          <td>${area.miniproyectos}</td>
+        </tr>
+      `).join('');
+
+      const areaTable = `
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th>Área</th>
+              <th>Intentos</th>
+              <th>Aciertos</th>
+              <th>Fallos</th>
+              <th>Ejercicios</th>
+              <th>Miniproyectos</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${areaRows || '<tr><td colspan="6">Sin datos</td></tr>'}
+          </tbody>
+        </table>
+      `;
+
+      const studentsListados = estudianteId ? failuresData.byStudent : failuresData.byStudent.slice(0, 20);
+      const studentRows = studentsListados.map((student) => `
+        <tr>
+          <td>${escapeHtml(student.nombre || `Estudiante ${student.estudiante_id}`)}</td>
+          <td>${escapeHtml(student.email || '-')}</td>
+          <td>${student.intentos}</td>
+          <td>${student.aciertos}</td>
+          <td>${student.fallos}</td>
+          <td>${student.ejercicios}</td>
+          <td>${student.miniproyectos}</td>
+        </tr>
+      `).join('');
+
+      const studentTable = `
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th>Estudiante</th>
+              <th>Correo</th>
+              <th>Intentos</th>
+              <th>Aciertos</th>
+              <th>Fallos</th>
+              <th>Ejercicios</th>
+              <th>Miniproyectos</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${studentRows || '<tr><td colspan="7">Sin datos</td></tr>'}
+          </tbody>
+        </table>
+      `;
+
+      const areaLabels = failuresData.byArea.map((area) => area.area_name || 'Sin area');
+      const areaFallos = failuresData.byArea.map((area) => area.fallos);
+      const fallosEjercicios = failuresData.byType.ejercicios.fallos;
+      const fallosMinis = failuresData.byType.miniproyectos.fallos;
+
+      reportData = {
+        ...reportData,
+        stats: [
+          { label: 'Intentos totales', value: totalIntentos, sub: estudianteId ? 'Del estudiante' : 'Agregado' },
+          { label: 'Aciertos totales', value: totalAciertos, sub: 'Intentos aprobados' },
+          { label: 'Fallos totales', value: totalFallos, sub: 'Intentos no aprobados' },
+          { label: 'Tasa de acierto', value: `${tasaAciertos}%`, sub: 'Aciertos/Intentos' }
+        ],
+        sections: [
+          {
+            title: 'Resumen por Área',
+            subtitle: 'Intentos y fallos acumulados',
+            body: areaTable
+          },
+          {
+            title: 'Fallos por Estudiante',
+            subtitle: estudianteId ? 'Resumen del estudiante' : 'Top estudiantes con mas fallos',
+            body: studentTable
+          },
+          {
+            title: estudianteId ? 'Detalle por Actividad' : 'Top actividades con más fallos',
+            subtitle: estudianteId ? 'Ejercicios y miniproyectos del estudiante' : 'Top 20 por fallos',
+            body: activityTable
+          }
+        ],
+        charts: [
+          {
+            id: 'failuresAreaChart',
+            type: 'bar',
+            title: 'Fallos por Área',
+            labels: areaLabels,
+            data: areaFallos,
+            color: '#F5A97F',
+            showLegend: false
+          },
+          {
+            id: 'hitsVsFailsChart',
+            type: 'pie',
+            title: 'Aciertos vs Fallos',
+            labels: ['Aciertos', 'Fallos'],
+            data: [totalAciertos, totalFallos],
+            colors: ['#7ED6A7', '#F5A97F'],
+            showLegend: true,
+            legendPosition: 'bottom'
+          },
+          {
+            id: 'failuresTypeChart',
+            type: 'pie',
+            title: 'Distribución de Fallos por Tipo',
+            labels: ['Ejercicios', 'Miniproyectos'],
+            data: [fallosEjercicios, fallosMinis],
+            colors: ['#4A90E2', '#7ED6A7'],
+            showLegend: true,
+            legendPosition: 'bottom'
           }
         ]
       };
