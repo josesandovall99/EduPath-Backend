@@ -17,8 +17,16 @@ exports.getAreas = async (req, res) => {
     
     // Admin ve todas las áreas
     // Docente ve solo su área
-    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId) {
-      where.id = req.docenteAreaId;
+    if (req.tipoUsuario === "DOCENTE") {
+      const allowedAreaIds = Array.isArray(req.docenteAreaIds)
+        ? req.docenteAreaIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+        : [];
+
+      if (allowedAreaIds.length > 0) {
+        where.id = allowedAreaIds;
+      } else if (req.docenteAreaId) {
+        where.id = req.docenteAreaId;
+      }
     }
     // Administrador no tiene restricción
     // Otros tipos de usuario (estudiante) tampoco tienen restricción en GET
@@ -34,8 +42,19 @@ exports.getAreas = async (req, res) => {
 exports.getAreaById = async (req, res) => {
   try {
     // Docente solo puede ver su propia área
-    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId && parseInt(req.params.id, 10) !== parseInt(req.docenteAreaId, 10)) {
-      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+    if (req.tipoUsuario === "DOCENTE") {
+      const requestedAreaId = parseInt(req.params.id, 10);
+      const allowedAreaIds = Array.isArray(req.docenteAreaIds)
+        ? req.docenteAreaIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+        : [];
+
+      const isAllowed = allowedAreaIds.length > 0
+        ? allowedAreaIds.includes(requestedAreaId)
+        : (req.docenteAreaId ? requestedAreaId === parseInt(req.docenteAreaId, 10) : true);
+
+      if (!isAllowed) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
     }
 
     const area = await Area.findByPk(req.params.id);
@@ -43,6 +62,24 @@ exports.getAreaById = async (req, res) => {
     res.json(area);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener el área", error });
+  }
+};
+
+// Obtener áreas permitidas para el docente autenticado
+exports.getMisAreasDocente = async (req, res) => {
+  try {
+    const allowedAreaIds = Array.isArray(req.docenteAreaIds)
+      ? req.docenteAreaIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+      : [];
+
+    if (allowedAreaIds.length === 0) {
+      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+    }
+
+    const areas = await Area.findAll({ where: { id: allowedAreaIds } });
+    res.json(areas);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener las áreas del docente", error });
   }
 };
 

@@ -1,14 +1,12 @@
-const { Docente } = require("../models");
-
 /**
  * Middleware para autorizar gestión por ADMINISTRADOR o DOCENTE
  * - ADMINISTRADOR: acceso completo
- * - DOCENTE: solo su área asignada
+ * - DOCENTE: solo sus áreas asignadas
  * 
  * Uso: aplicar a rutas que requieran validación de area
  * 
  * Espera que req tenga:
- * - req.docenteId (del token/sesión)
+ * - req.docenteAreaIds (del middleware autenticacionUsuario)
  * - req.body.area_id OR req.params.areaId OR req.query.areaId (el area a validar)
  */
 const createAutorizacionDocente = (allowMissingDocente = false) => async (req, res, next) => {
@@ -26,25 +24,17 @@ const createAutorizacionDocente = (allowMissingDocente = false) => async (req, r
       });
     }
 
-    // Obtener docente_id desde el request
-    const docenteId = req.docenteId || req.body.docente_id || req.headers["x-docente-id"];
+    const allowedAreaIds = Array.isArray(req.docenteAreaIds)
+      ? req.docenteAreaIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+      : [];
 
-    if (!docenteId) {
+    if (allowedAreaIds.length === 0) {
       if (allowMissingDocente) {
         return next();
       }
 
       return res.status(401).json({
-        mensaje: "No autorizado: docente_id requerido",
-      });
-    }
-
-    // Obtener el docente con su area
-    const docente = await Docente.findByPk(docenteId);
-
-    if (!docente) {
-      return res.status(404).json({
-        mensaje: "Docente no encontrado",
+        mensaje: "No autorizado: áreas del docente no disponibles",
       });
     }
 
@@ -52,7 +42,6 @@ const createAutorizacionDocente = (allowMissingDocente = false) => async (req, r
     const areaIdAGestionar =
       req.body.area_id ||
       req.params.areaId ||
-      req.params.id ||
       req.query.areaId ||
       req.body.actividad?.area_id;
 
@@ -60,22 +49,24 @@ const createAutorizacionDocente = (allowMissingDocente = false) => async (req, r
     if (!areaIdAGestionar) {
       // Algunos endpoints como GET /temas no especifican area_id
       // Permitimos que continúe y será responsabilidad del controlador filtrar
-      req.docenteAreaId = docente.area_id;
+      req.docenteAreaId = allowedAreaIds[0];
       return next();
     }
 
-    // Validar que el area_id coincida
-    if (parseInt(areaIdAGestionar) !== parseInt(docente.area_id)) {
+    const areaIdNumerico = parseInt(areaIdAGestionar, 10);
+
+    // Validar que el area_id esté permitido
+    if (!allowedAreaIds.includes(areaIdNumerico)) {
       return res.status(403).json({
         mensaje:
           "Acceso denegado: no tienes permisos para gestionar esta área",
-        tuArea: docente.area_id,
+        areasPermitidas: allowedAreaIds,
         areaIntentada: areaIdAGestionar,
       });
     }
 
     // Pasar el area_id a través del request para uso en controladores
-    req.docenteAreaId = docente.area_id;
+    req.docenteAreaId = areaIdNumerico;
     next();
   } catch (error) {
     res.status(500).json({

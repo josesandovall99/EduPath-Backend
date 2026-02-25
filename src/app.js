@@ -13,9 +13,17 @@ app.set('strict routing', false);
 app.use(cors({ 
     origin: 'http://localhost:3000', 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], 
-    allowedHeaders: ['Content-Type', 'x-persona-id', 'x-docente-id', 'x-tipo-usuario'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-persona-id', 'x-docente-id', 'x-tipo-usuario'],
     credentials: true
 }));
+
+app.use((req, res, next) => {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.set('Pragma', 'no-cache');
+    res.set('Expires', '0');
+    res.set('Surrogate-Control', 'no-store');
+    next();
+});
 
 // Cambie esto: app.use(express.json());
 

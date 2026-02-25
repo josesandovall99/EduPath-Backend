@@ -1,16 +1,17 @@
-const { Persona, Docente, Area } = require("../models");
+const { Persona, Docente } = require("../models");
 
 /**
  * Middleware para autenticar y validar el tipo de usuario desde la BD
  * 
  * Extrae persona_id del header x-persona-id y consulta la BD para obtener:
  * - tipoUsuario (ADMINISTRADOR, DOCENTE, ESTUDIANTE)
- * - Si es DOCENTE: también obtiene area_id
+ * - Si es DOCENTE: obtiene sus áreas asignadas
  * 
  * Setea en req:
  * - req.personaId
  * - req.tipoUsuario
- * - req.docenteAreaId (solo si es DOCENTE)
+ * - req.docenteAreaId (área activa)
+ * - req.docenteAreaIds (todas las áreas permitidas)
  */
 const autenticacionUsuario = async (req, res, next) => {
   try {
@@ -37,20 +38,48 @@ const autenticacionUsuario = async (req, res, next) => {
     req.personaId = personaId;
     req.tipoUsuario = persona.tipoUsuario;
 
-    // Si es DOCENTE, obtener también el area_id
+    // Si es DOCENTE, obtener áreas asignadas
     if (persona.tipoUsuario === "DOCENTE") {
-      const docente = await Docente.findOne({
+      const docentes = await Docente.findAll({
         where: { persona_id: personaId }
       });
 
-      if (!docente) {
+      if (!docentes || docentes.length === 0) {
         return res.status(404).json({
           mensaje: "Registro de docente no encontrado para esta persona"
         });
       }
 
-      req.docenteAreaId = docente.area_id;
-      req.docenteId = docente.id;
+      const docenteIds = docentes
+        .map((docente) => Number(docente.id))
+        .filter((id) => Number.isFinite(id));
+
+      const docenteAreaIds = Array.from(
+        new Set(
+          docentes
+            .map((docente) => Number(docente.area_id))
+            .filter((id) => Number.isFinite(id))
+        )
+      );
+
+      const docenteIdHeader = Number(req.headers["x-docente-id"]);
+      const areaIdHeader = Number(req.headers["x-area-id"]);
+
+      const docenteSeleccionado = Number.isFinite(docenteIdHeader)
+        ? docentes.find((docente) => Number(docente.id) === docenteIdHeader)
+        : docentes[0];
+
+      req.docenteIds = docenteIds;
+      req.docenteAreaIds = docenteAreaIds;
+      req.docenteId = docenteSeleccionado ? Number(docenteSeleccionado.id) : docenteIds[0];
+
+      if (Number.isFinite(areaIdHeader) && docenteAreaIds.includes(areaIdHeader)) {
+        req.docenteAreaId = areaIdHeader;
+      } else if (docenteSeleccionado && Number.isFinite(Number(docenteSeleccionado.area_id))) {
+        req.docenteAreaId = Number(docenteSeleccionado.area_id);
+      } else {
+        req.docenteAreaId = docenteAreaIds[0];
+      }
     }
 
     // Si es ADMINISTRADOR, obtener el admin_id

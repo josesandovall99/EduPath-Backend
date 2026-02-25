@@ -1,5 +1,21 @@
 const { Tema, Area } = require('../models');
 
+const getAllowedAreaIds = (req) => {
+  const areaIds = Array.isArray(req.docenteAreaIds)
+    ? req.docenteAreaIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
+    : [];
+
+  if (areaIds.length > 0) {
+    return areaIds;
+  }
+
+  if (req.docenteAreaId && Number.isFinite(Number(req.docenteAreaId))) {
+    return [Number(req.docenteAreaId)];
+  }
+
+  return [];
+};
+
 // Crear un tema con validación de area_id
 exports.createTema = async (req, res) => {
   try {
@@ -30,8 +46,11 @@ exports.getTemas = async (req, res) => {
   try {
     const where = {};
     // Solo docentes están limitados a su área
-    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId) {
-      where.area_id = req.docenteAreaId;
+    if (req.tipoUsuario === "DOCENTE") {
+      const allowedAreaIds = getAllowedAreaIds(req);
+      if (allowedAreaIds.length > 0) {
+        where.area_id = allowedAreaIds;
+      }
     }
     // Admin y otros usuarios ven todos
 
@@ -47,9 +66,10 @@ exports.getTemaById = async (req, res) => {
   try {
     let tema = null;
     // Solo docentes están limitados a su área
-    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId) {
+    if (req.tipoUsuario === "DOCENTE") {
+      const allowedAreaIds = getAllowedAreaIds(req);
       tema = await Tema.findOne({
-        where: { id: req.params.id, area_id: req.docenteAreaId }
+        where: { id: req.params.id, area_id: allowedAreaIds }
       });
     } else {
       // Admin y otros usuarios ven cualquier tema
@@ -69,11 +89,25 @@ exports.updateTema = async (req, res) => {
     const tema = await Tema.findByPk(req.params.id);
     if (!tema) return res.status(404).json({ message: "Tema no encontrado" });
 
+    if (req.tipoUsuario === "DOCENTE") {
+      const allowedAreaIds = getAllowedAreaIds(req);
+      if (!allowedAreaIds.includes(Number(tema.area_id))) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
+    }
+
     // Si se envía un area_id, validar que exista
     if (req.body.area_id) {
       const areaExistente = await Area.findByPk(req.body.area_id);
       if (!areaExistente) {
         return res.status(400).json({ message: "El área especificada no existe" });
+      }
+
+      if (req.tipoUsuario === "DOCENTE") {
+        const allowedAreaIds = getAllowedAreaIds(req);
+        if (!allowedAreaIds.includes(Number(req.body.area_id))) {
+          return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+        }
       }
     }
 
@@ -90,6 +124,13 @@ exports.deleteTema = async (req, res) => {
     const tema = await Tema.findByPk(req.params.id);
     if (!tema) return res.status(404).json({ message: "Tema no encontrado" });
 
+    if (req.tipoUsuario === "DOCENTE") {
+      const allowedAreaIds = getAllowedAreaIds(req);
+      if (!allowedAreaIds.includes(Number(tema.area_id))) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
+    }
+
     await tema.destroy();
     res.json({ message: "Tema eliminado correctamente" });
   } catch (error) {
@@ -101,10 +142,14 @@ exports.deleteTema = async (req, res) => {
 exports.getTemasByArea = async (req, res) => {
   try {
     const { areaId } = req.params;
+    const areaIdNumerico = parseInt(areaId, 10);
 
     // Docente solo puede ver temas de su área
-    if (req.tipoUsuario === "DOCENTE" && req.docenteAreaId && parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
-      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+    if (req.tipoUsuario === "DOCENTE") {
+      const allowedAreaIds = getAllowedAreaIds(req);
+      if (!allowedAreaIds.includes(areaIdNumerico)) {
+        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      }
     }
 
     // Validar que el área exista
@@ -113,7 +158,7 @@ exports.getTemasByArea = async (req, res) => {
       return res.status(404).json({ message: "Área no encontrada" });
     }
 
-    const temas = await Tema.findAll({ where: { area_id: areaId, estado: true } });
+    const temas = await Tema.findAll({ where: { area_id: areaIdNumerico, estado: true } });
     res.json(temas);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener los temas del área", error });
