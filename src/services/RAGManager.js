@@ -8,8 +8,55 @@ const fs = require('fs').promises;
 const path = require('path');
 
 /**
- * Clase auxiliar para calcular embeddings simples con TF-IDF
- * No requiere dependencias externas problemáticas
+ * Cliente HTTP para Ollama (PC B)
+ * Maneja la comunicación directa por red local sin depender de librerías externas.
+ */
+class OllamaHTTPClient {
+    constructor({ baseUrl, model, temperature = 0.2, maxTokens = 2048 }) {
+        this.baseUrl = baseUrl.replace(/\/+$/g, '');
+        this.model = model;
+        this.temperature = temperature;
+        this.maxTokens = maxTokens;
+    }
+
+    async generate(prompt, options = {}) {
+        const payload = {
+            model: options.model || this.model,
+            prompt,
+            temperature: options.temperature ?? this.temperature,
+            max_tokens: options.maxTokens || this.maxTokens,
+            stream: false // Importante para recibir respuesta completa
+        };
+
+        // Probamos los dos endpoints más comunes de Ollama
+        const endpoints = ['/api/generate', '/v1/completions'];
+        let lastError = null;
+
+        for (const ep of endpoints) {
+            const url = `${this.baseUrl}${ep}`;
+            try {
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (res.ok) {
+                    const json = await res.json();
+                    console.log(` ℹ️ Ollama respondió vía ${ep}`);
+                    // Extraer texto dependiendo del formato del endpoint
+                    return json.response || json.choices?.[0]?.text || json.output || JSON.stringify(json);
+                }
+            } catch (err) {
+                lastError = err;
+            }
+        }
+        throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${lastError?.message}`);
+    }
+}
+
+/**
+ * Búsqueda de Vectores Local (PC A)
  */
 class SimpleVectorStore {
     constructor() {
@@ -21,360 +68,172 @@ class SimpleVectorStore {
         return text.toLowerCase()
             .replace(/[^\w\sáéíóúñü]/g, ' ')
             .split(/\s+/)
-            .filter(word => word.length > 2);
+            .filter(w => w.length > 2);
     }
 
     calculateTF(tokens) {
         const tf = {};
-        const totalTokens = tokens.length;
-        
-        tokens.forEach(token => {
-            tf[token] = (tf[token] || 0) + 1;
-        });
-        
-        Object.keys(tf).forEach(token => {
-            tf[token] = tf[token] / totalTokens;
-        });
-        
+        tokens.forEach(t => tf[t] = (tf[t] || 0) + 1);
+        Object.keys(tf).forEach(k => tf[k] = tf[k] / tokens.length);
         return tf;
     }
 
     calculateIDF() {
         const docCount = this.documents.length;
-        const documentFrequency = {};
-        
-        this.documents.forEach(doc => {
-            const uniqueTokens = new Set(doc.tokens);
-            uniqueTokens.forEach(token => {
-                documentFrequency[token] = (documentFrequency[token] || 0) + 1;
+        const df = {};
+        this.documents.forEach(d => new Set(d.tokens).forEach(t => df[t] = (df[t] || 0) + 1));
+        Object.keys(df).forEach(t => {
+            this.idfScores[t] = Math.log(docCount / df[t]);
+        });
+    }
+
+    async addDocuments(docs) {
+        docs.forEach(doc => {
+            const tokens = this.tokenize(doc.pageContent);
+            const tf = this.calculateTF(tokens);
+            this.documents.push({ 
+                pageContent: doc.pageContent, 
+                metadata: doc.metadata, 
+                tokens, 
+                tf, 
+                tfidf: {} 
             });
         });
-        
-        this.idfScores = {};
-        Object.keys(documentFrequency).forEach(token => {
-            this.idfScores[token] = Math.log(docCount / documentFrequency[token]);
+        this.calculateIDF();
+        this.documents.forEach(d => {
+            d.tokens.forEach(t => d.tfidf[t] = d.tf[t] * (this.idfScores[t] || 0));
         });
     }
 
     cosineSimilarity(query, doc) {
-        const queryTokens = this.tokenize(query);
-        const queryTF = this.calculateTF(queryTokens);
-        
-        let dotProduct = 0;
-        let queryMagnitude = 0;
-        let docMagnitude = 0;
-        
-        queryTokens.forEach(token => {
-            const queryTFIDF = queryTF[token] * (this.idfScores[token] || 1);
-            const docTFIDF = doc.tfidf[token] || 0;
-            
-            dotProduct += queryTFIDF * docTFIDF;
-            queryMagnitude += queryTFIDF * queryTFIDF;
+        const qtokens = this.tokenize(query);
+        const qtf = this.calculateTF(qtokens);
+        let dot = 0, qmag = 0, dmag = 0;
+
+        qtokens.forEach(t => {
+            const qv = qtf[t] * (this.idfScores[t] || 1);
+            const dv = doc.tfidf[t] || 0;
+            dot += qv * dv;
+            qmag += qv * qv;
         });
-        
-        Object.values(doc.tfidf).forEach(value => {
-            docMagnitude += value * value;
-        });
-        
-        queryMagnitude = Math.sqrt(queryMagnitude);
-        docMagnitude = Math.sqrt(docMagnitude);
-        
-        if (queryMagnitude === 0 || docMagnitude === 0) return 0;
-        
-        return dotProduct / (queryMagnitude * docMagnitude);
+        Object.values(doc.tfidf).forEach(v => dmag += v * v);
+        qmag = Math.sqrt(qmag); dmag = Math.sqrt(dmag);
+        return (qmag === 0 || dmag === 0) ? 0 : dot / (qmag * dmag);
     }
 
-    async addDocuments(docs) {
-        for (const doc of docs) {
-            const tokens = this.tokenize(doc.pageContent);
-            const tf = this.calculateTF(tokens);
-            
-            this.documents.push({
-                pageContent: doc.pageContent,
-                metadata: doc.metadata,
-                tokens: tokens,
-                tf: tf,
-                tfidf: {},
-            });
-        }
-        
-        this.calculateIDF();
-        
-        this.documents.forEach(doc => {
-            doc.tokens.forEach(token => {
-                doc.tfidf[token] = doc.tf[token] * (this.idfScores[token] || 0);
-            });
-        });
-    }
-
-    async similaritySearch(query, k = 4) {
-        const similarities = this.documents.map((doc) => ({
-            doc,
-            score: this.cosineSimilarity(query, doc),
-        }));
-        
-        return similarities
-            .sort((a, b) => b.score - a.score)
-            .slice(0, k)
-            .map(item => item.doc);
+    async similaritySearch(query, k = 3) {
+        const sims = this.documents.map(doc => ({ doc, score: this.cosineSimilarity(query, doc) }));
+        return sims.sort((a, b) => b.score - a.score).slice(0, k).map(s => s.doc);
     }
 }
 
 /**
- * RAGManager - Gestor de Retrieval-Augmented Generation
- * Usa Groq con Llama 3 para respuestas inteligentes basadas en documentos PDF
+ * Clase Principal RAGManager
  */
 class RAGManager {
     constructor(config = {}) {
-        // Validar API Key de Groq
-        if (!config.groqApiKey) {
-            throw new Error('⚠️ GROQ_API_KEY es requerida. Obtén una en https://console.groq.com/');
-        }
-
-        // Configuración del LLM Groq
-        this.llm = new ChatGroq({
-            apiKey: config.groqApiKey,
-            model: config.modelName || 'llama-3.3-70b-versatile',
-            temperature: config.temperature || 0.7,
-            maxTokens: config.maxTokens || 2048,
-            timeout: 30000,
-            maxRetries: 3,
-        });
-
-        // Configuración del Text Splitter
+        this.config = config;
+        // Priorizar Ollama si existen las variables en el .env
+        this.provider = config.provider || (config.ollamaBaseUrl ? 'ollama' : 'groq');
+        
+        this.vectorStore = new SimpleVectorStore();
         this.textSplitter = new RecursiveCharacterTextSplitter({
             chunkSize: config.chunkSize || 1000,
-            chunkOverlap: config.chunkOverlap || 200,
-            separators: ['\n\n', '\n', '. ', ' ', ''],
+            chunkOverlap: config.chunkOverlap || 200
         });
 
-        // Vector Store Simple (TF-IDF)
-        this.vectorStore = null;
+        if (this.provider === 'ollama') {
+            this.llm = new OllamaHTTPClient({
+                baseUrl: config.ollamaBaseUrl,
+                model: config.modelName || 'llama3.2',
+                temperature: config.temperature || 0.2
+            });
+        } else {
+            this.llm = new ChatGroq({
+                apiKey: config.groqApiKey,
+                model: config.modelName || 'llama-3.3-70b-versatile'
+            });
+        }
 
-        // Configuración del prompt
         this.promptTemplate = PromptTemplate.fromTemplate(`
-Eres un asistente educativo experto y amigable del sistema EduPath.
+            Eres un asistente educativo experto y amigable del sistema EduPath.
+            CONTEXTO RELEVANTE extraído del PDF:
+            {context}
 
-CONTEXTO RELEVANTE:
-{context}
+            PREGUNTA DEL ESTUDIANTE: {question}
 
-PREGUNTA DEL ESTUDIANTE: {question}
-
-INSTRUCCIONES:
-- Responde SOLO basándote en el contexto proporcionado
-- Si la información no está en el contexto, di: "No tengo esa información en los documentos cargados"
-- Sé claro, conciso y educativo
-- Usa ejemplos cuando sea apropiado
-- Estructura tu respuesta con bullet points si es necesario
-
-RESPUESTA:`);
-
-        console.log('✅ RAGManager inicializado correctamente');
-        console.log(`   Modelo LLM: Groq ${config.modelName || 'llama-3.3-70b-versatile'}`);
-        console.log(`   Búsqueda: TF-IDF + Cosine Similarity`);
-        console.log(`   Chunk Size: ${config.chunkSize || 1000} caracteres`);
-        console.log(`   Chunk Overlap: ${config.chunkOverlap || 200} caracteres`);
+            INSTRUCCIONES:
+            - Responde SOLO basándote en el contexto proporcionado.
+            - Si la información no está en el contexto, di: "No tengo esa información en los documentos cargados".
+            - Sé claro y educativo.
+            RESPUESTA:`);
+        
+        console.log(`✅ RAGManager configurado correctamente`);
+        console.log(` 🚀 Destino LLM: ${this.provider === 'ollama' ? config.ollamaBaseUrl : 'Groq Cloud'}`);
     }
 
-    /**
-     * Carga un PDF desde un buffer y lo indexa en el vector store
-     */
+    // Método para cargar PDFs desde memoria (Subidas desde Web/React)
     async loadPDFFromBuffer(pdfBuffer, filename = 'documento.pdf') {
+        const tempPath = path.join(__dirname, `temp_${Date.now()}.pdf`);
+        await fs.writeFile(tempPath, pdfBuffer);
         try {
-            console.log(`\n📄 Procesando PDF: ${filename}...`);
-
-            // Guardar buffer temporalmente
-            const tempPath = path.join(__dirname, `temp_${Date.now()}.pdf`);
-            await fs.writeFile(tempPath, pdfBuffer);
-
-            try {
-                // Cargar PDF
-                const loader = new PDFLoader(tempPath);
-                const docs = await loader.load();
-                console.log(`   ✓ Páginas cargadas: ${docs.length}`);
-
-                // Dividir en chunks
-                const splitDocs = await this.textSplitter.splitDocuments(docs);
-                console.log(`   ✓ Chunks creados: ${splitDocs.length}`);
-
-                // Agregar metadata
-                splitDocs.forEach((doc, idx) => {
-                    doc.metadata = {
-                        ...doc.metadata,
-                        source: filename,
-                        chunkIndex: idx,
-                        totalChunks: splitDocs.length,
-                    };
-                });
-
-                // Crear o actualizar Vector Store
-                if (!this.vectorStore) {
-                    console.log('   ⏳ Creando vector store con TF-IDF...');
-                    this.vectorStore = new SimpleVectorStore();
-                    await this.vectorStore.addDocuments(splitDocs);
-                    console.log('   ✓ Vector store creado');
-                } else {
-                    console.log('   ⏳ Agregando documentos al vector store existente...');
-                    await this.vectorStore.addDocuments(splitDocs);
-                    console.log('   ✓ Documentos agregados');
-                }
-
-                return {
-                    success: true,
-                    message: 'PDF procesado exitosamente',
-                    filename,
-                    pagesLoaded: docs.length,
-                    chunksCreated: splitDocs.length,
-                };
-            } finally {
-                await fs.unlink(tempPath).catch(() => {});
-            }
+            const loader = new PDFLoader(tempPath);
+            const docs = await loader.load();
+            const splitDocs = await this.textSplitter.splitDocuments(docs);
+            await this.vectorStore.addDocuments(splitDocs);
+            return { success: true, message: 'PDF cargado', chunks: splitDocs.length };
         } catch (error) {
-            console.error('❌ Error cargando PDF:', error.message);
-            throw new Error(`Error al cargar PDF: ${error.message}`);
+            console.error("❌ Error procesando buffer:", error.message);
+            throw error;
+        } finally {
+            await fs.unlink(tempPath).catch(() => {});
         }
     }
 
-    /**
-     * Carga un PDF desde una ruta de archivo
-     */
+    // Método para cargar PDFs desde una ruta local (Archivos existentes en PC A)
     async loadPDFFromPath(pdfPath) {
         try {
             const buffer = await fs.readFile(pdfPath);
             const filename = path.basename(pdfPath);
             return await this.loadPDFFromBuffer(buffer, filename);
         } catch (error) {
-            throw new Error(`Error leyendo archivo: ${error.message}`);
+            console.error(`❌ Error cargando PDF desde ruta: ${pdfPath}`, error.message);
+            throw error;
         }
     }
 
-    /**
-     * Responde una pregunta usando RAG
-     */
-    async chat(question, topK = 3) {
+    async chat(question) {
         try {
-            if (!this.vectorStore) {
-                throw new Error('⚠️ No hay documentos cargados. Usa loadPDFFromBuffer() primero.');
+            if (this.vectorStore.documents.length === 0) {
+                return { success: false, answer: "No hay documentos cargados para responder." };
             }
-
-            if (!question || question.trim() === '') {
-                throw new Error('⚠️ La pregunta no puede estar vacía.');
-            }
-
-            console.log(`\n💬 Pregunta recibida: "${question}"`);
-            console.log(`   🔍 Buscando top ${topK} documentos relevantes...`);
-
-            // Búsqueda de similitud
-            const relevantDocs = await this.vectorStore.similaritySearch(question, topK);
-            console.log(`   ✓ Documentos encontrados: ${relevantDocs.length}`);
-
-            // Construir contexto
-            const context = relevantDocs
-                .map((doc, idx) => {
-                    const pageInfo = doc.metadata.loc?.pageNumber 
-                        ? ` (Página ${doc.metadata.loc.pageNumber})` 
-                        : '';
-                    return `[Fragmento ${idx + 1}]${pageInfo}:\n${doc.pageContent}`;
-                })
-                .join('\n\n---\n\n');
-
-            // Crear cadena RAG
-            const ragChain = RunnableSequence.from([
-                {
-                    context: () => context,
-                    question: (input) => input.question,
-                },
-                this.promptTemplate,
-                this.llm,
-                new StringOutputParser(),
-            ]);
-
-            console.log('   ⏳ Generando respuesta con Groq...');
-
-            // Ejecutar con manejo de errores robusto
-            let response;
-            let retries = 0;
-            const maxRetries = 3;
-
-            while (retries < maxRetries) {
-                try {
-                    response = await ragChain.invoke({ question });
-                    break;
-                } catch (error) {
-                    retries++;
-                    
-                    if (error.message.includes('rate_limit_exceeded') || 
-                        error.message.includes('429')) {
-                        const waitTime = Math.pow(2, retries) * 1000;
-                        console.warn(`   ⚠️ Rate limit alcanzado. Reintentando en ${waitTime/1000}s... (${retries}/${maxRetries})`);
-                        
-                        if (retries >= maxRetries) {
-                            throw new Error(
-                                '❌ Rate limit de Groq alcanzado. Por favor espera unos minutos e intenta nuevamente.\n' +
-                                '💡 Consejo: Groq tiene límites gratuitos. Considera espaciar tus peticiones.'
-                            );
-                        }
-                        
-                        await new Promise(resolve => setTimeout(resolve, waitTime));
-                    } else if (error.message.includes('timeout')) {
-                        throw new Error('❌ Timeout: La generación de respuesta tomó demasiado tiempo.');
-                    } else {
-                        throw error;
-                    }
-                }
-            }
-
-            console.log('   ✅ Respuesta generada exitosamente\n');
-
-            return {
-                success: true,
-                question,
-                answer: response,
-                sourceDocuments: relevantDocs.map((doc, idx) => ({
-                    chunkIndex: idx + 1,
-                    content: doc.pageContent.substring(0, 200) + '...',
-                    page: doc.metadata.loc?.pageNumber || 'N/A',
-                    source: doc.metadata.source || 'Desconocido',
-                })),
-                metadata: {
-                    documentsUsed: relevantDocs.length,
-                    model: 'llama-3.3-70b-versatile (Groq)',
-                    searchMethod: 'TF-IDF',
-                    timestamp: new Date().toISOString(),
-                },
-            };
-        } catch (error) {
-            console.error('❌ Error en chat:', error.message);
             
-            return {
-                success: false,
-                error: error.message,
-                question,
-                answer: null,
-            };
+            // 1. Buscar fragmentos relevantes en PC A
+            const relevantDocs = await this.vectorStore.similaritySearch(question);
+            const context = relevantDocs.map(d => d.pageContent).join('\n\n---\n\n');
+            
+            // 2. Preparar el prompt
+            const finalPrompt = this.promptTemplate.template
+                .replace('{context}', context)
+                .replace('{question}', question);
+
+            // 3. Enviar a PC B
+            let answer;
+            if (this.provider === 'ollama') {
+                answer = await this.llm.generate(finalPrompt);
+            } else {
+                const chain = RunnableSequence.from([this.llm, new StringOutputParser()]);
+                answer = await chain.invoke(finalPrompt);
+            }
+
+            return { success: true, answer };
+        } catch (error) {
+            console.error("❌ Error en chat RAG:", error.message);
+            return { success: false, error: error.message };
         }
     }
 
-    /**
-     * Limpia el vector store
-     */
-    clear() {
-        this.vectorStore = null;
-        console.log('🗑️ Vector store limpiado');
-    }
-
-    /**
-     * Obtiene estadísticas del vector store
-     */
-    getStats() {
-        return {
-            isLoaded: !!this.vectorStore,
-            documentsCount: this.vectorStore ? this.vectorStore.documents.length : 0,
-            message: this.vectorStore 
-                ? `✅ ${this.vectorStore.documents.length} documentos cargados y listos` 
-                : '⚠️ No hay documentos cargados',
-        };
-    }
+    clear() { this.vectorStore = new SimpleVectorStore(); }
 }
 
 module.exports = RAGManager;

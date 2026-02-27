@@ -10,18 +10,34 @@ let ragManager = null;
  */
 const initializeRAG = async () => {
     try {
-        if (!process.env.GROQ_API_KEY) {
-            console.warn('⚠️ GROQ_API_KEY no encontrada. El chatbot no estará disponible.');
+        const useOllama = !!process.env.OLLAMA_BASE_URL;
+        const useGroq = !!process.env.GROQ_API_KEY;
+
+        if (!useOllama && !useGroq) {
+            console.warn('⚠️ Ni OLLAMA_BASE_URL ni GROQ_API_KEY encontradas. El chatbot no estará disponible.');
             return;
         }
 
-        ragManager = new RAGManager({
-            groqApiKey: process.env.GROQ_API_KEY,
-            modelName: 'llama-3.3-70b-versatile',
-            temperature: 0.7,
-            chunkSize: 1000,
-            chunkOverlap: 200,
-        });
+        // Debug simple: mostrar qué variables de entorno se detectaron (no mostrar claves)
+        console.log(`🔎 Env detectados: OLLAMA_BASE_URL=${useOllama ? process.env.OLLAMA_BASE_URL : 'no'}, GROQ_API_KEY=${useGroq ? 'si' : 'no'}`);
+
+        if (useOllama) {
+            ragManager = new RAGManager({
+                ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
+                modelName: process.env.OLLAMA_MODEL || 'llama3.2',
+                temperature: parseFloat(process.env.OLLAMA_TEMPERATURE || '0.2'),
+                chunkSize: 1000,
+                chunkOverlap: 200,
+            });
+        } else {
+            ragManager = new RAGManager({
+                groqApiKey: process.env.GROQ_API_KEY,
+                modelName: 'llama-3.3-70b-versatile',
+                temperature: 0.7,
+                chunkSize: 1000,
+                chunkOverlap: 200,
+            });
+        }
 
         // Intentar cargar PDFs existentes en uploads/chatbot-docs/
         const chatbotDocsPath = path.join(__dirname, '../../uploads/chatbot-docs');
@@ -65,10 +81,7 @@ const initializeRAG = async () => {
 const uploadPDF = async (req, res) => {
     try {
         if (!ragManager) {
-            return res.status(503).json({
-                success: false,
-                error: 'Chatbot no disponible. Verifica GROQ_API_KEY en .env',
-            });
+            return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración de OLLAMA_BASE_URL o GROQ_API_KEY en .env' });
         }
 
         if (!req.file) {
@@ -110,10 +123,7 @@ const uploadPDF = async (req, res) => {
 const chatWithBot = async (req, res) => {
     try {
         if (!ragManager) {
-            return res.status(503).json({
-                success: false,
-                error: 'Chatbot no disponible. Verifica GROQ_API_KEY en .env',
-            });
+            return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración de OLLAMA_BASE_URL o GROQ_API_KEY en .env' });
         }
 
         const { question, topK = 3 } = req.body;
