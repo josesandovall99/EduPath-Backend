@@ -858,8 +858,13 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
           const totalSubtema = totalContentBySubtema[subtemaId] || 0;
           const completedSubtema = progressContentBySubtema[studentId]?.[subtemaId] || 0;
           const subProgress = totalSubtema > 0 ? Math.round((completedSubtema / totalSubtema) * 100) : 0;
-          return { name: subtema.nombre || `Subtema ${subtemaId}`, progress: subProgress };
+          return {
+            name: subtema.nombre || `Subtema ${subtemaId}`,
+            progress: subProgress,
+            hasContent: totalSubtema > 0
+          };
         });
+
         return { name: tema.nombre || `Tema ${temaId}`, progress: temaProgress, subtopics };
       });
 
