@@ -464,12 +464,23 @@ const buildReportHtml = ({ type, data }) => {
   </html>`;
 };
 
-const buildFailuresReportData = async ({ estudianteId }) => {
+const buildFailuresReportData = async ({ estudianteId, areaIds } = {}) => {
   const respuestaWhere = estudianteId ? { estudiante_id: estudianteId } : {};
   const evaluacionWhere = estudianteId ? { estudiante_id: estudianteId } : {};
+  const normalizedAreaIds = Array.isArray(areaIds)
+    ? areaIds
+        .map((id) => Number.parseInt(id, 10))
+        .filter((id) => Number.isFinite(id))
+    : [];
+  const areaFilterSet = normalizedAreaIds.length > 0
+    ? new Set(normalizedAreaIds.map((id) => String(id)))
+    : null;
 
-  const [areas, evaluaciones, respuestasEjercicio, respuestasMiniproyecto] = await Promise.all([
+  const [areas, temas, contenidos, ejercicios, evaluaciones, respuestasEjercicio, respuestasMiniproyecto] = await Promise.all([
     Area.findAll({ attributes: ['id', 'nombre'] }),
+    Tema.findAll({ attributes: ['id', 'area_id'] }),
+    Contenido.findAll({ attributes: ['id', 'tema_id'] }),
+    Ejercicio.findAll({ attributes: ['id', 'contenido_id'] }),
     Evaluacion.findAll({
       where: evaluacionWhere,
       attributes: ['estudiante_id', 'ejercicio_id', 'miniproyecto_id', 'estado']
@@ -503,6 +514,18 @@ const buildFailuresReportData = async ({ estudianteId }) => {
   ]);
 
   const areaMap = new Map(areas.map((area) => [String(area.id), area.nombre]));
+  const temaById = new Map(temas.map((tema) => [String(tema.id), tema]));
+  const contenidoById = new Map(contenidos.map((contenido) => [String(contenido.id), contenido]));
+  const ejercicioAreaIdById = new Map();
+
+  ejercicios.forEach((ejercicio) => {
+    const contenido = contenidoById.get(String(ejercicio.contenido_id));
+    if (!contenido) return;
+    const tema = temaById.get(String(contenido.tema_id));
+    if (!tema || !Number.isFinite(Number(tema.area_id))) return;
+    ejercicioAreaIdById.set(String(ejercicio.id), Number(tema.area_id));
+  });
+
   const approvedExercises = new Set();
   const approvedMinis = new Set();
 
@@ -516,13 +539,16 @@ const buildFailuresReportData = async ({ estudianteId }) => {
     }
   });
 
-  const items = [];
+  let items = [];
 
   respuestasEjercicio.forEach((respuesta) => {
     const ejercicio = respuesta.ejercicio;
     const contenido = ejercicio?.Contenido || ejercicio?.contenido;
     const tema = contenido?.Tema || contenido?.tema;
-    const areaId = tema?.area_id ?? null;
+    const mappedAreaId = ejercicioAreaIdById.get(String(respuesta.ejercicio_id));
+    const areaId = Number.isFinite(mappedAreaId)
+      ? mappedAreaId
+      : (tema?.area_id ?? null);
     const areaName = areaId ? (areaMap.get(String(areaId)) || `Area ${areaId}`) : 'Sin area';
     const titulo = ejercicio?.actividad?.titulo || ejercicio?.Actividad?.titulo || `Ejercicio ${ejercicio?.id ?? respuesta.ejercicio_id}`;
     const key = `${respuesta.estudiante_id}:${respuesta.ejercicio_id}`;
@@ -568,6 +594,10 @@ const buildFailuresReportData = async ({ estudianteId }) => {
     });
   });
 
+  if (areaFilterSet) {
+    items = items.filter((item) => item.area_id !== null && areaFilterSet.has(String(item.area_id)));
+  }
+
   const totals = items.reduce((acc, item) => {
     acc.intentos += item.intentos;
     acc.fallos += item.fallos;
@@ -605,7 +635,22 @@ const buildFailuresReportData = async ({ estudianteId }) => {
     byAreaMap.set(areaKey, current);
   });
 
-  const byArea = Array.from(byAreaMap.values()).sort((a, b) => b.fallos - a.fallos);
+  const byArea = areas
+    .map((area) => {
+      const key = String(area.id);
+      const current = byAreaMap.get(key);
+      if (current) return current;
+      return {
+        area_id: area.id,
+        area_name: area.nombre,
+        intentos: 0,
+        fallos: 0,
+        aciertos: 0,
+        ejercicios: 0,
+        miniproyectos: 0
+      };
+    })
+    .sort((a, b) => b.fallos - a.fallos);
 
   const estudianteIds = Array.from(new Set(items.map((item) => item.estudiante_id)));
   const estudiantes = estudianteIds.length
@@ -681,7 +726,7 @@ const applyStudentFilters = (students, { semester, dateFrom, dateTo } = {}) => {
   return filtered;
 };
 
-const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
+const getResumenGeneralData = async ({ semester, dateFrom, dateTo, areaIds } = {}) => {
   const [areas, temas, subtemas, contenidos, secuencias, estudiantes, ejercicios, miniproyectos] = await Promise.all([
     Area.findAll({ attributes: ['id', 'nombre'] }),
     Tema.findAll({ attributes: ['id', 'nombre', 'area_id'] }),
@@ -696,18 +741,46 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
     Miniproyecto.findAll({ attributes: ['id', 'area_id'] })
   ]);
 
-  const temaById = new Map(temas.map(tema => [String(tema.id), tema]));
-  const subtemaById = new Map(subtemas.map(subtema => [String(subtema.id), subtema]));
+  const normalizedAreaIds = Array.isArray(areaIds)
+    ? areaIds
+        .map((id) => Number.parseInt(id, 10))
+        .filter((id) => Number.isFinite(id))
+    : [];
+  const areaFilterSet = normalizedAreaIds.length > 0
+    ? new Set(normalizedAreaIds.map((id) => String(id)))
+    : null;
+
+  const scopedAreas = areaFilterSet
+    ? areas.filter((area) => areaFilterSet.has(String(area.id)))
+    : areas;
+  const scopedAreaIdSet = new Set(scopedAreas.map((area) => String(area.id)));
+
+  const scopedTemas = temas.filter((tema) => scopedAreaIdSet.has(String(tema.area_id)));
+  const scopedTemaIdSet = new Set(scopedTemas.map((tema) => String(tema.id)));
+
+  const scopedSubtemas = subtemas.filter((subtema) => scopedTemaIdSet.has(String(subtema.tema_id)));
+  const scopedSubtemaIdSet = new Set(scopedSubtemas.map((subtema) => String(subtema.id)));
+
+  const scopedContenidos = contenidos.filter(
+    (contenido) => scopedTemaIdSet.has(String(contenido.tema_id)) || scopedSubtemaIdSet.has(String(contenido.subtema_id))
+  );
+  const scopedContenidoIdSet = new Set(scopedContenidos.map((contenido) => String(contenido.id)));
+
+  const scopedEjercicios = ejercicios.filter((ejercicio) => scopedContenidoIdSet.has(String(ejercicio.contenido_id)));
+  const scopedMiniproyectos = miniproyectos.filter((mini) => scopedAreaIdSet.has(String(mini.area_id)));
+
+  const temaById = new Map(scopedTemas.map(tema => [String(tema.id), tema]));
+  const subtemaById = new Map(scopedSubtemas.map(subtema => [String(subtema.id), subtema]));
 
   const temasByArea = {};
-  temas.forEach((tema) => {
+  scopedTemas.forEach((tema) => {
     const areaId = String(tema.area_id);
     temasByArea[areaId] = temasByArea[areaId] || [];
     temasByArea[areaId].push(tema);
   });
 
   const subtemasByTema = {};
-  subtemas.forEach((subtema) => {
+  scopedSubtemas.forEach((subtema) => {
     const temaId = String(subtema.tema_id);
     subtemasByTema[temaId] = subtemasByTema[temaId] || [];
     subtemasByTema[temaId].push(subtema);
@@ -726,7 +799,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
   const totalContentByTema = {};
   const totalContentBySubtema = {};
 
-  contenidos.forEach((contenido) => {
+  scopedContenidos.forEach((contenido) => {
     const contentId = String(contenido.id);
     if (activeContentIds.size && !activeContentIds.has(contentId)) return;
 
@@ -774,9 +847,9 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
 
   const exerciseToArea = new Map();
   const totalExercisesByArea = {};
-  const contenidoById = new Map(contenidos.map(c => [String(c.id), c]));
+  const contenidoById = new Map(scopedContenidos.map(c => [String(c.id), c]));
   
-  ejercicios.forEach((ejercicio) => {
+  scopedEjercicios.forEach((ejercicio) => {
     const contenido = contenidoById.get(String(ejercicio.contenido_id));
     if (!contenido) return;
     const subtema = subtemaById.get(String(contenido.subtema_id));
@@ -802,7 +875,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
 
   const totalMinisByArea = {};
   const miniproyectoToArea = new Map();
-  miniproyectos.forEach((mini) => {
+  scopedMiniproyectos.forEach((mini) => {
     const areaId = String(mini.area_id);
     totalMinisByArea[areaId] = (totalMinisByArea[areaId] || 0) + 1;
     miniproyectoToArea.set(String(mini.id), areaId);
@@ -822,7 +895,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
 
   const students = estudiantes.map((student) => {
     const studentId = String(student.id);
-    const subjects = areas.map((area) => {
+    const subjects = scopedAreas.map((area) => {
       const areaId = String(area.id);
       const totalContents = totalContentByArea[areaId] || 0;
       const completedContents = progressContentByArea[studentId]?.[areaId] || 0;
@@ -893,8 +966,26 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo } = {}) => {
 
   return {
     students: filteredStudents,
-    areas: areas.map(area => ({ id: area.id, nombre: area.nombre }))
+    areas: scopedAreas.map(area => ({ id: area.id, nombre: area.nombre }))
   };
+};
+
+const resolveDocenteAreaIdFromRequest = (req) => {
+  const candidates = [
+    req.docenteAreaId,
+    req.headers?.['x-area-id'],
+    req.query?.area_id,
+    req.body?.area_id
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = Number.parseInt(candidate, 10);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
 };
 
 // Resumen general: estudiantes con progreso por área/tema/subtema en un solo llamado
@@ -909,6 +1000,31 @@ exports.obtenerResumenGeneralEstudiantes = async (req, res) => {
   } catch (error) {
     console.error('❌ Error en obtenerResumenGeneralEstudiantes:', error);
     res.status(500).json({ message: 'Error al obtener resumen general de estudiantes', error: error.message || error });
+  }
+};
+
+exports.obtenerResumenGeneralDocente = async (req, res) => {
+  try {
+    const areaId = resolveDocenteAreaIdFromRequest(req);
+
+    if (!areaId) {
+      return res.status(403).json({ message: 'No se pudo determinar el área asignada al docente' });
+    }
+
+    const data = await getResumenGeneralData({
+      semester: req.query.semester,
+      dateFrom: req.query.dateFrom,
+      dateTo: req.query.dateTo,
+      areaIds: [areaId]
+    });
+
+    res.json({
+      ...data,
+      area_id: areaId
+    });
+  } catch (error) {
+    console.error('❌ Error en obtenerResumenGeneralDocente:', error);
+    res.status(500).json({ message: 'Error al obtener resumen de progreso para docente', error: error.message || error });
   }
 };
 
@@ -1494,6 +1610,35 @@ exports.obtenerReporteFallos = async (req, res) => {
   } catch (error) {
     console.error('❌ Error en obtenerReporteFallos:', error);
     res.status(500).json({ message: 'Error al generar reporte de fallos', error: error.message || error });
+  }
+};
+
+exports.obtenerReporteFallosDocente = async (req, res) => {
+  try {
+    const areaId = resolveDocenteAreaIdFromRequest(req);
+
+    if (!areaId) {
+      return res.status(403).json({ message: 'No se pudo determinar el área asignada al docente' });
+    }
+
+    const rawEstudianteId = req.query.estudiante_id;
+    const estudianteId = rawEstudianteId && rawEstudianteId !== 'all'
+      ? parseInt(rawEstudianteId, 10)
+      : null;
+
+    if (rawEstudianteId && rawEstudianteId !== 'all' && isNaN(estudianteId)) {
+      return res.status(400).json({ message: 'estudiante_id debe ser numerico o "all"' });
+    }
+
+    const data = await buildFailuresReportData({ estudianteId, areaIds: [areaId] });
+    res.json({
+      estudiante_id: estudianteId || 'all',
+      area_id: areaId,
+      ...data
+    });
+  } catch (error) {
+    console.error('❌ Error en obtenerReporteFallosDocente:', error);
+    res.status(500).json({ message: 'Error al generar reporte de fallos para docente', error: error.message || error });
   }
 };
 
