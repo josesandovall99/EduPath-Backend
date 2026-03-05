@@ -11,16 +11,18 @@ const {
   resetPassword,
   cambiarContraseñaPrimerIngreso
 } = require("../controllers/auth.controller");
+const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
+const requiereAdmin = require('../middlewares/requiereAdmin');
 
 const router = express.Router();
 
-router.post("/", crearPersona);
+router.post("/", autenticacionUsuario, requiereAdmin, crearPersona);
 router.post("/forgot-password", solicitarResetPassword);
 router.post("/reset-password", resetPassword);
-router.post("/cambiar-password-inicial", cambiarContraseñaPrimerIngreso);
-router.get("/", obtenerPersonas);
-router.get("/:id", obtenerPersonaPorId);
-router.put("/:id", actualizarPersona);
-router.delete("/:id", eliminarPersona);
+router.post("/cambiar-password-inicial", autenticacionUsuario, cambiarContraseñaPrimerIngreso);
+router.get("/", autenticacionUsuario, requiereAdmin, obtenerPersonas);
+router.get("/:id", autenticacionUsuario, requiereAdmin, obtenerPersonaPorId);
+router.put("/:id", autenticacionUsuario, requiereAdmin, actualizarPersona);
+router.delete("/:id", autenticacionUsuario, requiereAdmin, eliminarPersona);
 
 module.exports = router;

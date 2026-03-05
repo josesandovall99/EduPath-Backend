@@ -1,6 +1,5 @@
 const axios = require('axios');
 const acorn = require('acorn');
-const { parse: parseJava } = require('java-parser');
 const db = require('../models');
 const { Evaluacion, Estudiante, Ejercicio, Miniproyecto, RespuestaEstudianteEjercicio } = db;
 
@@ -204,6 +203,23 @@ const JAVA_KEYWORD_TO_CST = {
   'method': ['methodDeclaration']
 };
 
+const JAVA_KEYWORD_TO_REGEX = {
+  while: /\bwhile\s*\(/i,
+  'do while': /\bdo\b[\s\S]*\bwhile\s*\(/i,
+  for: /\bfor\s*\(/i,
+  'for each': /\bfor\s*\([^;)]*:[^)]*\)/i,
+  if: /\bif\s*\(/i,
+  switch: /\bswitch\s*\(/i,
+  try: /\btry\b/i,
+  catch: /\bcatch\s*\(/i,
+  throw: /\bthrow\b/i,
+  return: /\breturn\b/i,
+  break: /\bbreak\b/i,
+  continue: /\bcontinue\b/i,
+  class: /\bclass\s+[A-Za-z_][A-Za-z0-9_]*/i,
+  method: /(public|private|protected)?\s*(static\s+)?[A-Za-z_][A-Za-z0-9_<>,\[\]]*\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/i,
+};
+
 const recolectarTiposAST = (node, set) => {
   if (!node || typeof node !== 'object') return;
   if (typeof node.type === 'string') set.add(node.type);
@@ -249,29 +265,31 @@ const validarSintaxisASTJS = (codigo, reglas) => {
   return { ok: errores.length === 0, errores };
 };
 
-const recolectarNombresCST = (node, set) => {
-  if (!node || typeof node !== 'object') return;
-  if (typeof node.name === 'string') set.add(node.name);
-  if (node.children && typeof node.children === 'object') {
-    Object.values(node.children).forEach((arr) => {
-      if (Array.isArray(arr)) {
-        arr.forEach((child) => recolectarNombresCST(child, set));
-      }
-    });
+const tieneSimbolosBalanceados = (codigo) => {
+  const pares = [
+    ['(', ')'],
+    ['{', '}'],
+    ['[', ']'],
+  ];
+
+  for (const [open, close] of pares) {
+    let balance = 0;
+    for (const char of codigo) {
+      if (char === open) balance += 1;
+      if (char === close) balance -= 1;
+      if (balance < 0) return false;
+    }
+    if (balance !== 0) return false;
   }
+
+  return true;
 };
 
 const validarSintaxisASTJava = (codigo, reglas) => {
   const errores = [];
-  let cst;
-  try {
-    cst = parseJava(codigo);
-  } catch (e) {
-    return { ok: false, errores: [`Error de sintaxis Java: ${e.message}`] };
+  if (!tieneSimbolosBalanceados(codigo || '')) {
+    return { ok: false, errores: ['Error de sintaxis Java: simbolos desbalanceados'] };
   }
-
-  const nombres = new Set();
-  recolectarNombresCST(cst, nombres);
 
   const contiene = normalizarLista(reglas.contiene || reglas.required || reglas.requerido || reglas.mustInclude || reglas.incluir);
   const noContiene = normalizarLista(reglas.noContiene || reglas.forbidden || reglas.mustNotInclude || reglas.prohibido);
@@ -279,9 +297,9 @@ const validarSintaxisASTJava = (codigo, reglas) => {
   const verificar = (item, mustInclude) => {
     const key = (item || '').toString().toLowerCase();
     if (!key) return;
-    const nodes = JAVA_KEYWORD_TO_CST[key];
-    if (!nodes) return; // si no mapea, se validará por texto
-    const existe = nodes.some((t) => nombres.has(t));
+    const pattern = JAVA_KEYWORD_TO_REGEX[key];
+    if (!pattern) return; // si no mapea, se validará por texto
+    const existe = pattern.test(codigo || '');
     if (mustInclude && !existe) errores.push(`Debe incluir estructura: ${item}`);
     if (!mustInclude && existe) errores.push(`No debe incluir estructura: ${item}`);
   };

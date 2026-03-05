@@ -1,9 +1,16 @@
 const sequelize = require("../config/database");
 const { Persona, Estudiante } = require("../models");
-const XLSX = require('xlsx');
+const readXlsxFile = require('read-excel-file/node');
 const procesarCorreos = require('../utils/colaCorreos');
 const { generarPassword, generarCodigoAcceso } = require("../utils/generarCredenciales");
 const bcrypt = require('bcryptjs'); 
+const {
+  isNonEmptyString,
+  isStrongPassword,
+  isValidEmail,
+  sanitizePlainText,
+  removePersonaSensitiveFields,
+} = require('../utils/inputSecurity');
 
 /* =========================
    CREAR ESTUDIANTE
@@ -14,6 +21,11 @@ const crearEstudiante = async (req, res) => {
   try {
     const { nombre, email, codigoAcceso, contraseña, codigoEstudiantil, programa, semestre } = req.body;
 
+    if (!isNonEmptyString(nombre) || !isValidEmail(email) || !isNonEmptyString(codigoAcceso) || !isStrongPassword(contraseña)) {
+      await transaction.rollback();
+      return res.status(400).json({ mensaje: 'Datos invalidos para crear estudiante' });
+    }
+
     // 🔒 Encriptar contraseña
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(contraseña, salt);
@@ -21,8 +33,8 @@ const crearEstudiante = async (req, res) => {
     const persona = await Persona.create(
       {
         nombre,
-        email,
-        codigoAcceso,
+        email: email.trim().toLowerCase(),
+        codigoAcceso: sanitizePlainText(codigoAcceso),
         contraseña: passwordHash, // <--- GUARDAMOS EL HASH, NO EL TEXTO PLANO
         tipoUsuario: "ESTUDIANTE",
       },
@@ -43,7 +55,7 @@ const crearEstudiante = async (req, res) => {
     await transaction.commit();
 
     res.status(201).json({
-      persona,
+      persona: removePersonaSensitiveFields(persona),
       estudiante,
     });
   } catch (error) {
@@ -65,6 +77,7 @@ const obtenerEstudiantes = async (req, res) => {
       include: {
         model: Persona,
         as: "persona",
+        attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
       }
     });
 
@@ -88,6 +101,7 @@ const obtenerEstudiantePorId = async (req, res) => {
       include: {
         model: Persona,
         as: "persona",
+        attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
       }
     });
 
@@ -137,8 +151,24 @@ const actualizarEstudiante = async (req, res) => {
       semestre,
     } = req.body;
 
+    if (email !== undefined && !isValidEmail(email)) {
+      await transaction.rollback();
+      return res.status(400).json({ mensaje: 'Email invalido' });
+    }
+
+    if (contraseña !== undefined && !isStrongPassword(contraseña)) {
+      await transaction.rollback();
+      return res.status(400).json({ mensaje: 'Contraseña insegura' });
+    }
+
+    const personaUpdate = {};
+    if (nombre !== undefined) personaUpdate.nombre = sanitizePlainText(nombre);
+    if (email !== undefined) personaUpdate.email = email.trim().toLowerCase();
+    if (codigoAcceso !== undefined) personaUpdate.codigoAcceso = sanitizePlainText(codigoAcceso);
+    if (contraseña !== undefined) personaUpdate.contraseña = await bcrypt.hash(contraseña, 10);
+
     await estudiante.Persona.update(
-      { nombre, email, codigoAcceso, contraseña },
+      personaUpdate,
       { transaction }
     );
 
@@ -151,7 +181,10 @@ const actualizarEstudiante = async (req, res) => {
 
     res.json({
       mensaje: "Estudiante actualizado correctamente",
-      estudiante,
+      estudiante: {
+        ...estudiante.toJSON(),
+        persona: removePersonaSensitiveFields(estudiante.Persona || estudiante.persona),
+      },
     });
   } catch (error) {
     await transaction.rollback();
@@ -214,9 +247,27 @@ const importarEstudiantesDesdeExcel = async (req, res) => {
       return res.status(400).json({ message: "No se recibió ningún archivo" });
     }
 
-    const workbook = XLSX.read(req.file.buffer, { type: "buffer" });
-    const hoja = workbook.Sheets[workbook.SheetNames[0]];
-    const datos = XLSX.utils.sheet_to_json(hoja);
+    const rows = await readXlsxFile(req.file.buffer);
+    if (!rows || rows.length < 2) {
+      await transaction.rollback();
+      return res.status(400).json({ message: 'El archivo no contiene datos validos' });
+    }
+
+    const headers = rows[0].map((cell) => String(cell || '').trim());
+    const datos = [];
+    rows.slice(1).forEach((row) => {
+      const fila = {};
+      for (let colIndex = 0; colIndex < headers.length; colIndex += 1) {
+        const header = headers[colIndex];
+        if (!header) continue;
+        const value = row[colIndex];
+        fila[header] = value !== null && value !== undefined ? String(value).trim() : '';
+      }
+
+      if (Object.keys(fila).length > 0) {
+        datos.push(fila);
+      }
+    });
 
     console.log("📊 Datos del Excel:", datos);
 

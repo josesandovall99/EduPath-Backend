@@ -13,6 +13,8 @@ const {
 
 // 🔥 Importamos el NUEVO controlador de Auth
 const { loginEstudiante, cambiarContraseñaPrimerIngreso } = require("../controllers/auth.controller");
+const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
+const requiereAdmin = require('../middlewares/requiereAdmin');
 
 const router = express.Router();
 
@@ -24,18 +26,20 @@ const upload = multer({
 
 // 🔐 Login (Usando el controlador separado)
 router.post("/login", loginEstudiante);
-router.post("/cambiar-password-inicial", cambiarContraseñaPrimerIngreso);
+router.post("/cambiar-password-inicial", autenticacionUsuario, cambiarContraseñaPrimerIngreso);
 
 // CRUD Estudiantes
-router.post("/", crearEstudiante);
-router.get("/", obtenerEstudiantes);
-router.get("/:id", obtenerEstudiantePorId);
-router.put("/:id", actualizarEstudiante);
-router.delete("/:id", eliminarEstudiante);
+router.post("/", autenticacionUsuario, requiereAdmin, crearEstudiante);
+router.get("/", autenticacionUsuario, requiereAdmin, obtenerEstudiantes);
+router.get("/:id", autenticacionUsuario, requiereAdmin, obtenerEstudiantePorId);
+router.put("/:id", autenticacionUsuario, requiereAdmin, actualizarEstudiante);
+router.delete("/:id", autenticacionUsuario, requiereAdmin, eliminarEstudiante);
 
 // Importar Excel
 router.post(
   "/importar-excel",
+  autenticacionUsuario,
+  requiereAdmin,
   upload.single("archivo"),
   importarEstudiantesDesdeExcel
 );

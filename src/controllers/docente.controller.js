@@ -3,6 +3,13 @@ const bcrypt = require("bcryptjs");
 const { Persona, Docente, Area } = require("../models");
 const { generarPassword } = require("../utils/generarCredenciales");
 const enviarCorreoBienvenidaDocente = require("../utils/enviarCorreoBienvenidaDocente");
+const {
+  isNonEmptyString,
+  isValidEmail,
+  isStrongPassword,
+  sanitizePlainText,
+  removePersonaSensitiveFields,
+} = require('../utils/inputSecurity');
 
 /* =========================
    CREAR DOCENTE
@@ -13,10 +20,10 @@ const crearDocente = async (req, res) => {
   try {
     const { nombre, email, codigoAcceso, especialidad, areaId } = req.body;
 
-    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    if (!isNonEmptyString(nombre) || !isValidEmail(email) || !isNonEmptyString(codigoAcceso)) {
       await transaction.rollback();
       return res.status(400).json({
-        mensaje: "Email invalido",
+        mensaje: "Datos invalidos para crear docente",
       });
     }
 
@@ -41,9 +48,9 @@ const crearDocente = async (req, res) => {
 
     const persona = await Persona.create(
       {
-        nombre,
-        email,
-        codigoAcceso,
+        nombre: sanitizePlainText(nombre),
+        email: email.trim().toLowerCase(),
+        codigoAcceso: sanitizePlainText(codigoAcceso),
         contraseña: passwordHash,
         tipoUsuario: "DOCENTE",
       },
@@ -73,6 +80,7 @@ const crearDocente = async (req, res) => {
         {
           model: Persona,
           as: "persona",
+          attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
         },
         {
           model: Area,
@@ -82,7 +90,10 @@ const crearDocente = async (req, res) => {
     });
 
     res.status(201).json({
-      docente: docenteCreado,
+      docente: {
+        ...docenteCreado.toJSON(),
+        persona: removePersonaSensitiveFields(docenteCreado.persona),
+      },
     });
   } catch (error) {
     await transaction.rollback();
@@ -103,6 +114,7 @@ const obtenerDocentes = async (req, res) => {
         {
           model: Persona,
           as: "persona",
+          attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
         },
         {
           model: Area,
@@ -132,6 +144,7 @@ const obtenerDocentePorId = async (req, res) => {
         {
           model: Persona,
           as: "persona",
+          attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
         },
         {
           model: Area,
@@ -179,6 +192,16 @@ const actualizarDocente = async (req, res) => {
 
     const { nombre, email, codigoAcceso, contraseña, especialidad, areaId } = req.body;
 
+    if (email !== undefined && !isValidEmail(email)) {
+      await transaction.rollback();
+      return res.status(400).json({ mensaje: 'Email invalido' });
+    }
+
+    if (contraseña !== undefined && !isStrongPassword(contraseña)) {
+      await transaction.rollback();
+      return res.status(400).json({ mensaje: 'Contraseña insegura' });
+    }
+
     if (!areaId) {
       await transaction.rollback();
       return res.status(400).json({
@@ -194,7 +217,11 @@ const actualizarDocente = async (req, res) => {
       });
     }
 
-    const personaUpdate = { nombre, email, codigoAcceso };
+    const personaUpdate = {
+      ...(nombre !== undefined && { nombre: sanitizePlainText(nombre) }),
+      ...(email !== undefined && { email: email.trim().toLowerCase() }),
+      ...(codigoAcceso !== undefined && { codigoAcceso: sanitizePlainText(codigoAcceso) }),
+    };
     if (contraseña) {
       const salt = await bcrypt.genSalt(10);
       personaUpdate.contraseña = await bcrypt.hash(contraseña, salt);
@@ -213,6 +240,7 @@ const actualizarDocente = async (req, res) => {
         {
           model: Persona,
           as: "persona",
+          attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
         },
         {
           model: Area,
@@ -223,7 +251,10 @@ const actualizarDocente = async (req, res) => {
 
     res.json({
       mensaje: "Docente actualizado correctamente",
-      docente: docenteActualizado,
+      docente: {
+        ...docenteActualizado.toJSON(),
+        persona: removePersonaSensitiveFields(docenteActualizado.persona),
+      },
     });
   } catch (error) {
     await transaction.rollback();

@@ -2,10 +2,22 @@ const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const { Estudiante, Persona, Administrador, Docente, Area } = require('../models');
 const enviarCorreoResetPassword = require('../utils/enviarCorreoResetPassword');
+const { signAccessToken } = require('../utils/jwt');
+const { isNonEmptyString, isStrongPassword, isValidEmail } = require('../utils/inputSecurity');
+
+const buildAccessToken = (persona) =>
+  signAccessToken({
+    personaId: persona.id,
+    tipoUsuario: persona.tipoUsuario,
+  });
 
 const loginEstudiante = async (req, res) => {
   try {
     const { codigoEstudiantil, contraseña } = req.body;
+
+    if (!isNonEmptyString(codigoEstudiantil) || !isNonEmptyString(contraseña)) {
+      return res.status(400).json({ mensaje: 'Codigo y contraseña son obligatorios' });
+    }
 
     const estudiante = await Estudiante.findOne({
       where: { codigoEstudiantil },
@@ -17,10 +29,13 @@ const loginEstudiante = async (req, res) => {
     const passwordValido = await bcrypt.compare(contraseña, estudiante.persona.contraseña);
     if (!passwordValido) return res.status(401).json({ mensaje: 'Contraseña incorrecta' });
 
+    const token = buildAccessToken(estudiante.persona);
+
     // Enviamos el estado de primer_ingreso al frontend
     res.json({
       mensaje: 'Bienvenido',
       primerIngreso: estudiante.persona.primer_ingreso, // <--- Clave aquí
+      token,
       estudiante: {
         id: estudiante.id,
         personaId: estudiante.persona.id,
@@ -37,7 +52,18 @@ const loginEstudiante = async (req, res) => {
 
 const cambiarContraseñaPrimerIngreso = async (req, res) => {
   try {
-    const { personaId, nuevaContraseña } = req.body;
+    const { nuevaContraseña } = req.body;
+    const personaId = req.personaId;
+
+    if (!personaId) {
+      return res.status(401).json({ mensaje: 'No autorizado' });
+    }
+
+    if (!isStrongPassword(nuevaContraseña)) {
+      return res.status(400).json({
+        mensaje: 'La nueva contraseña debe tener minimo 8 caracteres, mayuscula, minuscula y numero',
+      });
+    }
 
     const persona = await Persona.findByPk(personaId);
     
@@ -78,6 +104,10 @@ const loginAdministrador = async (req, res) => {
   try {
     const { codigoAcceso, contraseña } = req.body;
 
+    if (!isNonEmptyString(codigoAcceso) || !isNonEmptyString(contraseña)) {
+      return res.status(400).json({ mensaje: 'Codigo y contraseña son obligatorios' });
+    }
+
     const persona = await Persona.findOne({
       where: { codigoAcceso, tipoUsuario: 'ADMINISTRADOR' },
       include: { model: Administrador, as: 'administrador' },
@@ -93,6 +123,7 @@ const loginAdministrador = async (req, res) => {
     res.json({
       mensaje: 'Bienvenido administrador',
       primerIngreso: persona.primer_ingreso,
+      token: buildAccessToken(persona),
       administrador: {
         id: persona.administrador.id,
         personaId: persona.id,
@@ -116,6 +147,10 @@ const loginDocente = async (req, res) => {
   try {
     const { codigoAcceso, contraseña } = req.body;
 
+    if (!isNonEmptyString(codigoAcceso) || !isNonEmptyString(contraseña)) {
+      return res.status(400).json({ mensaje: 'Codigo y contraseña son obligatorios' });
+    }
+
     const persona = await Persona.findOne({
       where: { codigoAcceso, tipoUsuario: 'DOCENTE' },
       include: {
@@ -138,6 +173,7 @@ const loginDocente = async (req, res) => {
     res.json({
       mensaje: 'Bienvenido docente',
       primerIngreso: persona.primer_ingreso,
+      token: buildAccessToken(persona),
       docente: {
         id: persona.docente.id,
         personaId: persona.id,
@@ -156,8 +192,8 @@ const solicitarResetPassword = async (req, res) => {
   try {
     const { email } = req.body;
 
-    if (!email) {
-      return res.status(400).json({ mensaje: 'El email es obligatorio' });
+    if (!isValidEmail(email)) {
+      return res.status(400).json({ mensaje: 'El email es invalido' });
     }
 
     const persona = await Persona.findOne({ where: { email } });
@@ -187,7 +223,7 @@ const resetPassword = async (req, res) => {
   try {
     const { token, nuevaContraseña } = req.body;
 
-    if (!token || !nuevaContraseña) {
+    if (!isNonEmptyString(token) || !isStrongPassword(nuevaContraseña)) {
       return res.status(400).json({ mensaje: 'Token y nueva contrasena son obligatorios' });
     }
 

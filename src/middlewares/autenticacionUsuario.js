@@ -1,9 +1,10 @@
-const { Persona, Docente } = require("../models");
+const { Persona, Docente, Administrador, Estudiante } = require("../models");
+const { verifyAccessToken } = require('../utils/jwt');
 
 /**
- * Middleware para autenticar y validar el tipo de usuario desde la BD
- * 
- * Extrae persona_id del header x-persona-id y consulta la BD para obtener:
+ * Middleware para autenticar y validar el tipo de usuario desde la BD.
+ *
+ * Extrae token JWT desde Authorization: Bearer <token> y consulta la BD para obtener:
  * - tipoUsuario (ADMINISTRADOR, DOCENTE, ESTUDIANTE)
  * - Si es DOCENTE: obtiene sus áreas asignadas
  * 
@@ -15,13 +16,34 @@ const { Persona, Docente } = require("../models");
  */
 const autenticacionUsuario = async (req, res, next) => {
   try {
-    // Obtener persona_id desde headers
-    const personaId = req.headers["x-persona-id"] || req.body.persona_id;
+    const authorizationHeader = req.headers.authorization || '';
+    if (!authorizationHeader.startsWith('Bearer ')) {
+      return res.status(401).json({
+        mensaje: 'No autorizado: token no proporcionado',
+      });
+    }
 
-    if (!personaId) {
-      // Si no hay persona_id, simplemente continuar sin autenticación
-      // Útil para rutas públicas
-      return next();
+    const token = authorizationHeader.slice('Bearer '.length).trim();
+    if (!token) {
+      return res.status(401).json({
+        mensaje: 'No autorizado: token invalido',
+      });
+    }
+
+    let claims;
+    try {
+      claims = verifyAccessToken(token);
+    } catch (error) {
+      return res.status(401).json({
+        mensaje: 'No autorizado: token invalido o expirado',
+      });
+    }
+
+    const personaId = Number(claims.personaId);
+    if (!Number.isFinite(personaId)) {
+      return res.status(401).json({
+        mensaje: 'No autorizado: token sin identidad valida',
+      });
     }
 
     // Buscar la Persona en BD
@@ -84,7 +106,6 @@ const autenticacionUsuario = async (req, res, next) => {
 
     // Si es ADMINISTRADOR, obtener el admin_id
     if (persona.tipoUsuario === "ADMINISTRADOR") {
-      const { Administrador } = require("../models");
       const administrador = await Administrador.findOne({
         where: { persona_id: personaId }
       });
@@ -100,7 +121,6 @@ const autenticacionUsuario = async (req, res, next) => {
 
     // Si es ESTUDIANTE, obtener el estudiante_id
     if (persona.tipoUsuario === "ESTUDIANTE") {
-      const { Estudiante } = require("../models");
       const estudiante = await Estudiante.findOne({
         where: { persona_id: personaId }
       });

@@ -6,7 +6,11 @@
   "scripts": {
     "dev": "nodemon src/app.js",
     "start": "node src/app.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test",
+    "test:security": "node --test test/*.test.js",
+    "security:sast": "node scripts/security-sast.js",
+    "security:deps": "npm audit --omit=dev --audit-level=high",
+    "security:all": "npm run test:security && npm run security:sast && npm run security:deps"
   },
   "repository": {
     "type": "git",
@@ -21,28 +25,26 @@
   },
   "homepage": "https://github.com/josesandovall99/EduPath-Backend#readme",
   "dependencies": {
-    "@langchain/community": "^1.1.14",
+    "@langchain/community": "^1.1.22",
     "@langchain/core": "^1.1.22",
     "@langchain/groq": "^1.1.0",
     "@langchain/textsplitters": "^1.0.1",
     "acorn": "^8.15.0",
-    "axios": "^1.13.2",
+    "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
-    "java-parser": "^3.0.1",
+    "jsonwebtoken": "^9.0.3",
     "langchain": "^1.2.21",
-    "multer": "^2.0.2",
+    "multer": "^2.1.1",
     "nodemailer": "^7.0.12",
     "pdf-parse": "^1.1.1",
     "pdfkit": "^0.17.2",
     "pg": "^8.16.3",
-    "pg-hstore": "^2.3.4",
-    "puppeteer": "^24.36.0",
-    "sequelize": "^6.37.7",
-    "xlsx": "^0.18.5",
-    "xmldom": "^0.6.0"
+    "puppeteer": "^24.38.0",
+    "read-excel-file": "^7.0.1",
+    "sequelize": "^6.37.7"
   },
   "devDependencies": {
     "nodemon": "^3.1.11"

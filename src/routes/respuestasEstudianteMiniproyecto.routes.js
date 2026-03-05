@@ -9,14 +9,15 @@ const {
 } = require(
   "../controllers/respuestasEstudianteMiniproyecto.controller"
 );
+const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 
 const router = express.Router();
 
-router.post("/", crearRespuestaMiniproyecto);
-router.get("/verificar-completado", verificarMiniproyectoCompletado);
-router.get("/", obtenerRespuestasMiniproyecto);
-router.get("/:id", obtenerRespuestaMiniproyectoPorId);
-router.put("/:id", actualizarRespuestaMiniproyecto);
-router.delete("/:id", eliminarRespuestaMiniproyecto);
+router.post("/", autenticacionUsuario, crearRespuestaMiniproyecto);
+router.get("/verificar-completado", autenticacionUsuario, verificarMiniproyectoCompletado);
+router.get("/", autenticacionUsuario, obtenerRespuestasMiniproyecto);
+router.get("/:id", autenticacionUsuario, obtenerRespuestaMiniproyectoPorId);
+router.put("/:id", autenticacionUsuario, actualizarRespuestaMiniproyecto);
+router.delete("/:id", autenticacionUsuario, eliminarRespuestaMiniproyecto);
 
 module.exports = router;

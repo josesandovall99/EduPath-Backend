@@ -1,6 +1,7 @@
 const db = require('../models');
 const { Actividad, Miniproyecto, TipoActividad, Area, Evaluacion, Estudiante, RespuestaEstudianteMiniproyecto, sequelize } = db;
 const evaluacionController = require('./evaluacion.controller');
+const { isNonEmptyString, sanitizePlainText, sanitizeRichText } = require('../utils/inputSecurity');
 
 // Función auxiliar para validar FKs (Evita repetir código)
 const validarRelaciones = async (tipo_id, area_id) => {
@@ -13,9 +14,13 @@ const validarRelaciones = async (tipo_id, area_id) => {
     if (!existe) throw new Error(`El area_id (${area_id}) no existe.`);
   }
 };
-
+ 
 exports.create = async (req, res) => {
   try {
+    if (!isNonEmptyString(req.body.titulo)) {
+      return res.status(400).json({ error: 'El titulo es obligatorio' });
+    }
+
     // 1. Validar existencia de FKs antes de iniciar
     await validarRelaciones(req.body.tipo_actividad_id, req.body.area_id);
 
@@ -26,8 +31,8 @@ exports.create = async (req, res) => {
     const t = await sequelize.transaction();
     try {
       const nuevaActividad = await Actividad.create({
-        titulo: req.body.titulo,
-        descripcion: req.body.descripcion,
+        titulo: sanitizePlainText(req.body.titulo),
+        descripcion: sanitizeRichText(req.body.descripcion),
         nivel_dificultad: req.body.nivel_dificultad,
         fecha_creacion: req.body.fecha_creacion || new Date(),
         tipo_actividad_id: req.body.tipo_actividad_id
@@ -37,7 +42,7 @@ exports.create = async (req, res) => {
         id: nuevaActividad.id,
         actividad_id: nuevaActividad.id,
         area_id: req.body.area_id,
-        entregable: req.body.entregable,
+        entregable: sanitizePlainText(req.body.entregable),
         respuesta_miniproyecto: req.body.respuesta_miniproyecto
       }, { transaction: t });
 
@@ -75,8 +80,8 @@ exports.update = async (req, res) => {
     const t = await sequelize.transaction();
     try {
       const actividadPayload = {
-        ...(req.body.titulo !== undefined && { titulo: req.body.titulo }),
-        ...(req.body.descripcion !== undefined && { descripcion: req.body.descripcion }),
+        ...(req.body.titulo !== undefined && { titulo: sanitizePlainText(req.body.titulo) }),
+        ...(req.body.descripcion !== undefined && { descripcion: sanitizeRichText(req.body.descripcion) }),
         ...(req.body.nivel_dificultad !== undefined && { nivel_dificultad: req.body.nivel_dificultad }),
         ...(req.body.fecha_creacion !== undefined && { fecha_creacion: req.body.fecha_creacion }),
         ...(req.body.tipo_actividad_id !== undefined && { tipo_actividad_id: req.body.tipo_actividad_id })
@@ -84,7 +89,7 @@ exports.update = async (req, res) => {
 
       const miniproyectoPayload = {
         ...(req.body.area_id !== undefined && { area_id: req.body.area_id }),
-        ...(req.body.entregable !== undefined && { entregable: req.body.entregable }),
+        ...(req.body.entregable !== undefined && { entregable: sanitizePlainText(req.body.entregable) }),
         ...(req.body.respuesta_miniproyecto !== undefined && { respuesta_miniproyecto: req.body.respuesta_miniproyecto })
       };
 

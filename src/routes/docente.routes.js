@@ -9,14 +9,15 @@ const {
 const progresoController = require("../controllers/progreso.controller");
 const autenticacionUsuario = require("../middlewares/autenticacionUsuario");
 const requiereDocente = require("../middlewares/requiereDocente");
+const requiereAdmin = require('../middlewares/requiereAdmin');
 
 const { loginDocente } = require("../controllers/auth.controller");
 
 const router = express.Router();
 
-router.post("/", crearDocente);
+router.post("/", autenticacionUsuario, requiereAdmin, crearDocente);
 router.post("/login", loginDocente);
-router.get("/", obtenerDocentes);
+router.get("/", autenticacionUsuario, requiereAdmin, obtenerDocentes);
 router.get(
   "/reportes/progreso-estudiantes",
   autenticacionUsuario,
@@ -29,8 +30,8 @@ router.get(
   requiereDocente,
   progresoController.obtenerReporteFallosDocente
 );
-router.get("/:id", obtenerDocentePorId);
-router.put("/:id", actualizarDocente);
-router.delete("/:id", eliminarDocente);
+router.get("/:id", autenticacionUsuario, requiereAdmin, obtenerDocentePorId);
+router.put("/:id", autenticacionUsuario, requiereAdmin, actualizarDocente);
+router.delete("/:id", autenticacionUsuario, requiereAdmin, eliminarDocente);
 
 module.exports = router;
