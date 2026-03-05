@@ -8,6 +8,7 @@ const { initializeRAG } = require('./controllers/chatbot.controller');
 
 // --- CONFIGURACIÓN DE MIDDLEWARES ---
 app.set('strict routing', false); 
+app.disable('x-powered-by');
 
 // Habilita CORS para permitir peticiones desde tu frontend (Puerto 3000)
 app.use(cors({ 
@@ -18,6 +19,13 @@ app.use(cors({
 }));
 
 app.use((req, res, next) => {
+    // Baseline OWASP-recommended security headers for API responses.
+    res.set('X-Content-Type-Options', 'nosniff');
+    res.set('X-Frame-Options', 'DENY');
+    res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+    res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
+
     res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
     res.set('Pragma', 'no-cache');
     res.set('Expires', '0');
