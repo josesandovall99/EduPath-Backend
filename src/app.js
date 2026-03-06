@@ -10,13 +10,36 @@ const { initializeRAG } = require('./controllers/chatbot.controller');
 app.set('strict routing', false); 
 app.disable('x-powered-by');
 
-// Habilita CORS para permitir peticiones desde tu frontend (Puerto 3000)
-app.use(cors({ 
-    origin: 'https://edupath-frontend-dwcf.onrender.com', 
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], 
+// CORS: permite entornos locales y despliegues de Render configurables por variable.
+const configuredOrigins = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+
+const allowedOrigins = new Set([
+    'https://edupath-frontend-dwcf.onrender.com',
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    ...configuredOrigins,
+]);
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Permite clientes sin origin (curl/postman/health checks internos).
+        if (!origin) return callback(null, true);
+
+        const isRenderFrontend = /^https:\/\/edupath-frontend-[a-z0-9-]+\.onrender\.com$/i.test(origin);
+        const isAllowed = allowedOrigins.has(origin) || isRenderFrontend;
+
+        if (isAllowed) return callback(null, true);
+        return callback(new Error(`CORS bloqueado para origin: ${origin}`));
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-docente-id', 'x-tipo-usuario'],
-    credentials: true
-}));
+    credentials: true,
+};
+
+app.use(cors(corsOptions));
 
 app.use((req, res, next) => {
     // Baseline OWASP-recommended security headers for API responses.
