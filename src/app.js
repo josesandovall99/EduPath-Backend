@@ -12,7 +12,7 @@ app.disable('x-powered-by');
 
 // Habilita CORS para permitir peticiones desde tu frontend (Puerto 3000)
 app.use(cors({ 
-    origin: 'http://localhost:3000', 
+    origin: 'https://edupath-frontend-dwcf.onrender.com', 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], 
     allowedHeaders: ['Content-Type', 'Authorization', 'x-docente-id', 'x-tipo-usuario'],
     credentials: true
