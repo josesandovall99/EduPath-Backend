@@ -8,13 +8,14 @@ const {
 } = require("../controllers/administrador.controller");
 const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 const requiereAdmin = require('../middlewares/requiereAdmin');
+const { loginRateLimit } = require('../middlewares/authRateLimit');
 
 const { loginAdministrador } = require("../controllers/auth.controller");
 
 const router = express.Router();
 
 router.post("/", autenticacionUsuario, requiereAdmin, crearAdministrador);
-router.post("/login", loginAdministrador);
+router.post("/login", loginRateLimit, loginAdministrador);
 router.get("/", autenticacionUsuario, requiereAdmin, obtenerAdministradores);
 router.get("/:id", autenticacionUsuario, requiereAdmin, obtenerAdministradorPorId);
 router.put("/:id", autenticacionUsuario, requiereAdmin, actualizarAdministrador);

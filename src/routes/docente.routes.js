@@ -10,13 +10,14 @@ const progresoController = require("../controllers/progreso.controller");
 const autenticacionUsuario = require("../middlewares/autenticacionUsuario");
 const requiereDocente = require("../middlewares/requiereDocente");
 const requiereAdmin = require('../middlewares/requiereAdmin');
+const { loginRateLimit } = require('../middlewares/authRateLimit');
 
 const { loginDocente } = require("../controllers/auth.controller");
 
 const router = express.Router();
 
 router.post("/", autenticacionUsuario, requiereAdmin, crearDocente);
-router.post("/login", loginDocente);
+router.post("/login", loginRateLimit, loginDocente);
 router.get("/", autenticacionUsuario, requiereAdmin, obtenerDocentes);
 router.get(
   "/reportes/progreso-estudiantes",

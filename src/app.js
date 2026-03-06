@@ -14,7 +14,7 @@ app.disable('x-powered-by');
 app.use(cors({ 
     origin: 'http://localhost:3000', 
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], 
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-persona-id', 'x-docente-id', 'x-tipo-usuario'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-docente-id', 'x-tipo-usuario'],
     credentials: true
 }));
 
@@ -85,6 +85,9 @@ app.use('/chatbot', require('./routes/chatbot.routes'));
 
 // --- RUTA DE MONITOREO ---
 app.get('/debug', (req, res) => {
+    if (process.env.NODE_ENV === 'production') {
+        return res.status(404).json({ mensaje: 'No encontrado' });
+    }
     res.json({ mensaje: "El servidor responde ✅", estado: "Online", puerto: 4000 });
 });
 

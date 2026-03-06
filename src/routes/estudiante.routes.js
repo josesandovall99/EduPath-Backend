@@ -15,6 +15,7 @@ const {
 const { loginEstudiante, cambiarContraseñaPrimerIngreso } = require("../controllers/auth.controller");
 const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 const requiereAdmin = require('../middlewares/requiereAdmin');
+const { loginRateLimit } = require('../middlewares/authRateLimit');
 
 const router = express.Router();
 
@@ -25,7 +26,7 @@ const upload = multer({
 // === RUTAS ===
 
 // 🔐 Login (Usando el controlador separado)
-router.post("/login", loginEstudiante);
+router.post("/login", loginRateLimit, loginEstudiante);
 router.post("/cambiar-password-inicial", autenticacionUsuario, cambiarContraseñaPrimerIngreso);
 
 // CRUD Estudiantes
