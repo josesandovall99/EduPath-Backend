@@ -63,7 +63,7 @@ module.exports = async (estudiantes) => {
       await delay(5000); // ⏱️ pausa entre correos
     } catch (error) {
       console.error("🔥 Error enviando correo:", {
-        email,
+        email: item?.email || null,
         message: error.message,
         code: error.code || null,
         responseCode: error.responseCode || null,

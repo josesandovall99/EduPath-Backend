@@ -1,8 +1,12 @@
 const nodemailer = require('nodemailer');
 
+const mailProvider = String(process.env.MAIL_PROVIDER || 'smtp').toLowerCase();
+
 const host = process.env.SMTP_HOST || 'smtp.gmail.com';
 const user = process.env.GMAIL_USER;
 const pass = process.env.GMAIL_PASS;
+const resendApiKey = process.env.RESEND_API_KEY;
+const mailFrom = process.env.MAIL_FROM || process.env.GMAIL_USER;
 
 const connectionTimeout = Number(process.env.SMTP_CONNECTION_TIMEOUT || 20000);
 const greetingTimeout = Number(process.env.SMTP_GREETING_TIMEOUT || 15000);
@@ -34,7 +38,79 @@ const fallbackSecure = fallbackPort === 465;
 const primaryTransporter = createTransport(primaryPort, primarySecure);
 const fallbackTransporter = createTransport(fallbackPort, fallbackSecure);
 
+function normalizeRecipients(to) {
+  if (Array.isArray(to)) return to;
+  if (typeof to !== 'string') return [];
+  return to
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+async function sendWithResend(mailOptions) {
+  if (!resendApiKey) {
+    throw new Error('MAIL_PROVIDER=resend pero RESEND_API_KEY no esta configurada');
+  }
+
+  const recipients = normalizeRecipients(mailOptions.to);
+  if (recipients.length === 0) {
+    throw new Error('No hay destinatarios validos para el correo');
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = Number(process.env.MAIL_API_TIMEOUT || 20000);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: mailOptions.from || mailFrom,
+        to: recipients,
+        subject: mailOptions.subject,
+        html: mailOptions.html,
+        text: mailOptions.text,
+      }),
+      signal: controller.signal,
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      const detail = data?.message || data?.error || `HTTP ${response.status}`;
+      const error = new Error(`Resend API error: ${detail}`);
+      error.code = 'RESEND_API_ERROR';
+      error.responseCode = response.status;
+      throw error;
+    }
+
+    return {
+      accepted: recipients,
+      rejected: [],
+      messageId: data?.id || null,
+      provider: 'resend',
+    };
+  } catch (error) {
+    if (error?.name === 'AbortError') {
+      const timeoutError = new Error(`Resend API timeout tras ${timeoutMs}ms`);
+      timeoutError.code = 'ETIMEDOUT';
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function sendMail(mailOptions) {
+  if (mailProvider === 'resend') {
+    return sendWithResend(mailOptions);
+  }
+
   try {
     return await primaryTransporter.sendMail(mailOptions);
   } catch (error) {
