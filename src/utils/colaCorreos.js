@@ -62,7 +62,12 @@ module.exports = async (estudiantes) => {
 
       await delay(5000); // ⏱️ pausa entre correos
     } catch (error) {
-      console.error("🔥 Error enviando correo:", error.message);
+      console.error("🔥 Error enviando correo:", {
+        email,
+        message: error.message,
+        code: error.code || null,
+        responseCode: error.responseCode || null,
+      });
     }
   }
 };
