@@ -208,7 +208,9 @@ const solicitarResetPassword = async (req, res) => {
       await persona.save();
 
       const frontendBaseUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-      const resetUrl = `${frontendBaseUrl}/reset-password?token=${rawToken}`;
+      const normalizedFrontendUrl = frontendBaseUrl.replace(/\/+$/, '');
+      // Usamos la ruta raiz con query param para evitar 404 en hosts que no resuelven rutas SPA profundas.
+      const resetUrl = `${normalizedFrontendUrl}/?token=${rawToken}`;
 
       await enviarCorreoResetPassword(persona, resetUrl);
     }
