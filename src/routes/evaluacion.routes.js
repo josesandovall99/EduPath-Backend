@@ -1,12 +1,13 @@
 const router = require('express').Router();
 const controller = require('../controllers/evaluacion.controller');
+const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 
-router.post('/', controller.create);
-router.post('/compilador', controller.evaluarCompilador);
-router.get('/', controller.findAll);
-router.get('/by', controller.findBy);
-router.get('/:id', controller.findOne);
-router.put('/:id', controller.update);
-router.delete('/:id', controller.delete);
+router.post('/', autenticacionUsuario, controller.create);
+router.post('/compilador', autenticacionUsuario, controller.evaluarCompilador);
+router.get('/', autenticacionUsuario, controller.findAll);
+router.get('/by', autenticacionUsuario, controller.findBy);
+router.get('/:id', autenticacionUsuario, controller.findOne);
+router.put('/:id', autenticacionUsuario, controller.update);
+router.delete('/:id', autenticacionUsuario, controller.delete);
 
 module.exports = router;

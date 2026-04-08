@@ -1,5 +1,44 @@
 const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto, Evaluacion } = require("../models");
 
+const getAuthenticatedStudentId = (req) => {
+  const estudianteId = Number(req.estudianteId);
+  return Number.isFinite(estudianteId) ? estudianteId : null;
+};
+
+const resolveStudentOwnership = (req, candidateStudentId) => {
+  if (req.tipoUsuario !== 'ESTUDIANTE') {
+    const fallbackId = candidateStudentId !== undefined && candidateStudentId !== null
+      ? Number(candidateStudentId)
+      : null;
+    return {
+      ok: true,
+      estudianteId: Number.isFinite(fallbackId) ? fallbackId : null
+    };
+  }
+
+  const authenticatedStudentId = getAuthenticatedStudentId(req);
+  if (!authenticatedStudentId) {
+    return {
+      ok: false,
+      status: 403,
+      message: 'Solo los estudiantes autenticados pueden gestionar sus miniproyectos.'
+    };
+  }
+
+  if (candidateStudentId !== undefined && candidateStudentId !== null) {
+    const parsedCandidate = Number(candidateStudentId);
+    if (Number.isFinite(parsedCandidate) && parsedCandidate !== authenticatedStudentId) {
+      return {
+        ok: false,
+        status: 403,
+        message: 'No puedes operar sobre miniproyectos de otro estudiante.'
+      };
+    }
+  }
+
+  return { ok: true, estudianteId: authenticatedStudentId };
+};
+
 const normalizeText = (text = '') => text
   .toString()
   .normalize('NFD')
@@ -237,6 +276,221 @@ const tryParseJson = (value) => {
   }
 };
 
+const clampPercentage = (value) => {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+};
+
+const toArrayOfStrings = (value) => {
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => item?.toString?.() ?? '')
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  if (typeof value === 'string') {
+    return value
+      .split(/\n|•|\-|\d+\.|\r/g)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+
+  return [];
+};
+
+const getKeywordCoverage = (expectedText = '', studentText = '') => {
+  const keywords = extractKeywords(expectedText);
+  const normalizedStudent = normalizeText(studentText);
+
+  if (keywords.length === 0) {
+    const normalizedExpected = normalizeText(expectedText);
+    if (!normalizedExpected || !normalizedStudent) return 0;
+    return normalizedStudent.includes(normalizedExpected) ? 1 : 0;
+  }
+
+  const matches = keywords.filter((keyword) => normalizedStudent.includes(keyword)).length;
+  return matches / keywords.length;
+};
+
+const buildWeightedCriterion = ({ criterio, puntaje, peso, detalle }) => {
+  const normalizedScore = clampPercentage(puntaje);
+  return {
+    criterio,
+    cumplido: normalizedScore >= 70,
+    puntaje: normalizedScore,
+    peso,
+    detalle
+  };
+};
+
+const scoreGenericListSection = ({ label, expected, student, weight }) => {
+  const expectedItems = toArrayOfStrings(expected);
+  const studentItems = toArrayOfStrings(student);
+
+  if (expectedItems.length === 0) return null;
+
+  const itemScores = expectedItems.map((expectedItem) => {
+    let bestScore = 0;
+    studentItems.forEach((studentItem) => {
+      const coverage = getKeywordCoverage(expectedItem, studentItem);
+      if (coverage > bestScore) bestScore = coverage;
+    });
+    return bestScore;
+  });
+
+  const averageCoverage = itemScores.length > 0
+    ? itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length
+    : 0;
+  const matchedRatio = itemScores.length > 0
+    ? itemScores.filter((score) => score >= 0.6).length / itemScores.length
+    : 0;
+  const score = clampPercentage((averageCoverage * 0.7 + matchedRatio * 0.3) * 100);
+
+  return buildWeightedCriterion({
+    criterio: label,
+    puntaje: score,
+    peso: weight,
+    detalle: `${Math.round(matchedRatio * 100)}% de ítems cubiertos con coincidencia semántica suficiente.`
+  });
+};
+
+const scoreScheduleSection = ({ expected, student, weight }) => {
+  const expectedItems = toArrayOfStrings(expected);
+  const studentItems = toArrayOfStrings(student);
+
+  if (expectedItems.length === 0) return null;
+
+  const itemScores = expectedItems.map((expectedItem) => {
+    let bestScore = 0;
+
+    studentItems.forEach((studentItem) => {
+      const keywordScore = getKeywordCoverage(expectedItem, studentItem);
+      const expectedDates = extractDates(expectedItem);
+      const studentDates = extractDates(studentItem);
+      const dateScore = expectedDates.length === 0
+        ? 1
+        : (studentDates.length === 0 ? 0 : (datesAreConcordant(expectedItem, studentItem, 3) ? 1 : 0));
+      const combinedScore = (keywordScore * 0.6) + (dateScore * 0.4);
+      if (combinedScore > bestScore) bestScore = combinedScore;
+    });
+
+    return bestScore;
+  });
+
+  const averageScore = itemScores.length > 0
+    ? itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length
+    : 0;
+
+  return buildWeightedCriterion({
+    criterio: 'Cronograma del proyecto',
+    puntaje: averageScore * 100,
+    peso: weight,
+    detalle: 'Se pondera la coincidencia de actividades y la concordancia de fechas dentro de ±3 días.'
+  });
+};
+
+const scoreCostsSection = ({ expected, student, weight }) => {
+  const expectedItems = toArrayOfStrings(expected).filter((item) => !isTotalLine(item));
+  const studentItems = toArrayOfStrings(student).filter((item) => !isTotalLine(item));
+
+  if (expectedItems.length === 0) return null;
+
+  const conceptScores = [];
+  const unitScores = [];
+
+  expectedItems.forEach((expectedItem) => {
+    const expectedParsedItem = parseCostItem(expectedItem);
+    const bestMatch = studentItems.reduce((best, studentItem) => {
+      const score = getKeywordCoverage(expectedParsedItem.concept || expectedItem, studentItem);
+      if (!best || score > best.score) {
+        return { studentItem, score };
+      }
+      return best;
+    }, null);
+
+    if (!bestMatch) {
+      conceptScores.push(0);
+      unitScores.push(0);
+      return;
+    }
+
+    conceptScores.push(bestMatch.score);
+
+    const studentParsedItem = parseCostItem(bestMatch.studentItem);
+    if (expectedParsedItem.unit === null) {
+      unitScores.push(1);
+    } else {
+      unitScores.push(numberWithinTolerance(expectedParsedItem.unit, studentParsedItem.unit, 0.2) ? 1 : 0);
+    }
+  });
+
+  const expectedTotal = computeCostsTotalSafe(expected);
+  const studentTotal = computeCostsTotalSafe(student);
+  let totalScore = 0;
+  if (expectedTotal !== null && studentTotal !== null && expectedTotal > 0) {
+    const diffRatio = Math.abs(expectedTotal - studentTotal) / expectedTotal;
+    if (diffRatio <= 0.15) totalScore = 1;
+    else if (diffRatio <= 0.3) totalScore = 0.7;
+  }
+
+  const conceptAverage = conceptScores.length > 0
+    ? conceptScores.reduce((sum, score) => sum + score, 0) / conceptScores.length
+    : 0;
+  const unitAverage = unitScores.length > 0
+    ? unitScores.reduce((sum, score) => sum + score, 0) / unitScores.length
+    : 0;
+  const score = clampPercentage((conceptAverage * 0.45 + unitAverage * 0.35 + totalScore * 0.2) * 100);
+
+  return buildWeightedCriterion({
+    criterio: 'Costos y recursos',
+    puntaje: score,
+    peso: weight,
+    detalle: 'Se ponderan conceptos, costos unitarios y coherencia del total general.'
+  });
+};
+
+const buildStructuredRubric = (expectedParsed, studentParsed) => {
+  const isManagement = Boolean(expectedParsed?.alcance || expectedParsed?.cronograma || expectedParsed?.costos);
+
+  const sectionDefinitions = isManagement
+    ? [
+        { key: 'alcance', label: 'Alcance del proyecto', weight: 30, scorer: scoreGenericListSection },
+        { key: 'cronograma', label: 'Cronograma del proyecto', weight: 30, scorer: scoreScheduleSection },
+        { key: 'costos', label: 'Costos y recursos', weight: 40, scorer: scoreCostsSection }
+      ]
+    : [
+        { key: 'stakeholders', label: 'Stakeholders', weight: 25, scorer: scoreGenericListSection },
+        { key: 'requisitosFuncionales', label: 'Requisitos funcionales', weight: 45, scorer: scoreGenericListSection },
+        { key: 'requisitosNoFuncionales', label: 'Requisitos no funcionales', weight: 30, scorer: scoreGenericListSection }
+      ];
+
+  const criterios = sectionDefinitions
+    .map((section) => section.scorer({
+      label: section.label,
+      expected: expectedParsed?.[section.key],
+      student: studentParsed?.[section.key],
+      weight: section.weight
+    }))
+    .filter(Boolean);
+
+  if (criterios.length === 0) return null;
+
+  const totalWeight = criterios.reduce((sum, criterio) => sum + (criterio.peso || 0), 0) || 1;
+  const puntaje = clampPercentage(
+    criterios.reduce((sum, criterio) => sum + ((criterio.puntaje || 0) * (criterio.peso || 0)), 0) / totalWeight
+  );
+  const criteriosCumplidos = criterios.filter((criterio) => criterio.cumplido).length;
+
+  return {
+    puntaje,
+    totalCriterios: criterios.length,
+    criteriosCumplidos,
+    criterios,
+    modoRubrica: isManagement ? 'management' : 'analysis'
+  };
+};
+
 const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '') => {
   if (!expectedResponseValue) return null;
 
@@ -251,175 +505,7 @@ const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '')
   );
 
   if (hasStructuredExpected) {
-    const sections = [
-      {
-        label: 'Stakeholders',
-        expected: expectedParsed.stakeholders,
-        student: studentParsed?.stakeholders
-      },
-      {
-        label: 'Requisitos funcionales',
-        expected: expectedParsed.requisitosFuncionales,
-        student: studentParsed?.requisitosFuncionales
-      },
-      {
-        label: 'Requisitos no funcionales',
-        expected: expectedParsed.requisitosNoFuncionales,
-        student: studentParsed?.requisitosNoFuncionales
-      },
-      {
-        label: 'Alcance del proyecto',
-        expected: expectedParsed.alcance,
-        student: studentParsed?.alcance
-      },
-      {
-        label: 'Cronograma del proyecto',
-        expected: expectedParsed.cronograma,
-        student: studentParsed?.cronograma
-      },
-      {
-        label: 'Costos y recursos',
-        expected: expectedParsed.costos,
-        student: studentParsed?.costos
-      }
-    ].filter(section => section.expected);
-
-    if (sections.length === 0) return null;
-
-    const results = sections.map((section) => {
-      const expectedArray = Array.isArray(section.expected) ? section.expected : null;
-      const studentArray = Array.isArray(section.student) ? section.student : null;
-
-      if (expectedArray && studentArray) {
-        const expectedItems = expectedArray
-          .map(item => item?.toString?.() ?? '')
-          .filter(Boolean)
-          .filter(item => !(section.label === 'Costos y recursos' && isTotalLine(item)));
-        const studentItems = studentArray
-          .map(item => item?.toString?.() ?? '')
-          .filter(Boolean)
-          .filter(item => !(section.label === 'Costos y recursos' && isTotalLine(item)));
-
-        const matchesPerItem = expectedItems.map((expectedItem) => {
-          const keywords = extractKeywords(expectedItem);
-          if (keywords.length === 0) return false;
-          return studentItems.some((studentItem) => {
-            const normalizedStudent = normalizeText(studentItem);
-            const matches = keywords.filter(keyword => normalizedStudent.includes(keyword)).length;
-            const minRequired = Math.ceil((keywords.length || 0) * 0.5);
-            const keywordMatch = matches >= minRequired && minRequired > 0;
-
-            if (section.label === 'Cronograma del proyecto') {
-              const expectedDates = extractDates(expectedItem);
-              const studentDates = extractDates(studentItem);
-              if (expectedDates.length === 0 || studentDates.length === 0) {
-                return keywordMatch;
-              }
-              if (expectedDates.length >= 2 && expectedDates[0] > expectedDates[1]) {
-                return keywordMatch;
-              }
-              const dateMatch = datesAreConcordant(expectedItem, studentItem, 3);
-              return keywordMatch && dateMatch;
-            }
-
-            return keywordMatch;
-          });
-        });
-
-        const matchedCount = matchesPerItem.filter(Boolean).length;
-        const requiredItems = Math.max(1, Math.ceil(expectedItems.length * 0.7));
-
-        if (section.label === 'Costos y recursos') {
-          const expectedRaw = expectedArray.filter(Boolean);
-          const studentRaw = studentArray.filter(Boolean);
-          const expectedTotal = computeCostsTotalSafe(expectedRaw);
-          const studentTotal = computeCostsTotalSafe(studentRaw);
-          if (expectedTotal !== null && studentTotal !== null) {
-            const diffRatio = Math.abs(expectedTotal - studentTotal) / expectedTotal;
-            console.log('[COSTOS] Total esperado vs estudiante:', {
-              esperado: expectedTotal,
-              estudiante: studentTotal,
-              diferencia: diffRatio
-            });
-            if (diffRatio > 0.30) {
-              return { criterio: section.label, cumplido: false };
-            }
-          } else {
-            console.log('[COSTOS] Total no disponible para validar:', {
-              esperado: expectedTotal,
-              estudiante: studentTotal,
-              esperadoRaw: expectedRaw,
-              estudianteRaw: studentRaw
-            });
-          }
-
-          let conceptMisses = 0;
-          let unitMisses = 0;
-
-          expectedItems.forEach((expectedItem) => {
-            const expectedParsedItem = parseCostItem(expectedItem);
-            const expectedConceptKeywords = extractKeywords(expectedParsedItem.concept);
-            const bestMatch = studentItems.find((studentItem) => {
-              const studentParsedItem = parseCostItem(studentItem);
-              const conceptMatches = expectedConceptKeywords.filter(keyword => studentParsedItem.concept.includes(keyword)).length;
-              const conceptRequired = Math.ceil((expectedConceptKeywords.length || 0) * 0.5);
-              return expectedConceptKeywords.length === 0 ? true : conceptMatches >= conceptRequired;
-            });
-
-            if (!bestMatch) {
-              console.log('[COSTOS] Concepto NO coincide:', { esperado: expectedItem });
-              conceptMisses += 1;
-              unitMisses += 1;
-              return;
-            }
-
-            const studentParsedItem = parseCostItem(bestMatch);
-            console.log('[COSTOS] Concepto OK:', {
-              esperado: expectedItem,
-              estudiante: bestMatch
-            });
-            if (expectedParsedItem.unit !== null) {
-              if (studentParsedItem.unit === null || !numberWithinTolerance(expectedParsedItem.unit, studentParsedItem.unit, 0.2)) {
-                console.log('[COSTOS] Costo unitario NO coincide:', {
-                  esperado: expectedParsedItem.unit,
-                  estudiante: studentParsedItem.unit
-                });
-                unitMisses += 1;
-              } else {
-                console.log('[COSTOS] Costo unitario OK:', {
-                  esperado: expectedParsedItem.unit,
-                  estudiante: studentParsedItem.unit
-                });
-              }
-            }
-          });
-
-          if (conceptMisses >= 2 || unitMisses >= 2) {
-            return { criterio: section.label, cumplido: false };
-          }
-        }
-
-        return { criterio: section.label, cumplido: matchedCount >= requiredItems };
-      }
-
-      const keywords = extractKeywords(section.expected);
-      const normalizedStudent = normalizeText(section.student || '');
-      const matches = keywords.filter(keyword => normalizedStudent.includes(keyword)).length;
-      const minRequired = Math.min(3, keywords.length || 0);
-      const ratioRequired = Math.ceil((keywords.length || 0) * 0.5);
-      const matched = matches >= minRequired && matches >= ratioRequired && minRequired > 0;
-      return { criterio: section.label, cumplido: matched };
-    });
-
-    const cumplidos = results.filter(r => r.cumplido).length;
-    const puntaje = Math.round((cumplidos / results.length) * 100);
-
-    return {
-      puntaje,
-      totalCriterios: results.length,
-      criteriosCumplidos: cumplidos,
-      criterios: results
-    };
+    return buildStructuredRubric(expectedParsed, studentParsed);
   }
 
   const expectedText = expectedParsed?.toString?.() ?? expectedResponseValue?.toString?.() ?? '';
@@ -480,7 +566,16 @@ const upsertEvaluacionMiniproyecto = async ({ estudianteId, miniproyectoId, eval
 ========================= */
 const crearRespuestaMiniproyecto = async (req, res) => {
   try {
-    const { respuesta, estudiante_id, miniproyecto_id, estado } = req.body;
+    const { respuesta, miniproyecto_id, estado } = req.body;
+    const ownership = resolveStudentOwnership(req, req.body?.estudiante_id);
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({ mensaje: ownership.message });
+    }
+
+    const estudiante_id = ownership.estudianteId;
+    if (!estudiante_id) {
+      return res.status(400).json({ mensaje: 'estudiante_id es requerido.' });
+    }
 
     // Validar existencia de Estudiante
     const estudiante = await Estudiante.findByPk(estudiante_id);
@@ -585,7 +680,18 @@ const crearRespuestaMiniproyecto = async (req, res) => {
 ========================= */
 const obtenerRespuestasMiniproyecto = async (req, res) => {
   try {
+    const where = {};
+
+    if (req.tipoUsuario === 'ESTUDIANTE') {
+      const estudianteId = getAuthenticatedStudentId(req);
+      if (!estudianteId) {
+        return res.status(403).json({ mensaje: 'Solo los estudiantes autenticados pueden consultar sus respuestas.' });
+      }
+      where.estudiante_id = estudianteId;
+    }
+
     const respuestas = await RespuestaEstudianteMiniproyecto.findAll({
+      where,
       include: [
         { model: Estudiante, as: "estudiante" },
         { model: Miniproyecto, as: "miniproyecto" },
@@ -620,6 +726,13 @@ const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
       });
     }
 
+    if (req.tipoUsuario === 'ESTUDIANTE') {
+      const estudianteId = getAuthenticatedStudentId(req);
+      if (!estudianteId || Number(respuesta.estudiante_id) !== estudianteId) {
+        return res.status(403).json({ mensaje: 'No puedes consultar respuestas de otro estudiante.' });
+      }
+    }
+
     res.json(respuesta);
   } catch (error) {
     res.status(500).json({
@@ -635,7 +748,7 @@ const obtenerRespuestaMiniproyectoPorId = async (req, res) => {
 const actualizarRespuestaMiniproyecto = async (req, res) => {
   try {
     const { id } = req.params;
-    const { estudiante_id, miniproyecto_id, respuesta: respuestaBody } = req.body;
+    const { miniproyecto_id, respuesta: respuestaBody, estado } = req.body;
 
     const respuestaRegistro = await RespuestaEstudianteMiniproyecto.findByPk(id);
     if (!respuestaRegistro) {
@@ -644,14 +757,19 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
       });
     }
 
+    const ownership = resolveStudentOwnership(req, respuestaRegistro.estudiante_id);
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({ mensaje: ownership.message });
+    }
+
+    const estudiante_id = ownership.estudianteId || Number(respuestaRegistro.estudiante_id);
+
     // Validar llaves foráneas si vienen en el body
-    if (estudiante_id) {
-      const estudiante = await Estudiante.findByPk(estudiante_id);
-      if (!estudiante) {
-        return res.status(400).json({
-          mensaje: `No existe un estudiante con id ${estudiante_id}`,
-        });
-      }
+    const estudiante = await Estudiante.findByPk(estudiante_id);
+    if (!estudiante) {
+      return res.status(400).json({
+        mensaje: `No existe un estudiante con id ${estudiante_id}`,
+      });
     }
 
     if (miniproyecto_id) {
@@ -711,6 +829,7 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
 
     await respuestaRegistro.update({
       ...req.body,
+      estudiante_id,
       ...(respuestaBody !== undefined && { respuesta: respuestaPayload })
     });
 
@@ -740,6 +859,11 @@ const eliminarRespuestaMiniproyecto = async (req, res) => {
       });
     }
 
+    const ownership = resolveStudentOwnership(req, respuesta.estudiante_id);
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({ mensaje: ownership.message });
+    }
+
     await respuesta.destroy();
 
     res.json({
@@ -758,7 +882,13 @@ const eliminarRespuestaMiniproyecto = async (req, res) => {
 ========================= */
 const verificarMiniproyectoCompletado = async (req, res) => {
   try {
-    const { miniproyecto_id, estudiante_id } = req.query;
+    const { miniproyecto_id } = req.query;
+    const ownership = resolveStudentOwnership(req, req.query?.estudiante_id);
+    if (!ownership.ok) {
+      return res.status(ownership.status).json({ message: ownership.message });
+    }
+
+    const estudiante_id = ownership.estudianteId ?? Number(req.query?.estudiante_id);
 
     if (!miniproyecto_id || !estudiante_id) {
       return res.status(400).json({
@@ -782,7 +912,7 @@ const verificarMiniproyectoCompletado = async (req, res) => {
       where: {
         estudiante_id: esId,
         miniproyecto_id: mId,
-        estado: 'Completado'
+        estado: 'COMPLETADO'
       }
     });
 
@@ -791,8 +921,8 @@ const verificarMiniproyectoCompletado = async (req, res) => {
         completado: true,
         miniproyecto_id: mId,
         estudiante_id: esId,
-        estado: 'Completado',
-        fecha_respuesta: respuesta.createdAt,
+        estado: 'COMPLETADO',
+        fecha_respuesta: respuesta.fecha_creacion,
         mensaje: "El miniproyecto ha sido completado"
       });
     }
@@ -802,7 +932,7 @@ const verificarMiniproyectoCompletado = async (req, res) => {
       completado: false,
       miniproyecto_id: mId,
       estudiante_id: esId,
-      estado: 'No completado',
+      estado: 'NO_COMPLETADO',
       mensaje: "El miniproyecto no ha sido completado"
     });
 
