@@ -5,6 +5,29 @@ const path = require('path');
 // Instancia global del RAGManager
 let ragManager = null;
 
+function buildRagManager(provider) {
+    if (provider === 'ollama') {
+        return new RAGManager({
+            provider: 'ollama',
+            ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
+            modelName: process.env.OLLAMA_MODEL || 'llama3.2',
+            temperature: parseFloat(process.env.OLLAMA_TEMPERATURE || '0.2'),
+            maxTokens: parseInt(process.env.OLLAMA_MAX_TOKENS || '256', 10),
+            chunkSize: 1000,
+            chunkOverlap: 200,
+        });
+    }
+
+    return new RAGManager({
+        provider: 'groq',
+        groqApiKey: process.env.GROQ_API_KEY,
+        modelName: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
+        temperature: parseFloat(process.env.GROQ_TEMPERATURE || '0.7'),
+        chunkSize: 1000,
+        chunkOverlap: 200,
+    });
+}
+
 /**
  * Inicializar RAGManager al arrancar el servidor
  */
@@ -12,6 +35,7 @@ const initializeRAG = async () => {
     try {
         const useOllama = !!process.env.OLLAMA_BASE_URL;
         const useGroq = !!process.env.GROQ_API_KEY;
+        const preferredProvider = (process.env.LLM_PROVIDER || '').trim().toLowerCase();
 
         if (!useOllama && !useGroq) {
             console.warn('⚠️ Ni OLLAMA_BASE_URL ni GROQ_API_KEY encontradas. El chatbot no estará disponible.');
@@ -21,22 +45,40 @@ const initializeRAG = async () => {
         // Debug simple: mostrar qué variables de entorno se detectaron (no mostrar claves)
         console.log(`🔎 Env detectados: OLLAMA_BASE_URL=${useOllama ? process.env.OLLAMA_BASE_URL : 'no'}, GROQ_API_KEY=${useGroq ? 'si' : 'no'}`);
 
-        if (useOllama) {
-            ragManager = new RAGManager({
-                ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
-                modelName: process.env.OLLAMA_MODEL || 'llama3.2',
-                temperature: parseFloat(process.env.OLLAMA_TEMPERATURE || '0.2'),
-                chunkSize: 1000,
-                chunkOverlap: 200,
-            });
-        } else {
-            ragManager = new RAGManager({
-                groqApiKey: process.env.GROQ_API_KEY,
-                modelName: 'llama-3.3-70b-versatile',
-                temperature: 0.7,
-                chunkSize: 1000,
-                chunkOverlap: 200,
-            });
+        if (preferredProvider && !['ollama', 'groq'].includes(preferredProvider)) {
+            console.warn(`⚠️ LLM_PROVIDER inválido: ${preferredProvider}. Se ignorará ese valor.`);
+        }
+
+        const providerOrder = [];
+
+        if (preferredProvider === 'groq' && useGroq) providerOrder.push('groq');
+        if (preferredProvider === 'ollama' && useOllama) providerOrder.push('ollama');
+        if (useOllama && !providerOrder.includes('ollama')) providerOrder.push('ollama');
+        if (useGroq && !providerOrder.includes('groq')) providerOrder.push('groq');
+
+        for (const provider of providerOrder) {
+            const candidate = buildRagManager(provider);
+
+            if (provider === 'ollama') {
+                const availability = await candidate.checkProviderAvailability();
+                if (!availability.ok) {
+                    console.error(`❌ Ollama no disponible durante inicialización: ${availability.error.message}`);
+                    if (useGroq) {
+                        console.log('↪️ Se usará Groq como fallback para el chatbot.');
+                        continue;
+                    }
+                    throw availability.error;
+                }
+                console.log(`✅ Ollama disponible vía ${availability.endpoint}`);
+            }
+
+            ragManager = candidate;
+            break;
+        }
+
+        if (!ragManager) {
+            console.warn('⚠️ No se pudo inicializar ningún proveedor LLM para el chatbot.');
+            return;
         }
 
         // Intentar cargar PDFs existentes en uploads/chatbot-docs/
