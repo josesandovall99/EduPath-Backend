@@ -23,9 +23,35 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: false
     },
+    codigoEstructura: {
+      type: DataTypes.VIRTUAL,
+      get() {
+        const configuracion = this.getDataValue('configuracion') || {};
+        return configuracion?.metodo?.plantilla || null;
+      },
+      set(value) {
+        const configuracionActual = this.getDataValue('configuracion') || {};
+        const metodoActual = configuracionActual.metodo || {};
+
+        this.setDataValue('configuracion', {
+          ...configuracionActual,
+          metodo: {
+            ...metodoActual,
+            plantilla: value || null,
+          },
+        });
+      }
+    },
     configuracion: {
       // Estructura dinámica para preguntas/respuestas por área
-      // Compilador: { tipo: 'programacion', esperado: '...', lenguajesPermitidos?: [ids] }
+      // Compilador: {
+      //   tipo: 'programacion',
+      //   esperado?: '...' (compatibilidad),
+      //   lenguajesPermitidos?: [ids],
+      //   metodo?: { nombre, retorno, parametros, plantilla },
+      //   casos_prueba?: [{ inputs: '5,3', output: '8' }, ...],
+      //   sintaxis?: ['for', 'while']
+      // }
       // Diagramas UML / Preguntas: { tipo: 'cuestionario', preguntas: [{ id, enunciado, tipo, opciones?, respuesta_correcta? }] }
       // Opción única: { tipo: 'opcion-unica', enunciado: '...', opciones: [...], respuestaCorrecta: '...' }
       // Ordenar: { tipo: 'ordenar', enunciado: '...', items: [...] }

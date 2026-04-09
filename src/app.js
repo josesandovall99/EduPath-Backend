@@ -121,7 +121,7 @@ const PORT = process.env.PORT || 4000;
 // .sync({ alter: true }) creará las tablas automáticamente en la nueva BD de Render
 db.sequelize.sync({ alter: true })
     .then(async () => {
-        console.log('✅ Base de datos sincronizada con éxito en Render');
+        console.log('✅ Base de datos sincronizada con exito');
         
         // Inicializar Chatbot RAG
         await initializeRAG();
@@ -131,6 +131,14 @@ db.sequelize.sync({ alter: true })
         });
     })
     .catch((err) => {
-        console.error('❌ No se pudo conectar a la base de datos de Render:', err.message);
-        console.log('Asegúrate de haber añadido tu IP en "Access Control" dentro del dashboard de Render.');
+        console.error('❌ No se pudo conectar a la base de datos:', err.message);
+        if (err.code === 'ENOTFOUND') {
+            console.log('El host configurado no se pudo resolver desde tu PC. Si usas Supabase localmente, prefiere DATABASE_URL con el pooler IPv4 del proyecto.');
+        } else if (err.code === 'ECONNREFUSED') {
+            console.log('El host resolvio, pero rechazo la conexion. Verifica puerto, SSL y acceso externo.');
+        } else if (err.code === '28P01') {
+            console.log('Las credenciales de PostgreSQL son invalidas. Revisa usuario y contrasena.');
+        } else {
+            console.log('Revisa DATABASE_URL o las variables DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD y DB_SSL.');
+        }
     });

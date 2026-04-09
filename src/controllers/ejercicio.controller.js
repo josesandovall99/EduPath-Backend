@@ -1,5 +1,6 @@
 const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion, Tema } = require('../models');
 const evaluacionController = require('./evaluacion.controller');
+const { normalizarConfiguracionCompilador, validarConfiguracionCompilador } = require('../utils/compilerExercise');
 // Bloqueos en memoria por envío en curso (clave: estudianteId:ejercicioId)
 const submissionLocks = new Map();
 const umlValidator = require('../services/umlValidator');
@@ -54,7 +55,7 @@ exports.createEjercicio = async (req, res) => {
     let configuracion = ejercicio.configuracion || null;
     if (!configuracion) {
       if (tipo === 'Compilador') {
-        configuracion = { tipo: 'programacion', esperado: ejercicio.resultado_ejercicio || '' };
+        configuracion = { tipo: 'programacion', esperado: ejercicio.resultado_ejercicio || '', casos_prueba: [] };
       } else if (tipo === 'Diagramas UML') {
         configuracion = { opciones: { minClasses: 2, requireRelationships: false, requireMultiplicities: false } };
       } else if (tipo === 'Opción única') {
@@ -68,6 +69,25 @@ exports.createEjercicio = async (req, res) => {
       }
     }
 
+    let codigoEstructura = ejercicio.codigoEstructura || null;
+    if (tipo === 'Compilador') {
+      configuracion = normalizarConfiguracionCompilador({
+        configuracion,
+        codigoEstructura,
+        resultadoEjercicio: ejercicio.resultado_ejercicio
+      });
+      codigoEstructura = codigoEstructura || configuracion?.metodo?.plantilla || null;
+
+      const validacionCompilador = validarConfiguracionCompilador({ configuracion, codigoEstructura });
+      if (!validacionCompilador.ok) {
+        await t.rollback();
+        return res.status(400).json({
+          message: 'Configuración inválida para ejercicio de compilador',
+          errores: validacionCompilador.errores
+        });
+      }
+    }
+
     const nuevoEjercicio = await Ejercicio.create(
       {
         id: nuevaActividad.id, // herencia: mismo PK que Actividad
@@ -75,6 +95,7 @@ exports.createEjercicio = async (req, res) => {
         tipo_ejercicio: tipo,
         puntos: ejercicio.puntos,
         resultado_ejercicio: ejercicio.resultado_ejercicio,
+        codigoEstructura,
         configuracion
       },
       { transaction: t }
@@ -97,6 +118,7 @@ exports.createEjercicio = async (req, res) => {
 exports.getEjercicios = async (req, res) => {
   try {
     let ejercicios = [];
+    const contenidoId = req.query.contenido_id ? parseInt(req.query.contenido_id, 10) : null;
 
     if (req.docenteAreaId) {
       const temas = await Tema.findAll({
@@ -119,18 +141,25 @@ exports.getEjercicios = async (req, res) => {
         return res.json([]);
       }
 
+      const where = { contenido_id: contenidoIds };
+      if (contenidoId) {
+        where.contenido_id = contenidoIds.filter((id) => parseInt(id, 10) === contenidoId);
+      }
+
       ejercicios = await Ejercicio.findAll({
-        where: { contenido_id: contenidoIds },
+        where,
         include: [
           { model: Actividad, as: 'actividad' },
-          { model: Contenido }
+          { model: Contenido, as: 'contenido' }
         ]
       });
     } else {
+      const where = contenidoId ? { contenido_id: contenidoId } : undefined;
       ejercicios = await Ejercicio.findAll({
+        where,
         include: [
           { model: Actividad, as: 'actividad' },
-          { model: Contenido }
+          { model: Contenido, as: 'contenido' }
         ]
       });
     }
@@ -150,11 +179,11 @@ exports.getEjercicioById = async (req, res) => {
       ejercicio = await Ejercicio.findByPk(req.params.id, {
         include: [
           { model: Actividad, as: 'actividad' },
-          { model: Contenido, include: [{ model: Tema, attributes: ['area_id'] }] }
+          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['area_id'] }] }
         ]
       });
-      if (ejercicio?.Contenido?.Tema) {
-        const areaId = ejercicio.Contenido.Tema.area_id;
+      if (ejercicio?.contenido?.Tema) {
+        const areaId = ejercicio.contenido.Tema.area_id;
         if (parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
           return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
         }
@@ -163,7 +192,7 @@ exports.getEjercicioById = async (req, res) => {
       ejercicio = await Ejercicio.findByPk(req.params.id, {
         include: [
           { model: Actividad, as: 'actividad' },
-          { model: Contenido }
+          { model: Contenido, as: 'contenido' }
         ]
       });
     }
@@ -236,12 +265,37 @@ exports.updateEjercicio = async (req, res) => {
     if (req.body.ejercicio) {
       const data = { ...req.body.ejercicio };
       if (data.tipo_ejercicio) {
-        const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas'];
+        const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'];
         if (!TIPOS_PERMITIDOS.includes(data.tipo_ejercicio)) {
           await t.rollback();
           return res.status(400).json({ message: `tipo_ejercicio inválido. Use uno de: ${TIPOS_PERMITIDOS.join(', ')}` });
         }
       }
+
+      if ((data.tipo_ejercicio || ejercicio.tipo_ejercicio) === 'Compilador') {
+        data.configuracion = normalizarConfiguracionCompilador({
+          configuracion: data.configuracion || ejercicio.configuracion || {},
+          codigoEstructura: data.codigoEstructura || ejercicio.codigoEstructura,
+          resultadoEjercicio: data.resultado_ejercicio || ejercicio.resultado_ejercicio
+        });
+
+        const codigoEstructura = data.codigoEstructura || ejercicio.codigoEstructura || data.configuracion?.metodo?.plantilla;
+        data.codigoEstructura = codigoEstructura;
+
+        const validacionCompilador = validarConfiguracionCompilador({
+          configuracion: data.configuracion,
+          codigoEstructura
+        });
+
+        if (!validacionCompilador.ok) {
+          await t.rollback();
+          return res.status(400).json({
+            message: 'Configuración inválida para ejercicio de compilador',
+            errores: validacionCompilador.errores
+          });
+        }
+      }
+
       await ejercicio.update(data, { transaction: t });
     }
 
@@ -525,6 +579,7 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
     // Para compilador, delegamos en el controlador de evaluación
     if (ejercicio.tipo_ejercicio === 'Compilador') {
       if (!req.body.ejercicio_id) req.body.ejercicio_id = parseInt(ejercicioId, 10);
+      if (!req.body.lenguaje_id) req.body.lenguaje_id = 62;
       submissionLocks.delete(key);
       return evaluacionController.evaluarCompilador(req, res);
     }

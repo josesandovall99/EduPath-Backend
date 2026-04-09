@@ -2,6 +2,9 @@ const axios = require('axios');
 const acorn = require('acorn');
 const db = require('../models');
 const { Evaluacion, Estudiante, Ejercicio, Miniproyecto, RespuestaEstudianteEjercicio } = db;
+const evaluadorCasos = require('../services/evaluadorCasosPrueba');
+const { normalizarCodigoJavaEstudiante, tieneMainJava } = require('../utils/javaWrapper');
+const { normalizarConfiguracionCompilador, validarConfiguracionCompilador } = require('../utils/compilerExercise');
 
 const JUDGE0_URL = process.env.JUDGE0_URL;
 const JUDGE0_KEY = process.env.JUDGE0_KEY;
@@ -21,6 +24,59 @@ const validarFKs = async (estudiante_id, ejercicio_id, miniproyecto_id) => {
     if (!existe) throw new Error(`El miniproyecto_id (${miniproyecto_id}) no existe.`);
   }
 };
+
+function obtenerCodigoCompilador(body = {}) {
+  if (typeof body?.codigo === 'string' && body.codigo.trim()) {
+    return body.codigo;
+  }
+
+  if (typeof body?.respuesta?.codigo === 'string' && body.respuesta.codigo.trim()) {
+    return body.respuesta.codigo;
+  }
+
+  if (typeof body?.respuesta?.texto === 'string' && body.respuesta.texto.trim()) {
+    return body.respuesta.texto;
+  }
+
+  if (typeof body?.respuesta === 'string' && body.respuesta.trim()) {
+    return body.respuesta;
+  }
+
+  return '';
+}
+
+async function cargarEjercicioCompilador(ejercicio_id) {
+  const ejercicio = await Ejercicio.findByPk(ejercicio_id);
+  if (!ejercicio) {
+    return { error: { status: 404, message: 'Ejercicio no encontrado' } };
+  }
+
+  if (ejercicio.tipo_ejercicio !== 'Compilador') {
+    return { error: { status: 400, message: 'El ejercicio no es de tipo Compilador' } };
+  }
+
+  const configuracion = normalizarConfiguracionCompilador({
+    configuracion: ejercicio.configuracion || {},
+    codigoEstructura: ejercicio.codigoEstructura,
+    resultadoEjercicio: ejercicio.resultado_ejercicio
+  });
+
+  const validacionConfiguracion = validarConfiguracionCompilador({
+    configuracion,
+    codigoEstructura: ejercicio.codigoEstructura
+  });
+
+  if (!validacionConfiguracion.ok) {
+    return {
+      error: {
+        status: 500,
+        message: `Configuracion invalida del ejercicio: ${validacionConfiguracion.errores.join('; ')}`
+      }
+    };
+  }
+
+  return { ejercicio, configuracion };
+}
 
 exports.create = async (req, res) => {
   try {
@@ -397,14 +453,9 @@ exports.evaluarCompilador = async (req, res) => {
     const ejercicio_id = req.body.ejercicio_id || req.params.ejercicioId || req.params.id;
     const { estudiante_id, lenguaje_id } = req.body || {};
     const lenguajeIdNum = parseInt(lenguaje_id, 10);
-    const codigo =
-      req.body?.codigo ||
-      req.body?.respuesta ||
-      req.body?.respuesta?.codigo ||
-      req.body?.respuesta?.texto ||
-      '';
+    const codigoOriginal = obtenerCodigoCompilador(req.body);
 
-    if (!ejercicio_id || !lenguaje_id || isNaN(lenguajeIdNum) || !codigo) {
+    if (!ejercicio_id || !lenguaje_id || isNaN(lenguajeIdNum) || !codigoOriginal) {
       return res.status(400).json({ message: 'Faltan campos: ejercicio_id, lenguaje_id, codigo' });
     }
 
@@ -412,21 +463,20 @@ exports.evaluarCompilador = async (req, res) => {
       await validarFKs(estudiante_id, ejercicio_id, null);
     }
 
-    const ejercicio = await Ejercicio.findByPk(ejercicio_id);
-    if (!ejercicio) {
-      return res.status(404).json({ message: 'Ejercicio no encontrado' });
-    }
-    if (ejercicio.tipo_ejercicio !== 'Compilador') {
-      return res.status(400).json({ message: 'El ejercicio no es de tipo Compilador' });
+    const cargaCompilador = await cargarEjercicioCompilador(ejercicio_id);
+    if (cargaCompilador.error) {
+      return res.status(cargaCompilador.error.status).json({ message: cargaCompilador.error.message });
     }
 
-    const configuracion = ejercicio.configuracion || {};
+    const { ejercicio, configuracion } = cargaCompilador;
+    const codigo = normalizarCodigoJavaEstudiante(codigoOriginal, configuracion.metodo);
 
     const registrarIntentoEjercicio = async ({ estadoIntento, meta = {} }) => {
       if (!estudiante_id) return null;
 
       const respuestaPayload = {
-        codigo,
+        codigo: codigoOriginal,
+        codigoNormalizado: codigo,
         lenguaje_id: lenguajeIdNum,
         ...meta
       };
@@ -456,141 +506,227 @@ exports.evaluarCompilador = async (req, res) => {
       return { id: creado.id, contador: 1 };
     };
 
+    const responderNoCumple = async ({ resumen, erroresSintaxis = [], casosPrueba = [], stdout = '', stderr = '', esperado = '', obtenido = '' }) => {
+      const intentoActual = await registrarIntentoEjercicio({
+        estadoIntento: 'REPROBADO',
+        meta: {
+          resultado: 'NO CUMPLE',
+          esCorrecta: false,
+          casosPrueba,
+          resumen,
+          erroresSintaxis,
+          stdout,
+          stderr,
+          esperado,
+          obtenido
+        }
+      });
+
+      return res.status(400).json({
+        resultado: 'NO CUMPLE',
+        esCorrecta: false,
+        puntosObtenidos: 0,
+        contador: intentoActual?.contador,
+        casosPrueba,
+        resumen,
+        retroalimentacion: resumen,
+        erroresSintaxis,
+        stdout,
+        stderr,
+        esperado,
+        obtenido
+      });
+    };
+
+    const responderErrorTecnico = async ({ message, statusCode = 502, detalle }) => {
+      const intentoActual = await registrarIntentoEjercicio({
+        estadoIntento: 'ERROR_TECNICO',
+        meta: {
+          errorTecnico: true,
+          error: message,
+          detalle
+        }
+      });
+
+      return res.status(statusCode).json({
+        errorTecnico: true,
+        resultado: null,
+        esCorrecta: null,
+        contador: intentoActual?.contador,
+        message,
+        error: message,
+        detalle
+      });
+    };
+
     const lenguajesPermitidos = configuracion.lenguajesPermitidos;
     if (Array.isArray(lenguajesPermitidos) && lenguajesPermitidos.length > 0) {
       if (!lenguajesPermitidos.includes(lenguajeIdNum)) {
-        await registrarIntentoEjercicio({
-          estadoIntento: 'REPROBADO',
-          meta: {
-            esCorrecta: false,
-            motivo: 'Lenguaje no permitido'
-          }
+        return responderNoCumple({
+          resumen: 'NO CUMPLE: el lenguaje enviado no esta permitido para este ejercicio.'
         });
-        return res.status(400).json({ message: 'Lenguaje no permitido para este ejercicio' });
       }
+    }
+
+    if (lenguajeIdNum !== 62) {
+      return responderNoCumple({
+        resumen: 'NO CUMPLE: el ejercicio de programacion solo admite Java.'
+      });
+    }
+
+    if (tieneMainJava(codigo)) {
+      return responderNoCumple({
+        resumen: 'NO CUMPLE: no fue posible aislar correctamente el metodo enviado desde la clase Java.'
+      });
     }
 
     const validacionSintaxis = validarSintaxis(codigo, configuracion, lenguajeIdNum);
     if (!validacionSintaxis.ok) {
-      await registrarIntentoEjercicio({
-        estadoIntento: 'REPROBADO',
-        meta: {
-          esCorrecta: false,
-          estado: 'Sintaxis inválida',
-          erroresSintaxis: validacionSintaxis.errores
-        }
-      });
-      return res.status(400).json({
-        esCorrecta: false,
-        estado: 'Sintaxis inválida',
+      return responderNoCumple({
+        resumen: `NO CUMPLE: no satisface las restricciones o la estructura requerida. ${validacionSintaxis.errores.join('; ')}`,
         erroresSintaxis: validacionSintaxis.errores
       });
     }
 
-    if (!JUDGE0_URL) {
-      return res.status(500).json({ message: 'JUDGE0_URL no está configurada.' });
-    }
-    const salidaManual = req.body?.salida || req.body?.stdout || req.body?.output;
+    const resultadoEvaluacion = await evaluadorCasos.evaluarCasosPrueba(
+      codigo,
+      lenguajeIdNum,
+      configuracion.casos_prueba,
+      configuracion.metodo
+    );
 
-    let result = {};
-    let stdoutHumano = '';
-    let stderrHumano = '';
-    let compileOutput = '';
-
-    if (typeof salidaManual === 'string') {
-      stdoutHumano = salidaManual;
-      result.status = { id: 3, description: 'Manual' };
-    } else {
-      const usarRapidApi = !!JUDGE0_KEY;
-      const headers = usarRapidApi
-        ? {
-            'x-rapidapi-key': JUDGE0_KEY,
-            'x-rapidapi-host': 'judge0-ce.p.rapidapi.com'
-          }
-        : undefined;
-
-      const response = await axios.post(
-        `${JUDGE0_URL}/submissions?base64_encoded=true&wait=true`,
-        {
-          source_code: codificar(codigo),
-          language_id: lenguajeIdNum
-        },
-        headers ? { headers } : undefined
-      );
-
-      result = response.data || {};
-      stdoutHumano = result.stdout ? decodificar(result.stdout) : '';
-      stderrHumano = result.stderr ? decodificar(result.stderr) : '';
-      compileOutput = result.compile_output ? decodificar(result.compile_output) : '';
-    }
-    const esperado = normalizarSalida(configuracion.esperado || ejercicio.resultado_ejercicio);
-    const obtenido = normalizarSalida(stdoutHumano);
-
-    const sinErrores = !stderrHumano && !compileOutput && result.status?.id === 3;
-    const esCorrecta = sinErrores && obtenido === esperado && esperado !== '';
-
-    const intentoActual = await registrarIntentoEjercicio({
-      estadoIntento: esCorrecta ? 'APROBADO' : 'REPROBADO',
-      meta: {
-        esCorrecta,
-        stdout: stdoutHumano,
-        stderr: stderrHumano || compileOutput,
-        esperado,
-        obtenido,
-        estado: esCorrecta ? 'Aprobado' : (result.status?.description || 'Reprobado')
-      }
-    });
-
-    if (esCorrecta) {
-      if (!estudiante_id) {
-        return res.status(200).json({
-          esCorrecta,
-          puntosObtenidos: ejercicio.puntos,
-          stdout: stdoutHumano,
-          stderr: stderrHumano || compileOutput,
-          esperado,
-          obtenido
-        });
-      }
-
-      const evalWhere = { estudiante_id, ejercicio_id };
-      const payloadEval = {
-        calificacion: ejercicio.puntos,
-        retroalimentacion: 'Aprobado automáticamente. Salida y sintaxis correctas.',
-        estudiante_id,
-        ejercicio_id,
-        estado: 'Aprobado'
-      };
-      const existenteEval = await Evaluacion.findOne({ where: evalWhere });
-      if (existenteEval) {
-        await existenteEval.update(payloadEval);
-      } else {
-        await Evaluacion.create(payloadEval);
-      }
-
-      return res.status(200).json({
-        esCorrecta,
-        puntosObtenidos: ejercicio.puntos,
-        contador: intentoActual?.contador,
-        stdout: stdoutHumano,
-        stderr: stderrHumano || compileOutput,
-        esperado,
-        obtenido
+    if (resultadoEvaluacion.errorTecnico || resultadoEvaluacion.errorConfiguracion) {
+      return responderErrorTecnico({
+        statusCode: resultadoEvaluacion.errorConfiguracion ? 500 : 502,
+        message: resultadoEvaluacion.resumen,
+        detalle: resultadoEvaluacion.resultados
       });
     }
 
-    return res.status(400).json({
-      esCorrecta,
-      puntosObtenidos: 0,
-      contador: intentoActual?.contador,
-      stdout: stdoutHumano,
-      stderr: stderrHumano || compileOutput,
-      esperado,
-      obtenido,
-      estado: result.status?.description || 'Reprobado'
+    const casoReferencia = resultadoEvaluacion.resultados.find((caso) => caso.ejecutado && !caso.omitido && !caso.paso)
+      || resultadoEvaluacion.resultados.find((caso) => caso.ejecutado && !caso.omitido)
+      || {};
+
+    const intentoActual = await registrarIntentoEjercicio({
+      estadoIntento: resultadoEvaluacion.aprobado ? 'APROBADO' : 'REPROBADO',
+      meta: {
+        resultado: resultadoEvaluacion.resultado,
+        esCorrecta: resultadoEvaluacion.aprobado,
+        casosPrueba: resultadoEvaluacion.resultados,
+        resumen: resultadoEvaluacion.resumen
+      }
     });
+
+    const respuestaComun = {
+      resultado: resultadoEvaluacion.aprobado ? 'CUMPLE' : 'NO CUMPLE',
+      esCorrecta: resultadoEvaluacion.aprobado,
+      puntosObtenidos: resultadoEvaluacion.aprobado ? ejercicio.puntos : 0,
+      contador: intentoActual?.contador,
+      casosPrueba: resultadoEvaluacion.resultados,
+      resumen: resultadoEvaluacion.resumen,
+      retroalimentacion: resultadoEvaluacion.resumen,
+      stdout: casoReferencia.outputObtenido || '',
+      stderr: resultadoEvaluacion.aprobado ? '' : (casoReferencia.error || ''),
+      esperado: casoReferencia.outputEsperado || '',
+      obtenido: normalizarSalida(casoReferencia.outputObtenido || '')
+    };
+
+    if (resultadoEvaluacion.aprobado) {
+      if (estudiante_id) {
+        const evalWhere = { estudiante_id, ejercicio_id };
+        const payloadEval = {
+          calificacion: ejercicio.puntos,
+          retroalimentacion: resultadoEvaluacion.resumen,
+          estudiante_id,
+          ejercicio_id,
+          estado: 'Aprobado'
+        };
+        const existenteEval = await Evaluacion.findOne({ where: evalWhere });
+        if (existenteEval) {
+          await existenteEval.update(payloadEval);
+        } else {
+          await Evaluacion.create(payloadEval);
+        }
+      }
+
+      return res.status(200).json(respuestaComun);
+    }
+
+    return res.status(400).json(respuestaComun);
   } catch (e) {
     res.status(500).json({ error: e.message || e });
+  }
+};
+
+exports.ejecutarCompilador = async (req, res) => {
+  try {
+    const ejercicio_id = req.body.ejercicio_id || req.params.ejercicioId || req.params.id;
+    const lenguajeIdNum = parseInt(req.body?.lenguaje_id || 62, 10);
+    const codigoOriginal = obtenerCodigoCompilador(req.body);
+
+    if (!ejercicio_id || isNaN(lenguajeIdNum) || !codigoOriginal) {
+      return res.status(400).json({ message: 'Faltan campos: ejercicio_id, lenguaje_id, codigo' });
+    }
+
+    const cargaCompilador = await cargarEjercicioCompilador(ejercicio_id);
+    if (cargaCompilador.error) {
+      return res.status(cargaCompilador.error.status).json({ message: cargaCompilador.error.message });
+    }
+
+    const { configuracion } = cargaCompilador;
+    const codigo = normalizarCodigoJavaEstudiante(codigoOriginal, configuracion.metodo);
+    const lenguajesPermitidos = configuracion.lenguajesPermitidos;
+
+    if (Array.isArray(lenguajesPermitidos) && lenguajesPermitidos.length > 0 && !lenguajesPermitidos.includes(lenguajeIdNum)) {
+      return res.status(400).json({ message: 'El lenguaje enviado no esta permitido para este ejercicio.' });
+    }
+
+    if (lenguajeIdNum !== 62) {
+      return res.status(400).json({ message: 'El ejercicio de programacion solo admite Java.' });
+    }
+
+    if (tieneMainJava(codigo)) {
+      return res.status(400).json({ message: 'No fue posible aislar correctamente el metodo enviado desde la clase Java.' });
+    }
+
+    const resultados = [];
+
+    for (let i = 0; i < configuracion.casos_prueba.length; i++) {
+      const caso = configuracion.casos_prueba[i];
+      const ejecucion = await evaluadorCasos.ejecutarCasoPrueba(
+        codigo,
+        caso.inputs,
+        lenguajeIdNum,
+        configuracion.metodo
+      );
+
+      resultados.push({
+        caseNum: i + 1,
+        inputs: caso.inputs,
+        outputObtenido: ejecucion.stdout || '',
+        error: ejecucion.stderr || null,
+        statusId: ejecucion.statusId,
+        statusDescription: ejecucion.statusDescription,
+        ejecutado: true
+      });
+    }
+
+    return res.status(200).json({
+      modo: 'ejecucion',
+      message: 'Ejecucion completada.',
+      resumen: 'Codigo ejecutado sin evaluar contra resultados esperados.',
+      casos: resultados
+    });
+  } catch (error) {
+    if (error?.isTechnicalExecutionError) {
+      return res.status(error.statusCode || 502).json({
+        errorTecnico: true,
+        message: error.message,
+        detalle: error.details || null
+      });
+    }
+
+    return res.status(500).json({ error: error.message || error });
   }
 };
 

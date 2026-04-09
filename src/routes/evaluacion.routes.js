@@ -3,6 +3,7 @@ const controller = require('../controllers/evaluacion.controller');
 
 router.post('/', controller.create);
 router.post('/compilador', controller.evaluarCompilador);
+router.post('/compilador/ejecutar', controller.ejecutarCompilador);
 router.get('/', controller.findAll);
 router.get('/by', controller.findBy);
 router.get('/:id', controller.findOne);
