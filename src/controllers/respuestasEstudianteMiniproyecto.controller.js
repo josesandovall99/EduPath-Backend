@@ -1,4 +1,5 @@
 const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto, Evaluacion } = require("../models");
+const { getConceptCoverageFromGroup } = require('../utils/miniproyectoRubric');
 
 const getAuthenticatedStudentId = (req) => {
   const estudianteId = Number(req.estudianteId);
@@ -276,6 +277,48 @@ const tryParseJson = (value) => {
   }
 };
 
+const SEMANTIC_CONCEPT_GROUPS = [
+  { id: 'stakeholder_student', aliases: ['estudiante', 'alumno', 'aprendiz'] },
+  { id: 'stakeholder_teacher', aliases: ['docente', 'profesor', 'instructor', 'maestro'] },
+  { id: 'stakeholder_admin', aliases: ['administrador', 'admin', 'personal administrativo'] },
+  { id: 'stakeholder_coordinator', aliases: ['coordinador', 'coordinador academico', 'director de programa', 'jefe de programa'] },
+  { id: 'stakeholder_client', aliases: ['cliente', 'patrocinador', 'interesado principal'] },
+  { id: 'stakeholder_end_user', aliases: ['usuario final', 'usuario', 'consumidor del sistema'] },
+  { id: 'functional_register', aliases: ['registrar', 'registro', 'crear', 'inscribir', 'matricular', 'guardar'] },
+  { id: 'functional_consult', aliases: ['consultar', 'ver', 'visualizar', 'listar', 'buscar'] },
+  { id: 'functional_reports', aliases: ['reporte', 'reportes', 'generar reporte', 'estadistica', 'informe'] },
+  { id: 'functional_assign', aliases: ['asignar', 'programar', 'relacionar', 'asociar'] },
+  { id: 'functional_auth', aliases: ['autenticar', 'iniciar sesion', 'login', 'acceso por rol', 'validar usuario'] },
+  { id: 'nfr_security', aliases: ['seguridad', 'autenticacion', 'credenciales', 'cifrado', 'encriptado', 'autorizacion', 'acceso seguro'] },
+  { id: 'nfr_performance', aliases: ['rendimiento', 'performance', 'tiempo de respuesta', 'rapidez', 'menos de 3 segundos', 'menos de 3 seg', 'respuesta en menos'] },
+  { id: 'nfr_availability', aliases: ['disponibilidad', 'alta disponibilidad', '99%', 'siempre disponible', 'uptime'] },
+  { id: 'nfr_multidevice', aliases: ['movil', 'desktop', 'computador', 'celular', 'tablet', 'dispositivos', 'multiplataforma', 'responsive'] },
+  { id: 'nfr_privacy', aliases: ['privacidad', 'proteccion de datos', 'datos personales', 'informacion personal', 'confidencialidad', 'habeas data'] },
+  { id: 'scope_notifications', aliases: ['notificaciones', 'correo', 'sms', 'mensajes', 'alertas'] },
+  { id: 'scope_admin_panel', aliases: ['panel de administracion', 'panel administrativo', 'dashboard', 'reportes administrativos'] },
+  { id: 'scope_enrollment', aliases: ['matricula', 'matriculas', 'inscripcion', 'inscripciones'] },
+  { id: 'cost_human', aliases: ['humano', 'personal', 'analista', 'desarrollador', 'ingeniero'] },
+  { id: 'cost_material', aliases: ['material', 'licencia', 'infraestructura', 'servicio externo', 'software'] }
+];
+
+const getSemanticConceptIds = (text = '') => {
+  const normalized = normalizeText(text);
+  if (!normalized) return [];
+
+  return SEMANTIC_CONCEPT_GROUPS
+    .filter((group) => group.aliases.some((alias) => normalized.includes(normalizeText(alias))))
+    .map((group) => group.id);
+};
+
+const getSemanticConceptCoverage = (expectedText = '', studentText = '') => {
+  const expectedConceptIds = getSemanticConceptIds(expectedText);
+  if (expectedConceptIds.length === 0) return 0;
+
+  const studentConceptIds = new Set(getSemanticConceptIds(studentText));
+  const matchedConcepts = expectedConceptIds.filter((conceptId) => studentConceptIds.has(conceptId)).length;
+  return matchedConcepts / expectedConceptIds.length;
+};
+
 const clampPercentage = (value) => {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(100, Math.round(value)));
@@ -299,18 +342,21 @@ const toArrayOfStrings = (value) => {
   return [];
 };
 
-const getKeywordCoverage = (expectedText = '', studentText = '') => {
+const getKeywordCoverage = (expectedText = '', studentText = '', options = {}) => {
   const keywords = extractKeywords(expectedText);
   const normalizedStudent = normalizeText(studentText);
+  const semanticCoverage = getSemanticConceptCoverage(expectedText, studentText);
+  const rubricCoverage = getConceptCoverageFromGroup(studentText, options?.conceptGroup);
 
   if (keywords.length === 0) {
     const normalizedExpected = normalizeText(expectedText);
     if (!normalizedExpected || !normalizedStudent) return 0;
-    return normalizedStudent.includes(normalizedExpected) ? 1 : 0;
+    return Math.max(normalizedStudent.includes(normalizedExpected) ? 1 : 0, semanticCoverage, rubricCoverage);
   }
 
   const matches = keywords.filter((keyword) => normalizedStudent.includes(keyword)).length;
-  return matches / keywords.length;
+  const keywordCoverage = matches / keywords.length;
+  return Math.max(keywordCoverage, semanticCoverage, rubricCoverage);
 };
 
 const buildWeightedCriterion = ({ criterio, puntaje, peso, detalle }) => {
@@ -324,16 +370,24 @@ const buildWeightedCriterion = ({ criterio, puntaje, peso, detalle }) => {
   };
 };
 
-const scoreGenericListSection = ({ label, expected, student, weight }) => {
+const GENERIC_TEXT_SCORING = {
+  sufficientCoverageThreshold: 0.5,
+  averageWeight: 0.65,
+  matchedWeight: 0.35,
+  fullCreditAverageCoverage: 0.78
+};
+
+const scoreGenericListSection = ({ label, expected, student, weight, sectionConceptGroups = [] }) => {
   const expectedItems = toArrayOfStrings(expected);
   const studentItems = toArrayOfStrings(student);
 
   if (expectedItems.length === 0) return null;
 
-  const itemScores = expectedItems.map((expectedItem) => {
+  const itemScores = expectedItems.map((expectedItem, index) => {
+    const conceptGroup = Array.isArray(sectionConceptGroups) ? sectionConceptGroups[index] : null;
     let bestScore = 0;
     studentItems.forEach((studentItem) => {
-      const coverage = getKeywordCoverage(expectedItem, studentItem);
+      const coverage = getKeywordCoverage(expectedItem, studentItem, { conceptGroup });
       if (coverage > bestScore) bestScore = coverage;
     });
     return bestScore;
@@ -343,29 +397,36 @@ const scoreGenericListSection = ({ label, expected, student, weight }) => {
     ? itemScores.reduce((sum, score) => sum + score, 0) / itemScores.length
     : 0;
   const matchedRatio = itemScores.length > 0
-    ? itemScores.filter((score) => score >= 0.6).length / itemScores.length
+    ? itemScores.filter((score) => score >= GENERIC_TEXT_SCORING.sufficientCoverageThreshold).length / itemScores.length
     : 0;
-  const score = clampPercentage((averageCoverage * 0.7 + matchedRatio * 0.3) * 100);
+  let score = clampPercentage(
+    (averageCoverage * GENERIC_TEXT_SCORING.averageWeight + matchedRatio * GENERIC_TEXT_SCORING.matchedWeight) * 100
+  );
+
+  if (matchedRatio === 1 && averageCoverage >= GENERIC_TEXT_SCORING.fullCreditAverageCoverage) {
+    score = 100;
+  }
 
   return buildWeightedCriterion({
     criterio: label,
     puntaje: score,
     peso: weight,
-    detalle: `${Math.round(matchedRatio * 100)}% de ítems cubiertos con coincidencia semántica suficiente.`
+    detalle: `${Math.round(matchedRatio * 100)}% de ítems cubiertos con coincidencia semántica o conceptual suficiente.`
   });
 };
 
-const scoreScheduleSection = ({ expected, student, weight }) => {
+const scoreScheduleSection = ({ expected, student, weight, sectionConceptGroups = [] }) => {
   const expectedItems = toArrayOfStrings(expected);
   const studentItems = toArrayOfStrings(student);
 
   if (expectedItems.length === 0) return null;
 
-  const itemScores = expectedItems.map((expectedItem) => {
+  const itemScores = expectedItems.map((expectedItem, index) => {
+    const conceptGroup = Array.isArray(sectionConceptGroups) ? sectionConceptGroups[index] : null;
     let bestScore = 0;
 
     studentItems.forEach((studentItem) => {
-      const keywordScore = getKeywordCoverage(expectedItem, studentItem);
+      const keywordScore = getKeywordCoverage(expectedItem, studentItem, { conceptGroup });
       const expectedDates = extractDates(expectedItem);
       const studentDates = extractDates(studentItem);
       const dateScore = expectedDates.length === 0
@@ -390,7 +451,7 @@ const scoreScheduleSection = ({ expected, student, weight }) => {
   });
 };
 
-const scoreCostsSection = ({ expected, student, weight }) => {
+const scoreCostsSection = ({ expected, student, weight, sectionConceptGroups = [] }) => {
   const expectedItems = toArrayOfStrings(expected).filter((item) => !isTotalLine(item));
   const studentItems = toArrayOfStrings(student).filter((item) => !isTotalLine(item));
 
@@ -399,10 +460,11 @@ const scoreCostsSection = ({ expected, student, weight }) => {
   const conceptScores = [];
   const unitScores = [];
 
-  expectedItems.forEach((expectedItem) => {
+  expectedItems.forEach((expectedItem, index) => {
     const expectedParsedItem = parseCostItem(expectedItem);
+    const conceptGroup = Array.isArray(sectionConceptGroups) ? sectionConceptGroups[index] : null;
     const bestMatch = studentItems.reduce((best, studentItem) => {
-      const score = getKeywordCoverage(expectedParsedItem.concept || expectedItem, studentItem);
+      const score = getKeywordCoverage(expectedParsedItem.concept || expectedItem, studentItem, { conceptGroup });
       if (!best || score > best.score) {
         return { studentItem, score };
       }
@@ -450,28 +512,63 @@ const scoreCostsSection = ({ expected, student, weight }) => {
   });
 };
 
-const buildStructuredRubric = (expectedParsed, studentParsed) => {
-  const isManagement = Boolean(expectedParsed?.alcance || expectedParsed?.cronograma || expectedParsed?.costos);
+const SECTION_SCORERS = {
+  text: scoreGenericListSection,
+  schedule: scoreScheduleSection,
+  costs: scoreCostsSection
+};
 
-  const sectionDefinitions = isManagement
-    ? [
-        { key: 'alcance', label: 'Alcance del proyecto', weight: 30, scorer: scoreGenericListSection },
-        { key: 'cronograma', label: 'Cronograma del proyecto', weight: 30, scorer: scoreScheduleSection },
-        { key: 'costos', label: 'Costos y recursos', weight: 40, scorer: scoreCostsSection }
-      ]
-    : [
-        { key: 'stakeholders', label: 'Stakeholders', weight: 25, scorer: scoreGenericListSection },
-        { key: 'requisitosFuncionales', label: 'Requisitos funcionales', weight: 45, scorer: scoreGenericListSection },
-        { key: 'requisitosNoFuncionales', label: 'Requisitos no funcionales', weight: 30, scorer: scoreGenericListSection }
-      ];
+const getDefaultSectionDefinitions = (expectedParsed = {}) => {
+  if (expectedParsed?.alcance || expectedParsed?.cronograma || expectedParsed?.costos) {
+    return [
+      { key: 'alcance', label: 'Alcance del proyecto', weight: 30, validator: 'text' },
+      { key: 'cronograma', label: 'Cronograma del proyecto', weight: 30, validator: 'schedule' },
+      { key: 'costos', label: 'Costos y recursos', weight: 40, validator: 'costs' }
+    ];
+  }
+
+  return [
+    { key: 'stakeholders', label: 'Stakeholders', weight: 25, validator: 'text' },
+    { key: 'requisitosFuncionales', label: 'Requisitos funcionales', weight: 45, validator: 'text' },
+    { key: 'requisitosNoFuncionales', label: 'Requisitos no funcionales', weight: 30, validator: 'text' }
+  ];
+};
+
+const getStructuredSectionDefinitions = (expectedParsed = {}) => {
+  const rubricSections = Array.isArray(expectedParsed?.rubrica?.sections)
+    ? expectedParsed.rubrica.sections
+    : [];
+
+  if (rubricSections.length > 0) {
+    return rubricSections
+      .filter((section) => section?.key && expectedParsed?.[section.key] !== undefined)
+      .map((section) => ({
+        key: section.key,
+        label: section.label || section.key,
+        weight: Number.isFinite(Number(section.weight)) ? Number(section.weight) : 30,
+        validator: section.validator || 'text'
+      }));
+  }
+
+  return getDefaultSectionDefinitions(expectedParsed)
+    .filter((section) => expectedParsed?.[section.key] !== undefined);
+};
+
+const buildStructuredRubric = (expectedParsed, studentParsed) => {
+  const storedConceptGroups = expectedParsed?.rubrica?.conceptGroups || {};
+  const sectionDefinitions = getStructuredSectionDefinitions(expectedParsed);
 
   const criterios = sectionDefinitions
-    .map((section) => section.scorer({
+    .map((section) => {
+      const scorer = SECTION_SCORERS[section.validator] || SECTION_SCORERS.text;
+      return scorer({
       label: section.label,
       expected: expectedParsed?.[section.key],
       student: studentParsed?.[section.key],
-      weight: section.weight
-    }))
+      weight: section.weight,
+      sectionConceptGroups: storedConceptGroups?.[section.key]
+      });
+    })
     .filter(Boolean);
 
   if (criterios.length === 0) return null;
@@ -487,7 +584,11 @@ const buildStructuredRubric = (expectedParsed, studentParsed) => {
     totalCriterios: criterios.length,
     criteriosCumplidos,
     criterios,
-    modoRubrica: isManagement ? 'management' : 'analysis'
+    modoRubrica: expectedParsed?.rubrica?.mode || (
+      Boolean(expectedParsed?.alcance || expectedParsed?.cronograma || expectedParsed?.costos)
+        ? 'management'
+        : 'analysis'
+    )
   };
 };
 

@@ -2,6 +2,7 @@ const db = require('../models');
 const { Actividad, Miniproyecto, TipoActividad, Area, Evaluacion, Estudiante, RespuestaEstudianteMiniproyecto, sequelize } = db;
 const evaluacionController = require('./evaluacion.controller');
 const { isNonEmptyString, sanitizePlainText, sanitizeRichText } = require('../utils/inputSecurity');
+const { enrichMiniproyectoResponse } = require('../utils/miniproyectoRubric');
 
 // Función auxiliar para validar FKs (Evita repetir código)
 const validarRelaciones = async (tipo_id, area_id) => {
@@ -14,6 +15,10 @@ const validarRelaciones = async (tipo_id, area_id) => {
     if (!existe) throw new Error(`El area_id (${area_id}) no existe.`);
   }
 };
+
+const buildRespuestaMiniproyectoPayload = ({ respuestaMiniproyecto, titulo, descripcion, entregable }) => (
+  enrichMiniproyectoResponse(respuestaMiniproyecto, { titulo, descripcion, entregable })
+);
  
 exports.create = async (req, res) => {
   try {
@@ -28,11 +33,21 @@ exports.create = async (req, res) => {
       return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
     }
 
+    const titulo = sanitizePlainText(req.body.titulo);
+    const descripcion = sanitizeRichText(req.body.descripcion);
+    const entregable = sanitizePlainText(req.body.entregable);
+    const respuestaMiniproyecto = buildRespuestaMiniproyectoPayload({
+      respuestaMiniproyecto: req.body.respuesta_miniproyecto,
+      titulo,
+      descripcion,
+      entregable
+    });
+
     const t = await sequelize.transaction();
     try {
       const nuevaActividad = await Actividad.create({
-        titulo: sanitizePlainText(req.body.titulo),
-        descripcion: sanitizeRichText(req.body.descripcion),
+        titulo,
+        descripcion,
         nivel_dificultad: req.body.nivel_dificultad,
         fecha_creacion: req.body.fecha_creacion || new Date(),
         tipo_actividad_id: req.body.tipo_actividad_id
@@ -42,8 +57,8 @@ exports.create = async (req, res) => {
         id: nuevaActividad.id,
         actividad_id: nuevaActividad.id,
         area_id: req.body.area_id,
-        entregable: sanitizePlainText(req.body.entregable),
-        respuesta_miniproyecto: req.body.respuesta_miniproyecto
+        entregable,
+        respuesta_miniproyecto: respuestaMiniproyecto
       }, { transaction: t });
 
       await t.commit();
@@ -69,6 +84,9 @@ exports.update = async (req, res) => {
     const miniproyecto = await Miniproyecto.findByPk(req.params.id);
     if (!miniproyecto) return res.status(404).json({ message: "Miniproyecto no encontrado" });
 
+    const actividadActual = await Actividad.findByPk(miniproyecto.actividad_id);
+    if (!actividadActual) return res.status(404).json({ message: 'Actividad asociada no encontrada' });
+
     if (req.docenteAreaId && parseInt(miniproyecto.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
       return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
     }
@@ -77,11 +95,37 @@ exports.update = async (req, res) => {
       return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
     }
 
+    const mergedTitulo = req.body.titulo !== undefined
+      ? sanitizePlainText(req.body.titulo)
+      : actividadActual.titulo;
+    const mergedDescripcion = req.body.descripcion !== undefined
+      ? sanitizeRichText(req.body.descripcion)
+      : actividadActual.descripcion;
+    const mergedEntregable = req.body.entregable !== undefined
+      ? sanitizePlainText(req.body.entregable)
+      : miniproyecto.entregable;
+    const shouldRefreshRespuestaMiniproyecto = (
+      req.body.respuesta_miniproyecto !== undefined ||
+      req.body.titulo !== undefined ||
+      req.body.descripcion !== undefined ||
+      req.body.entregable !== undefined
+    );
+    const mergedRespuestaMiniproyecto = shouldRefreshRespuestaMiniproyecto
+      ? buildRespuestaMiniproyectoPayload({
+          respuestaMiniproyecto: req.body.respuesta_miniproyecto !== undefined
+            ? req.body.respuesta_miniproyecto
+            : miniproyecto.respuesta_miniproyecto,
+          titulo: mergedTitulo,
+          descripcion: mergedDescripcion,
+          entregable: mergedEntregable
+        })
+      : undefined;
+
     const t = await sequelize.transaction();
     try {
       const actividadPayload = {
-        ...(req.body.titulo !== undefined && { titulo: sanitizePlainText(req.body.titulo) }),
-        ...(req.body.descripcion !== undefined && { descripcion: sanitizeRichText(req.body.descripcion) }),
+        ...(req.body.titulo !== undefined && { titulo: mergedTitulo }),
+        ...(req.body.descripcion !== undefined && { descripcion: mergedDescripcion }),
         ...(req.body.nivel_dificultad !== undefined && { nivel_dificultad: req.body.nivel_dificultad }),
         ...(req.body.fecha_creacion !== undefined && { fecha_creacion: req.body.fecha_creacion }),
         ...(req.body.tipo_actividad_id !== undefined && { tipo_actividad_id: req.body.tipo_actividad_id })
@@ -89,8 +133,8 @@ exports.update = async (req, res) => {
 
       const miniproyectoPayload = {
         ...(req.body.area_id !== undefined && { area_id: req.body.area_id }),
-        ...(req.body.entregable !== undefined && { entregable: sanitizePlainText(req.body.entregable) }),
-        ...(req.body.respuesta_miniproyecto !== undefined && { respuesta_miniproyecto: req.body.respuesta_miniproyecto })
+        ...(req.body.entregable !== undefined && { entregable: mergedEntregable }),
+        ...(mergedRespuestaMiniproyecto !== undefined && { respuesta_miniproyecto: mergedRespuestaMiniproyecto })
       };
 
       // Actualizar tabla padre (Actividad)
