@@ -7,6 +7,38 @@ const { RunnableSequence } = require('@langchain/core/runnables');
 const fs = require('fs').promises;
 const path = require('path');
 
+function isPrivateHostname(hostname) {
+    if (!hostname) return false;
+
+    const normalized = hostname.toLowerCase();
+    if (normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1') {
+        return true;
+    }
+
+    return /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(normalized);
+}
+
+function buildNetworkHint(baseUrl) {
+    try {
+        const { hostname } = new URL(baseUrl);
+        if (isPrivateHostname(hostname)) {
+            return ' La URL configurada usa una IP/host privado. Si este backend corre en tu PC local, la VPN o la ruta de red deben estar activas en esa misma máquina. Si corre en Render u otra nube, no podrá alcanzar 192.168.x.x, 10.x.x.x o localhost sin VPN, túnel o una URL pública.';
+        }
+    } catch (error) {
+        return ' La URL configurada no parece válida. Revisa OLLAMA_BASE_URL.';
+    }
+
+    return '';
+}
+
+function getTimeoutSignal(timeoutMs) {
+    if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
+        return AbortSignal.timeout(timeoutMs);
+    }
+
+    return undefined;
+}
+
 /**
  * Cliente HTTP para Ollama (PC B)
  * Maneja la comunicación directa por red local sin depender de librerías externas.
@@ -17,14 +49,52 @@ class OllamaHTTPClient {
         this.model = model;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
+        this.healthTimeoutMs = Number(process.env.OLLAMA_HEALTH_TIMEOUT_MS || process.env.OLLAMA_TIMEOUT_MS || 8000);
+        this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || process.env.OLLAMA_TIMEOUT_MS || 120000);
+    }
+
+    async checkAvailability() {
+        const endpoints = ['/api/tags', '/api/version'];
+        let lastError = null;
+
+        for (const ep of endpoints) {
+            const url = `${this.baseUrl}${ep}`;
+            try {
+                const res = await fetch(url, {
+                    method: 'GET',
+                    signal: getTimeoutSignal(this.healthTimeoutMs)
+                });
+
+                if (res.ok) {
+                    return { ok: true, endpoint: ep };
+                }
+
+                lastError = new Error(`HTTP ${res.status} en ${ep}`);
+            } catch (err) {
+                lastError = err;
+            }
+        }
+
+        return {
+            ok: false,
+            error: this.buildConnectionError(lastError)
+        };
+    }
+
+    buildConnectionError(lastError) {
+        const baseMessage = `Ollama no responde en ${this.baseUrl}. Verifica que el servicio esté activo y expuesto por red.`;
+        const detail = lastError?.message ? ` Detalle: ${lastError.message}` : '';
+        return new Error(`${baseMessage}${detail}${buildNetworkHint(this.baseUrl)}`);
     }
 
     async generate(prompt, options = {}) {
         const payload = {
             model: options.model || this.model,
             prompt,
-            temperature: options.temperature ?? this.temperature,
-            max_tokens: options.maxTokens || this.maxTokens,
+            options: {
+                temperature: options.temperature ?? this.temperature,
+                num_predict: options.maxTokens || this.maxTokens,
+            },
             stream: false // Importante para recibir respuesta completa
         };
 
@@ -38,7 +108,8 @@ class OllamaHTTPClient {
                 const res = await fetch(url, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                    body: JSON.stringify(payload),
+                    signal: getTimeoutSignal(this.generateTimeoutMs)
                 });
 
                 if (res.ok) {
@@ -51,7 +122,7 @@ class OllamaHTTPClient {
                 lastError = err;
             }
         }
-        throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${lastError?.message}`);
+        throw this.buildConnectionError(lastError);
     }
 }
 
@@ -135,6 +206,7 @@ class RAGManager {
         this.config = config;
         // Priorizar Ollama si existen las variables en el .env
         this.provider = config.provider || (config.ollamaBaseUrl ? 'ollama' : 'groq');
+        this.systemPrompt = config.systemPrompt || 'Eres un asistente educativo experto y amigable del sistema EduPath.';
         
         this.vectorStore = new SimpleVectorStore();
         this.textSplitter = new RecursiveCharacterTextSplitter({
@@ -146,7 +218,8 @@ class RAGManager {
             this.llm = new OllamaHTTPClient({
                 baseUrl: config.ollamaBaseUrl,
                 model: config.modelName || 'llama3.2',
-                temperature: config.temperature || 0.2
+                temperature: config.temperature || 0.2,
+                maxTokens: config.maxTokens || 256
             });
         } else {
             this.llm = new ChatGroq({
@@ -156,7 +229,7 @@ class RAGManager {
         }
 
         this.promptTemplate = PromptTemplate.fromTemplate(`
-            Eres un asistente educativo experto y amigable del sistema EduPath.
+            ${this.systemPrompt}
             CONTEXTO RELEVANTE extraído del PDF:
             {context}
 
@@ -166,6 +239,7 @@ class RAGManager {
             - Responde SOLO basándote en el contexto proporcionado.
             - Si la información no está en el contexto, di: "No tengo esa información en los documentos cargados".
             - Sé claro y educativo.
+            - Responde de forma breve, idealmente en 3 a 6 líneas.
             RESPUESTA:`);
         
         console.log(`✅ RAGManager configurado correctamente`);
@@ -202,14 +276,16 @@ class RAGManager {
         }
     }
 
-    async chat(question) {
+    async chat(question, topK = 3) {
         try {
             if (this.vectorStore.documents.length === 0) {
                 return { success: false, answer: "No hay documentos cargados para responder." };
             }
+
+            const safeTopK = Math.max(1, Math.min(Number(topK) || 3, 5));
             
             // 1. Buscar fragmentos relevantes en PC A
-            const relevantDocs = await this.vectorStore.similaritySearch(question);
+            const relevantDocs = await this.vectorStore.similaritySearch(question, safeTopK);
             const context = relevantDocs.map(d => d.pageContent).join('\n\n---\n\n');
             
             // 2. Preparar el prompt
@@ -231,6 +307,30 @@ class RAGManager {
             console.error("❌ Error en chat RAG:", error.message);
             return { success: false, error: error.message };
         }
+    }
+
+    async checkProviderAvailability() {
+        if (this.provider !== 'ollama') {
+            return { ok: true, provider: this.provider };
+        }
+
+        const result = await this.llm.checkAvailability();
+        if (result.ok) {
+            return { ok: true, provider: this.provider, endpoint: result.endpoint };
+        }
+
+        return { ok: false, provider: this.provider, error: result.error };
+    }
+
+    getStats() {
+        const documentCount = this.vectorStore.documents.length;
+        return {
+            provider: this.provider,
+            model: this.provider === 'ollama' ? this.llm.model : this.config.modelName || 'llama-3.3-70b-versatile',
+            documentsLoaded: documentCount,
+            chunksLoaded: documentCount,
+            message: `${documentCount} fragmento(s) cargado(s) en memoria para el chatbot.`
+        };
     }
 
     clear() { this.vectorStore = new SimpleVectorStore(); }

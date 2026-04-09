@@ -144,7 +144,15 @@ exports.findBy = async (req, res) => {
   try {
     const { estudiante_id, ejercicio_id, miniproyecto_id } = req.query;
     const where = {};
-    if (estudiante_id) where.estudiante_id = parseInt(estudiante_id, 10);
+    if (req.tipoUsuario === 'ESTUDIANTE') {
+      const authenticatedStudentId = Number(req.estudianteId);
+      if (!Number.isFinite(authenticatedStudentId)) {
+        return res.status(403).json({ error: 'Solo los estudiantes autenticados pueden consultar sus evaluaciones.' });
+      }
+      where.estudiante_id = authenticatedStudentId;
+    } else if (estudiante_id) {
+      where.estudiante_id = parseInt(estudiante_id, 10);
+    }
     if (ejercicio_id) where.ejercicio_id = parseInt(ejercicio_id, 10);
     if (miniproyecto_id) where.miniproyecto_id = parseInt(miniproyecto_id, 10);
 
