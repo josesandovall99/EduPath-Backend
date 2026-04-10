@@ -7,30 +7,6 @@ const { RunnableSequence } = require('@langchain/core/runnables');
 const fs = require('fs').promises;
 const path = require('path');
 
-function isPrivateHostname(hostname) {
-    if (!hostname) return false;
-
-    const normalized = hostname.toLowerCase();
-    if (normalized === 'localhost' || normalized === '127.0.0.1' || normalized === '::1') {
-        return true;
-    }
-
-    return /^(10\.|127\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(normalized);
-}
-
-function buildNetworkHint(baseUrl) {
-    try {
-        const { hostname } = new URL(baseUrl);
-        if (isPrivateHostname(hostname)) {
-            return ' La URL configurada usa una IP/host privado. Si este backend corre en tu PC local, la VPN o la ruta de red deben estar activas en esa misma máquina. Si corre en Render u otra nube, no podrá alcanzar 192.168.x.x, 10.x.x.x o localhost sin VPN, túnel o una URL pública.';
-        }
-    } catch (error) {
-        return ' La URL configurada no parece válida. Revisa OLLAMA_BASE_URL.';
-    }
-
-    return '';
-}
-
 function getTimeoutSignal(timeoutMs) {
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
         return AbortSignal.timeout(timeoutMs);
@@ -38,6 +14,7 @@ function getTimeoutSignal(timeoutMs) {
 
     return undefined;
 }
+
 
 /**
  * Cliente HTTP para Ollama (PC B)
@@ -49,52 +26,15 @@ class OllamaHTTPClient {
         this.model = model;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
-        this.healthTimeoutMs = Number(process.env.OLLAMA_HEALTH_TIMEOUT_MS || process.env.OLLAMA_TIMEOUT_MS || 8000);
-        this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || process.env.OLLAMA_TIMEOUT_MS || 120000);
-    }
-
-    async checkAvailability() {
-        const endpoints = ['/api/tags', '/api/version'];
-        let lastError = null;
-
-        for (const ep of endpoints) {
-            const url = `${this.baseUrl}${ep}`;
-            try {
-                const res = await fetch(url, {
-                    method: 'GET',
-                    signal: getTimeoutSignal(this.healthTimeoutMs)
-                });
-
-                if (res.ok) {
-                    return { ok: true, endpoint: ep };
-                }
-
-                lastError = new Error(`HTTP ${res.status} en ${ep}`);
-            } catch (err) {
-                lastError = err;
-            }
-        }
-
-        return {
-            ok: false,
-            error: this.buildConnectionError(lastError)
-        };
-    }
-
-    buildConnectionError(lastError) {
-        const baseMessage = `Ollama no responde en ${this.baseUrl}. Verifica que el servicio esté activo y expuesto por red.`;
-        const detail = lastError?.message ? ` Detalle: ${lastError.message}` : '';
-        return new Error(`${baseMessage}${detail}${buildNetworkHint(this.baseUrl)}`);
+        this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || 60000);
     }
 
     async generate(prompt, options = {}) {
         const payload = {
             model: options.model || this.model,
             prompt,
-            options: {
-                temperature: options.temperature ?? this.temperature,
-                num_predict: options.maxTokens || this.maxTokens,
-            },
+            temperature: options.temperature ?? this.temperature,
+            num_predict: options.maxTokens || this.maxTokens,
             stream: false // Importante para recibir respuesta completa
         };
 
@@ -109,7 +49,7 @@ class OllamaHTTPClient {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(payload),
-                    signal: getTimeoutSignal(this.generateTimeoutMs)
+                    signal: getTimeoutSignal(this.generateTimeoutMs),
                 });
 
                 if (res.ok) {
@@ -122,7 +62,12 @@ class OllamaHTTPClient {
                 lastError = err;
             }
         }
-        throw this.buildConnectionError(lastError);
+
+        if (lastError?.name === 'TimeoutError' || lastError?.name === 'AbortError') {
+            throw new Error(`Timeout: Ollama tardó más de ${Math.round(this.generateTimeoutMs / 1000)} segundos en responder.`);
+        }
+
+        throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${lastError?.message}`);
     }
 }
 
@@ -206,7 +151,6 @@ class RAGManager {
         this.config = config;
         // Priorizar Ollama si existen las variables en el .env
         this.provider = config.provider || (config.ollamaBaseUrl ? 'ollama' : 'groq');
-        this.systemPrompt = config.systemPrompt || 'Eres un asistente educativo experto y amigable del sistema EduPath.';
         
         this.vectorStore = new SimpleVectorStore();
         this.textSplitter = new RecursiveCharacterTextSplitter({
@@ -218,8 +162,7 @@ class RAGManager {
             this.llm = new OllamaHTTPClient({
                 baseUrl: config.ollamaBaseUrl,
                 model: config.modelName || 'llama3.2',
-                temperature: config.temperature || 0.2,
-                maxTokens: config.maxTokens || 256
+                temperature: config.temperature || 0.2
             });
         } else {
             this.llm = new ChatGroq({
@@ -229,7 +172,7 @@ class RAGManager {
         }
 
         this.promptTemplate = PromptTemplate.fromTemplate(`
-            ${this.systemPrompt}
+            Eres un asistente educativo experto y amigable del sistema EduPath.
             CONTEXTO RELEVANTE extraído del PDF:
             {context}
 
@@ -309,29 +252,19 @@ class RAGManager {
         }
     }
 
-    async checkProviderAvailability() {
-        if (this.provider !== 'ollama') {
-            return { ok: true, provider: this.provider };
-        }
-
-        const result = await this.llm.checkAvailability();
-        if (result.ok) {
-            return { ok: true, provider: this.provider, endpoint: result.endpoint };
-        }
-
-        return { ok: false, provider: this.provider, error: result.error };
-    }
 
     getStats() {
         const documentCount = this.vectorStore.documents.length;
         return {
             provider: this.provider,
             model: this.provider === 'ollama' ? this.llm.model : this.config.modelName || 'llama-3.3-70b-versatile',
-            documentsLoaded: documentCount,
+            isLoaded: documentCount > 0,
+            documentsCount: documentCount,
             chunksLoaded: documentCount,
-            message: `${documentCount} fragmento(s) cargado(s) en memoria para el chatbot.`
+            message: `${documentCount} fragmento(s) cargado(s) en memoria para el chatbot.`,
         };
     }
+
 
     clear() { this.vectorStore = new SimpleVectorStore(); }
 }

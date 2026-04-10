@@ -2,19 +2,18 @@ const RAGManager = require('../services/RAGManager');
 const fs = require('fs').promises;
 const path = require('path');
 
-// Instancia global del RAGManager
 let ragManager = null;
 
-function buildRagManager(provider) {
-    if (provider === 'ollama') {
+function buildRagManager() {
+    if (process.env.OLLAMA_BASE_URL) {
         return new RAGManager({
             provider: 'ollama',
             ollamaBaseUrl: process.env.OLLAMA_BASE_URL,
             modelName: process.env.OLLAMA_MODEL || 'llama3.2',
             temperature: parseFloat(process.env.OLLAMA_TEMPERATURE || '0.2'),
             maxTokens: parseInt(process.env.OLLAMA_MAX_TOKENS || '256', 10),
-            chunkSize: 1000,
-            chunkOverlap: 200,
+            chunkSize: parseInt(process.env.OLLAMA_CHUNK_SIZE || '1000', 10),
+            chunkOverlap: parseInt(process.env.OLLAMA_CHUNK_OVERLAP || '200', 10),
         });
     }
 
@@ -23,283 +22,168 @@ function buildRagManager(provider) {
         groqApiKey: process.env.GROQ_API_KEY,
         modelName: process.env.GROQ_MODEL || 'llama-3.3-70b-versatile',
         temperature: parseFloat(process.env.GROQ_TEMPERATURE || '0.7'),
-        chunkSize: 1000,
-        chunkOverlap: 200,
+        maxTokens: parseInt(process.env.GROQ_MAX_TOKENS || '256', 10),
+        chunkSize: parseInt(process.env.OLLAMA_CHUNK_SIZE || '1000', 10),
+        chunkOverlap: parseInt(process.env.OLLAMA_CHUNK_OVERLAP || '200', 10),
     });
 }
 
-/**
- * Inicializar RAGManager al arrancar el servidor
- */
 const initializeRAG = async () => {
     try {
         const useOllama = !!process.env.OLLAMA_BASE_URL;
         const useGroq = !!process.env.GROQ_API_KEY;
-        const preferredProvider = (process.env.LLM_PROVIDER || '').trim().toLowerCase();
 
         if (!useOllama && !useGroq) {
             console.warn('⚠️ Ni OLLAMA_BASE_URL ni GROQ_API_KEY encontradas. El chatbot no estará disponible.');
             return;
         }
 
-        // Debug simple: mostrar qué variables de entorno se detectaron (no mostrar claves)
         console.log(`🔎 Env detectados: OLLAMA_BASE_URL=${useOllama ? process.env.OLLAMA_BASE_URL : 'no'}, GROQ_API_KEY=${useGroq ? 'si' : 'no'}`);
 
-        if (preferredProvider && !['ollama', 'groq'].includes(preferredProvider)) {
-            console.warn(`⚠️ LLM_PROVIDER inválido: ${preferredProvider}. Se ignorará ese valor.`);
-        }
+        ragManager = buildRagManager();
 
-        const providerOrder = [];
+        const chatbotDocsPath = path.join(__dirname, '../../uploads/chatbot-docs');
+        await fs.mkdir(chatbotDocsPath, { recursive: true });
+        const files = await fs.readdir(chatbotDocsPath);
+        const pdfFiles = files.filter((file) => file.toLowerCase().endsWith('.pdf'));
 
-        if (preferredProvider === 'groq' && useGroq) providerOrder.push('groq');
-        if (preferredProvider === 'ollama' && useOllama) providerOrder.push('ollama');
-        if (useOllama && !providerOrder.includes('ollama')) providerOrder.push('ollama');
-        if (useGroq && !providerOrder.includes('groq')) providerOrder.push('groq');
-
-        for (const provider of providerOrder) {
-            const candidate = buildRagManager(provider);
-
-            if (provider === 'ollama') {
-                const availability = await candidate.checkProviderAvailability();
-                if (!availability.ok) {
-                    console.error(`❌ Ollama no disponible durante inicialización: ${availability.error.message}`);
-                    if (useGroq) {
-                        console.log('↪️ Se usará Groq como fallback para el chatbot.');
-                        continue;
-                    }
-                    throw availability.error;
-                }
-                console.log(`✅ Ollama disponible vía ${availability.endpoint}`);
-            }
-
-            ragManager = candidate;
-            break;
-        }
-
-        if (!ragManager) {
-            console.warn('⚠️ No se pudo inicializar ningún proveedor LLM para el chatbot.');
+        if (pdfFiles.length === 0) {
+            console.log('📁 Carpeta chatbot-docs vacía. Esperando documentos...');
             return;
         }
 
-        // Intentar cargar PDFs existentes en uploads/chatbot-docs/
-        const chatbotDocsPath = path.join(__dirname, '../../uploads/chatbot-docs');
-        
-        try {
-            await fs.mkdir(chatbotDocsPath, { recursive: true });
-            const files = await fs.readdir(chatbotDocsPath);
-            const pdfFiles = files.filter(f => f.toLowerCase().endsWith('.pdf'));
-
-            if (pdfFiles.length > 0) {
-                console.log(`\n📚 Cargando ${pdfFiles.length} PDF(s) existente(s)...`);
-                
-                for (const pdfFile of pdfFiles) {
-                    const pdfPath = path.join(chatbotDocsPath, pdfFile);
-                    try {
-                        await ragManager.loadPDFFromPath(pdfPath);
-                        console.log(`   ✓ ${pdfFile} cargado`);
-                    } catch (error) {
-                        console.error(`   ✗ Error cargando ${pdfFile}:`, error.message);
-                    }
-                }
-
-                const stats = ragManager.getStats();
-                console.log(`\n${stats.message}\n`);
-            } else {
-                console.log('\n📁 Carpeta chatbot-docs vacía. Esperando documentos...\n');
+        console.log(`📚 Cargando ${pdfFiles.length} PDF(s) existente(s)...`);
+        for (const pdfFile of pdfFiles) {
+            const pdfPath = path.join(chatbotDocsPath, pdfFile);
+            try {
+                await ragManager.loadPDFFromPath(pdfPath);
+                console.log(`   ✓ ${pdfFile} cargado`);
+            } catch (error) {
+                console.error(`   ✗ Error cargando ${pdfFile}: ${error.message}`);
             }
-        } catch (error) {
-            console.log('📁 Creando carpeta chatbot-docs...\n');
         }
 
-    } catch (error) {
-        console.error('❌ Error inicializando RAGManager:', error.message);
+        const stats = ragManager.getStats();
+        console.log(stats.message);
+    } catch (err) {
+        console.error('Error inicializando RAGManager:', err.message || err);
     }
 };
 
-/**
- * Subir y procesar un PDF
- * POST /chatbot/upload
- */
 const uploadPDF = async (req, res) => {
     try {
         if (!ragManager) {
-            return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración de OLLAMA_BASE_URL o GROQ_API_KEY en .env' });
+            return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración del proveedor LLM.' });
         }
 
         if (!req.file) {
-            return res.status(400).json({
-                success: false,
-                error: 'No se proporcionó ningún archivo PDF',
-            });
+            return res.status(400).json({ success: false, error: 'No se proporcionó ningún archivo PDF' });
         }
 
         if (req.file.mimetype !== 'application/pdf') {
-            return res.status(400).json({
-                success: false,
-                error: 'El archivo debe ser un PDF',
-            });
+            return res.status(400).json({ success: false, error: 'El archivo debe ser un PDF' });
         }
 
-        // Procesar PDF
-        const result = await ragManager.loadPDFFromBuffer(
-            req.file.buffer,
-            req.file.originalname
-        );
+        const chatbotDocsPath = path.join(__dirname, '../../uploads/chatbot-docs');
+        await fs.mkdir(chatbotDocsPath, { recursive: true });
 
+        const safeFilename = `${Date.now()}_${req.file.originalname.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        const diskPath = path.join(chatbotDocsPath, safeFilename);
+        await fs.writeFile(diskPath, req.file.buffer);
+
+        const result = await ragManager.loadPDFFromBuffer(req.file.buffer, req.file.originalname);
         return res.status(200).json(result);
-
     } catch (error) {
         console.error('❌ Error en uploadPDF:', error.message);
-        return res.status(500).json({
-            success: false,
-            error: error.message,
-        });
+        return res.status(500).json({ success: false, error: error.message });
     }
 };
 
-/**
- * Hacer una pregunta al chatbot
- * POST /chatbot/chat
- * Body: { question: string, topK?: number }
- */
 const chatWithBot = async (req, res) => {
     try {
         if (!ragManager) {
-            return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración de OLLAMA_BASE_URL o GROQ_API_KEY en .env' });
+            return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración del proveedor LLM.' });
         }
 
         const { question, topK = 3 } = req.body;
 
         if (!question || question.trim() === '') {
-            return res.status(400).json({
-                success: false,
-                error: 'La pregunta no puede estar vacía',
-            });
+            return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
         }
 
         const result = await ragManager.chat(question, topK);
 
-        return res.status(200).json(result);
+        if (!result.success && typeof result.error === 'string' && result.error.toLowerCase().includes('timeout')) {
+            return res.status(504).json(result);
+        }
 
+        return res.status(200).json(result);
     } catch (error) {
         console.error('❌ Error en chatWithBot:', error.message);
-        return res.status(500).json({
-            success: false,
-            error: error.message,
-        });
+        return res.status(500).json({ success: false, error: error.message });
     }
 };
 
-/**
- * Obtener estadísticas del chatbot
- * GET /chatbot/stats
- */
 const getStats = async (req, res) => {
     try {
         if (!ragManager) {
-            return res.status(503).json({
-                success: false,
-                error: 'Chatbot no disponible',
-            });
+            return res.status(503).json({ success: false, error: 'Chatbot no disponible' });
         }
 
-        const stats = ragManager.getStats();
-        
-        return res.status(200).json({
-            success: true,
-            ...stats,
-        });
-
+        return res.status(200).json({ success: true, ...ragManager.getStats() });
     } catch (error) {
         console.error('❌ Error en getStats:', error.message);
-        return res.status(500).json({
-            success: false,
-            error: error.message,
-        });
+        return res.status(500).json({ success: false, error: error.message });
     }
 };
 
-/**
- * Limpiar la base de datos vectorial
- * DELETE /chatbot/clear
- */
 const clearVectorStore = async (req, res) => {
     try {
         if (!ragManager) {
-            return res.status(503).json({
-                success: false,
-                error: 'Chatbot no disponible',
-            });
+            return res.status(503).json({ success: false, error: 'Chatbot no disponible' });
         }
 
         ragManager.clear();
-
-        return res.status(200).json({
-            success: true,
-            message: 'Base de datos vectorial limpiada correctamente',
-        });
-
+        return res.status(200).json({ success: true, message: 'Base de datos vectorial limpiada correctamente' });
     } catch (error) {
         console.error('❌ Error en clearVectorStore:', error.message);
-        return res.status(500).json({
-            success: false,
-            error: error.message,
-        });
+        return res.status(500).json({ success: false, error: error.message });
     }
 };
 
-/**
- * Recargar todos los PDFs de chatbot-docs
- * POST /chatbot/reload
- */
 const reloadDocuments = async (req, res) => {
     try {
         if (!ragManager) {
-            return res.status(503).json({
-                success: false,
-                error: 'Chatbot no disponible',
-            });
+            return res.status(503).json({ success: false, error: 'Chatbot no disponible' });
         }
 
-        // Limpiar vector store
         ragManager.clear();
 
-        // Cargar PDFs
         const chatbotDocsPath = path.join(__dirname, '../../uploads/chatbot-docs');
+        await fs.mkdir(chatbotDocsPath, { recursive: true });
         const files = await fs.readdir(chatbotDocsPath);
-        const pdfFiles = files.filter(f => f.toLowerCase().endsWith('.pdf'));
+        const pdfFiles = files.filter((file) => file.toLowerCase().endsWith('.pdf'));
 
         const results = [];
-
         for (const pdfFile of pdfFiles) {
             const pdfPath = path.join(chatbotDocsPath, pdfFile);
             try {
                 const result = await ragManager.loadPDFFromPath(pdfPath);
                 results.push({ file: pdfFile, ...result });
             } catch (error) {
-                results.push({
-                    file: pdfFile,
-                    success: false,
-                    error: error.message,
-                });
+                results.push({ file: pdfFile, success: false, error: error.message });
             }
         }
-
-        const stats = ragManager.getStats();
 
         return res.status(200).json({
             success: true,
             message: `${pdfFiles.length} archivo(s) procesado(s)`,
             files: results,
-            stats,
+            stats: ragManager.getStats(),
         });
-
     } catch (error) {
         console.error('❌ Error en reloadDocuments:', error.message);
-        return res.status(500).json({
-            success: false,
-            error: error.message,
-        });
+        return res.status(500).json({ success: false, error: error.message });
     }
 };
 

@@ -12,8 +12,6 @@ const models = {
   Estudiante: require('./estudiante.model')(sequelize, DataTypes),
   Administrador: require('./administrador.model')(sequelize, DataTypes),
   Docente: require('./docente.model')(sequelize, DataTypes),
-  Chatbot: require('./chatbot.model')(sequelize, DataTypes),
-  ChatbotDocumento: require('./chatbotDocumento.model')(sequelize, DataTypes),
   RespuestaEstudianteMiniproyecto: require('./respuestasEstudianteMiniproyecto.model')(sequelize, DataTypes),
   RespuestaEstudianteEjercicio: require('./respuestasEstudianteEjercicio.model')(sequelize, DataTypes),
   Area: require('./area.model')(sequelize, DataTypes),
