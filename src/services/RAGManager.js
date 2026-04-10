@@ -15,6 +15,15 @@ function getTimeoutSignal(timeoutMs) {
     return undefined;
 }
 
+function nowMs() {
+    return Date.now();
+}
+
+function logTiming(label, startedAt) {
+    const elapsedMs = nowMs() - startedAt;
+    console.log(`⏱️ ${label}: ${elapsedMs} ms`);
+}
+
 
 /**
  * Cliente HTTP para Ollama (PC B)
@@ -26,48 +35,52 @@ class OllamaHTTPClient {
         this.model = model;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
-        this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || 60000);
+        this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || 55000);
     }
 
     async generate(prompt, options = {}) {
+        const generationStart = nowMs();
+        const endpoint = '/api/generate';
+        const url = `${this.baseUrl}${endpoint}`;
         const payload = {
             model: options.model || this.model,
             prompt,
-            temperature: options.temperature ?? this.temperature,
-            num_predict: options.maxTokens || this.maxTokens,
-            stream: false // Importante para recibir respuesta completa
+            stream: false,
+            options: {
+                temperature: options.temperature ?? this.temperature,
+                num_predict: options.maxTokens || this.maxTokens,
+            },
         };
 
-        // Probamos los dos endpoints más comunes de Ollama
-        const endpoints = ['/api/generate', '/v1/completions'];
-        let lastError = null;
+        try {
+            console.log(`📡 Enviando prompt a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | timeout ms: ${this.generateTimeoutMs}`);
+            const requestStart = nowMs();
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: getTimeoutSignal(this.generateTimeoutMs),
+            });
+            logTiming(`Ollama ${endpoint} HTTP`, requestStart);
 
-        for (const ep of endpoints) {
-            const url = `${this.baseUrl}${ep}`;
-            try {
-                const res = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload),
-                    signal: getTimeoutSignal(this.generateTimeoutMs),
-                });
-
-                if (res.ok) {
-                    const json = await res.json();
-                    console.log(` ℹ️ Ollama respondió vía ${ep}`);
-                    // Extraer texto dependiendo del formato del endpoint
-                    return json.response || json.choices?.[0]?.text || json.output || JSON.stringify(json);
-                }
-            } catch (err) {
-                lastError = err;
+            if (!res.ok) {
+                logTiming('Generación LLM total con error', generationStart);
+                throw new Error(`HTTP ${res.status} en ${endpoint}`);
             }
-        }
 
-        if (lastError?.name === 'TimeoutError' || lastError?.name === 'AbortError') {
-            throw new Error(`Timeout: Ollama tardó más de ${Math.round(this.generateTimeoutMs / 1000)} segundos en responder.`);
-        }
+            const json = await res.json();
+            console.log(` ℹ️ Ollama respondió vía ${endpoint}`);
+            logTiming('Generación LLM total', generationStart);
+            return json.response || json.choices?.[0]?.text || json.output || JSON.stringify(json);
+        } catch (lastError) {
+            if (lastError?.name === 'TimeoutError' || lastError?.name === 'AbortError') {
+                logTiming('Generación LLM total con timeout', generationStart);
+                throw new Error(`Timeout: Ollama tardó más de ${Math.round(this.generateTimeoutMs / 1000)} segundos en responder.`);
+            }
 
-        throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${lastError?.message}`);
+            logTiming('Generación LLM total con error', generationStart);
+            throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${lastError?.message}`);
+        }
     }
 }
 
@@ -220,6 +233,7 @@ class RAGManager {
     }
 
     async chat(question, topK = 3) {
+        const totalStart = nowMs();
         try {
             if (this.vectorStore.documents.length === 0) {
                 return { success: false, answer: "No hay documentos cargados para responder." };
@@ -228,25 +242,36 @@ class RAGManager {
             const safeTopK = Math.max(1, Math.min(Number(topK) || 3, 5));
             
             // 1. Buscar fragmentos relevantes en PC A
+            const retrievalStart = nowMs();
             const relevantDocs = await this.vectorStore.similaritySearch(question, safeTopK);
+            logTiming('Recuperación RAG', retrievalStart);
+
             const context = relevantDocs.map(d => d.pageContent).join('\n\n---\n\n');
             
             // 2. Preparar el prompt
+            const promptStart = nowMs();
             const finalPrompt = this.promptTemplate.template
                 .replace('{context}', context)
                 .replace('{question}', question);
+            logTiming('Construcción de prompt', promptStart);
+            console.log(`📏 Contexto chars: ${context.length} | Prompt chars: ${finalPrompt.length} | topK: ${safeTopK}`);
 
             // 3. Enviar a PC B
             let answer;
             if (this.provider === 'ollama') {
                 answer = await this.llm.generate(finalPrompt);
             } else {
+                const generationStart = nowMs();
                 const chain = RunnableSequence.from([this.llm, new StringOutputParser()]);
                 answer = await chain.invoke(finalPrompt);
+                logTiming('Generación LLM total', generationStart);
             }
+
+            logTiming('Chat total', totalStart);
 
             return { success: true, answer };
         } catch (error) {
+            logTiming('Chat total con error', totalStart);
             console.error("❌ Error en chat RAG:", error.message);
             return { success: false, error: error.message };
         }
