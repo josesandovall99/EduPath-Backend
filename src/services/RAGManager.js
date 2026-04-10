@@ -6,6 +6,7 @@ const { StringOutputParser } = require('@langchain/core/output_parsers');
 const { RunnableSequence } = require('@langchain/core/runnables');
 const fs = require('fs').promises;
 const path = require('path');
+const { Readable } = require('stream');
 
 function getTimeoutSignal(timeoutMs) {
     if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {
@@ -25,7 +26,7 @@ function logTiming(label, startedAt) {
 }
 
 function normalizeTopK(topK) {
-    return Math.max(1, Math.min(Number(topK) || 2, 2));
+    return 1;
 }
 
 
@@ -39,8 +40,8 @@ class OllamaHTTPClient {
         this.model = model;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
-        this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || 55000);
-        this.streamStartTimeoutMs = Number(process.env.OLLAMA_STREAM_START_TIMEOUT_MS || 60000);
+        this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || 120000);
+        this.streamStartTimeoutMs = Number(process.env.OLLAMA_STREAM_START_TIMEOUT_MS || 120000);
     }
 
     async generate(prompt, options = {}) {
@@ -123,40 +124,51 @@ class OllamaHTTPClient {
                 throw new Error('Ollama no devolvió un cuerpo de respuesta en streaming.');
             }
 
-            const reader = res.body.getReader();
-            const decoder = new TextDecoder();
+            const nodeStream = Readable.fromWeb(res.body);
+            nodeStream.setEncoding('utf8');
+
             let buffer = '';
             let answer = '';
 
-            while (true) {
-                const { value, done } = await reader.read();
-                if (done) break;
+            await new Promise((resolve, reject) => {
+                let chain = Promise.resolve();
 
-                buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
+                nodeStream.on('data', (chunkText) => {
+                    buffer += chunkText;
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop() || '';
 
-                for (const line of lines) {
-                    const trimmed = line.trim();
-                    if (!trimmed) continue;
+                    for (const line of lines) {
+                        const trimmed = line.trim();
+                        if (!trimmed) continue;
 
-                    const parsed = JSON.parse(trimmed);
-                    const chunk = parsed.response || '';
-                    if (chunk) {
-                        answer += chunk;
-                        await onToken(chunk);
+                        chain = chain.then(async () => {
+                            const parsed = JSON.parse(trimmed);
+                            const chunk = parsed.response || '';
+                            if (chunk) {
+                                answer += chunk;
+                                await onToken(chunk);
+                            }
+                        });
                     }
-                }
-            }
+                });
 
-            if (buffer.trim()) {
-                const parsed = JSON.parse(buffer.trim());
-                const chunk = parsed.response || '';
-                if (chunk) {
-                    answer += chunk;
-                    await onToken(chunk);
-                }
-            }
+                nodeStream.on('end', () => {
+                    chain.then(async () => {
+                        if (buffer.trim()) {
+                            const parsed = JSON.parse(buffer.trim());
+                            const chunk = parsed.response || '';
+                            if (chunk) {
+                                answer += chunk;
+                                await onToken(chunk);
+                            }
+                        }
+                        resolve();
+                    }).catch(reject);
+                });
+
+                nodeStream.on('error', reject);
+            });
 
             logTiming('Generación LLM stream total', generationStart);
             return answer;
@@ -273,18 +285,12 @@ class RAGManager {
         }
 
         this.promptTemplate = PromptTemplate.fromTemplate(`
-            Eres un asistente educativo experto y amigable del sistema EduPath.
-            CONTEXTO RELEVANTE extraído del PDF:
+            Responde solo con base en el contexto.
+            Si la respuesta no está en el contexto, responde: "No tengo esa información en los documentos cargados".
+            Contexto:
             {context}
-
-            PREGUNTA DEL ESTUDIANTE: {question}
-
-            INSTRUCCIONES:
-            - Responde SOLO basándote en el contexto proporcionado.
-            - Si la información no está en el contexto, di: "No tengo esa información en los documentos cargados".
-            - Sé claro y educativo.
-            - Responde de forma breve, idealmente en 3 a 6 líneas.
-            RESPUESTA:`);
+            Pregunta: {question}
+            Respuesta:`);
         
         console.log(`✅ RAGManager configurado correctamente`);
         console.log(` 🚀 Destino LLM: ${this.provider === 'ollama' ? config.ollamaBaseUrl : 'Groq Cloud'}`);
@@ -296,11 +302,15 @@ class RAGManager {
         }
 
         const safeTopK = normalizeTopK(topK);
+        const maxContextChars = Number(process.env.CHATBOT_MAX_CONTEXT_CHARS || 400);
         const retrievalStart = nowMs();
         const relevantDocs = await this.vectorStore.similaritySearch(question, safeTopK);
         logTiming('Recuperación RAG', retrievalStart);
 
-        const context = relevantDocs.map((doc) => doc.pageContent).join('\n\n---\n\n');
+        const context = relevantDocs
+            .map((doc) => (doc.pageContent || '').replace(/\s+/g, ' ').trim().slice(0, maxContextChars))
+            .join('\n')
+            .slice(0, maxContextChars);
         const promptStart = nowMs();
         const finalPrompt = this.promptTemplate.template
             .replace('{context}', context)
@@ -341,7 +351,7 @@ class RAGManager {
         }
     }
 
-    async chat(question, topK = 2) {
+    async chat(question, topK = 1) {
         const totalStart = nowMs();
         try {
             const promptData = await this.buildPrompt(question, topK);
@@ -369,7 +379,7 @@ class RAGManager {
         }
     }
 
-    async chatStream(question, topK = 2, onToken = async () => {}) {
+    async chatStream(question, topK = 1, onToken = async () => {}) {
         const totalStart = nowMs();
         try {
             const promptData = await this.buildPrompt(question, topK);

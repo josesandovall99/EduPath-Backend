@@ -100,7 +100,7 @@ const uploadPDF = async (req, res) => {
 };
 
 function normalizeTopK(topK) {
-    return Math.max(1, Math.min(Number(topK) || 2, 2));
+    return 1;
 }
 
 const chatWithBot = async (req, res) => {
@@ -109,7 +109,7 @@ const chatWithBot = async (req, res) => {
             return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración del proveedor LLM.' });
         }
 
-        const { question, topK = 2 } = req.body;
+        const { question, topK = 1 } = req.body;
 
         if (!question || question.trim() === '') {
             return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
@@ -134,7 +134,7 @@ const chatWithBotStream = async (req, res) => {
             return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración del proveedor LLM.' });
         }
 
-        const { question, topK = 2 } = req.body;
+        const { question, topK = 1 } = req.body;
 
         if (!question || question.trim() === '') {
             return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
