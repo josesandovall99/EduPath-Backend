@@ -24,6 +24,10 @@ function logTiming(label, startedAt) {
     console.log(`⏱️ ${label}: ${elapsedMs} ms`);
 }
 
+function normalizeTopK(topK) {
+    return Math.max(1, Math.min(Number(topK) || 2, 2));
+}
+
 
 /**
  * Cliente HTTP para Ollama (PC B)
@@ -36,6 +40,7 @@ class OllamaHTTPClient {
         this.temperature = temperature;
         this.maxTokens = maxTokens;
         this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || 55000);
+        this.streamStartTimeoutMs = Number(process.env.OLLAMA_STREAM_START_TIMEOUT_MS || 60000);
     }
 
     async generate(prompt, options = {}) {
@@ -80,6 +85,89 @@ class OllamaHTTPClient {
 
             logTiming('Generación LLM total con error', generationStart);
             throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${lastError?.message}`);
+        }
+    }
+
+    async generateStream(prompt, onToken, options = {}) {
+        const generationStart = nowMs();
+        const endpoint = '/api/generate';
+        const url = `${this.baseUrl}${endpoint}`;
+        const payload = {
+            model: options.model || this.model,
+            prompt,
+            stream: true,
+            options: {
+                temperature: options.temperature ?? this.temperature,
+                num_predict: options.maxTokens || this.maxTokens,
+            },
+        };
+
+        try {
+            console.log(`📡 Enviando prompt streaming a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | start timeout ms: ${this.streamStartTimeoutMs}`);
+            const requestStart = nowMs();
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: getTimeoutSignal(this.streamStartTimeoutMs),
+            });
+            logTiming(`Ollama ${endpoint} stream start`, requestStart);
+
+            if (!res.ok) {
+                logTiming('Generación LLM stream con error', generationStart);
+                throw new Error(`HTTP ${res.status} en ${endpoint}`);
+            }
+
+            if (!res.body) {
+                logTiming('Generación LLM stream con error', generationStart);
+                throw new Error('Ollama no devolvió un cuerpo de respuesta en streaming.');
+            }
+
+            const reader = res.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+            let answer = '';
+
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+
+                for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+
+                    const parsed = JSON.parse(trimmed);
+                    const chunk = parsed.response || '';
+                    if (chunk) {
+                        answer += chunk;
+                        await onToken(chunk);
+                    }
+                }
+            }
+
+            if (buffer.trim()) {
+                const parsed = JSON.parse(buffer.trim());
+                const chunk = parsed.response || '';
+                if (chunk) {
+                    answer += chunk;
+                    await onToken(chunk);
+                }
+            }
+
+            logTiming('Generación LLM stream total', generationStart);
+            return answer;
+        } catch (error) {
+            if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+                logTiming('Generación LLM stream con timeout', generationStart);
+                throw new Error(`Timeout: Ollama tardó más de ${Math.round(this.streamStartTimeoutMs / 1000)} segundos en iniciar la respuesta.`);
+            }
+
+            logTiming('Generación LLM stream con error', generationStart);
+            throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${error?.message}`);
         }
     }
 }
@@ -202,6 +290,27 @@ class RAGManager {
         console.log(` 🚀 Destino LLM: ${this.provider === 'ollama' ? config.ollamaBaseUrl : 'Groq Cloud'}`);
     }
 
+    async buildPrompt(question, topK = 2) {
+        if (this.vectorStore.documents.length === 0) {
+            return { success: false, answer: 'No hay documentos cargados para responder.' };
+        }
+
+        const safeTopK = normalizeTopK(topK);
+        const retrievalStart = nowMs();
+        const relevantDocs = await this.vectorStore.similaritySearch(question, safeTopK);
+        logTiming('Recuperación RAG', retrievalStart);
+
+        const context = relevantDocs.map((doc) => doc.pageContent).join('\n\n---\n\n');
+        const promptStart = nowMs();
+        const finalPrompt = this.promptTemplate.template
+            .replace('{context}', context)
+            .replace('{question}', question);
+        logTiming('Construcción de prompt', promptStart);
+        console.log(`📏 Contexto chars: ${context.length} | Prompt chars: ${finalPrompt.length} | topK: ${safeTopK}`);
+
+        return { success: true, finalPrompt, safeTopK };
+    }
+
     // Método para cargar PDFs desde memoria (Subidas desde Web/React)
     async loadPDFFromBuffer(pdfBuffer, filename = 'documento.pdf') {
         const tempPath = path.join(__dirname, `temp_${Date.now()}.pdf`);
@@ -232,38 +341,21 @@ class RAGManager {
         }
     }
 
-    async chat(question, topK = 3) {
+    async chat(question, topK = 2) {
         const totalStart = nowMs();
         try {
-            if (this.vectorStore.documents.length === 0) {
-                return { success: false, answer: "No hay documentos cargados para responder." };
+            const promptData = await this.buildPrompt(question, topK);
+            if (!promptData.success) {
+                return promptData;
             }
 
-            const safeTopK = Math.max(1, Math.min(Number(topK) || 3, 5));
-            
-            // 1. Buscar fragmentos relevantes en PC A
-            const retrievalStart = nowMs();
-            const relevantDocs = await this.vectorStore.similaritySearch(question, safeTopK);
-            logTiming('Recuperación RAG', retrievalStart);
-
-            const context = relevantDocs.map(d => d.pageContent).join('\n\n---\n\n');
-            
-            // 2. Preparar el prompt
-            const promptStart = nowMs();
-            const finalPrompt = this.promptTemplate.template
-                .replace('{context}', context)
-                .replace('{question}', question);
-            logTiming('Construcción de prompt', promptStart);
-            console.log(`📏 Contexto chars: ${context.length} | Prompt chars: ${finalPrompt.length} | topK: ${safeTopK}`);
-
-            // 3. Enviar a PC B
             let answer;
             if (this.provider === 'ollama') {
-                answer = await this.llm.generate(finalPrompt);
+                answer = await this.llm.generate(promptData.finalPrompt);
             } else {
                 const generationStart = nowMs();
                 const chain = RunnableSequence.from([this.llm, new StringOutputParser()]);
-                answer = await chain.invoke(finalPrompt);
+                answer = await chain.invoke(promptData.finalPrompt);
                 logTiming('Generación LLM total', generationStart);
             }
 
@@ -273,6 +365,40 @@ class RAGManager {
         } catch (error) {
             logTiming('Chat total con error', totalStart);
             console.error("❌ Error en chat RAG:", error.message);
+            return { success: false, error: error.message };
+        }
+    }
+
+    async chatStream(question, topK = 2, onToken = async () => {}) {
+        const totalStart = nowMs();
+        try {
+            const promptData = await this.buildPrompt(question, topK);
+            if (!promptData.success) {
+                return promptData;
+            }
+
+            let answer = '';
+            if (this.provider === 'ollama' && typeof this.llm.generateStream === 'function') {
+                answer = await this.llm.generateStream(promptData.finalPrompt, async (chunk) => {
+                    answer += chunk;
+                    await onToken(chunk);
+                });
+            } else {
+                const fallback = await this.chat(question, topK);
+                if (!fallback.success) {
+                    return fallback;
+                }
+                answer = fallback.answer || '';
+                if (answer) {
+                    await onToken(answer);
+                }
+            }
+
+            logTiming('Chat stream total', totalStart);
+            return { success: true, answer };
+        } catch (error) {
+            logTiming('Chat stream total con error', totalStart);
+            console.error('❌ Error en chat RAG streaming:', error.message);
             return { success: false, error: error.message };
         }
     }

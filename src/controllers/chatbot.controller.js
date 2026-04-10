@@ -99,19 +99,23 @@ const uploadPDF = async (req, res) => {
     }
 };
 
+function normalizeTopK(topK) {
+    return Math.max(1, Math.min(Number(topK) || 2, 2));
+}
+
 const chatWithBot = async (req, res) => {
     try {
         if (!ragManager) {
             return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración del proveedor LLM.' });
         }
 
-        const { question, topK = 3 } = req.body;
+        const { question, topK = 2 } = req.body;
 
         if (!question || question.trim() === '') {
             return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
         }
 
-        const result = await ragManager.chat(question, topK);
+        const result = await ragManager.chat(question, normalizeTopK(topK));
 
         if (!result.success && typeof result.error === 'string' && result.error.toLowerCase().includes('timeout')) {
             return res.status(504).json(result);
@@ -121,6 +125,47 @@ const chatWithBot = async (req, res) => {
     } catch (error) {
         console.error('❌ Error en chatWithBot:', error.message);
         return res.status(500).json({ success: false, error: error.message });
+    }
+};
+
+const chatWithBotStream = async (req, res) => {
+    try {
+        if (!ragManager) {
+            return res.status(503).json({ success: false, error: 'Chatbot no disponible. Verifica la configuración del proveedor LLM.' });
+        }
+
+        const { question, topK = 2 } = req.body;
+
+        if (!question || question.trim() === '') {
+            return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
+        }
+
+        res.status(200);
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.setHeader('Cache-Control', 'no-cache, no-transform');
+        res.setHeader('Connection', 'keep-alive');
+        res.setHeader('X-Accel-Buffering', 'no');
+        if (typeof res.flushHeaders === 'function') {
+            res.flushHeaders();
+        }
+
+        const result = await ragManager.chatStream(question, normalizeTopK(topK), async (chunk) => {
+            res.write(chunk);
+        });
+
+        if (!result.success) {
+            res.write(result.error || 'No se pudo generar la respuesta.');
+        }
+
+        return res.end();
+    } catch (error) {
+        console.error('❌ Error en chatWithBotStream:', error.message);
+        if (!res.headersSent) {
+            return res.status(500).json({ success: false, error: error.message });
+        }
+
+        res.write(`\n\n${error.message}`);
+        return res.end();
     }
 };
 
@@ -191,6 +236,7 @@ module.exports = {
     initializeRAG,
     uploadPDF,
     chatWithBot,
+    chatWithBotStream,
     getStats,
     clearVectorStore,
     reloadDocuments,

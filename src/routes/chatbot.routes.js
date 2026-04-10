@@ -3,6 +3,7 @@ const multer = require('multer');
 const {
     uploadPDF,
     chatWithBot,
+    chatWithBotStream,
     getStats,
     clearVectorStore,
     reloadDocuments,
@@ -41,6 +42,7 @@ router.post('/upload', autenticacionUsuario, requiereAdmin, upload.single('pdf')
  * Body: { question: string, topK?: number }
  */
 router.post('/chat', autenticacionUsuario, chatWithBot);
+router.post('/chat/stream', autenticacionUsuario, chatWithBotStream);
 
 /**
  * GET /chatbot/stats
