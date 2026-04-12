@@ -105,6 +105,7 @@ app.use('/diagrams', require('./routes/diagram.routes'));
 
 // 5. Chatbot RAG con Groq
 app.use('/chatbot', require('./routes/chatbot.routes'));
+app.use('/chatbots', require('./routes/chatbots.routes'));
 
 // --- RUTA DE MONITOREO ---
 app.get('/debug', (req, res) => {

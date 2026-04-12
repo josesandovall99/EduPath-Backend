@@ -3,6 +3,8 @@ const { DataTypes } = require('sequelize');
 
 // 1. Inicialización de Modelos
 const models = {
+  Chatbot: require('./chatbot.model')(sequelize, DataTypes),
+  ChatbotDocumento: require('./chatbotDocumento.model')(sequelize, DataTypes),
   Miniproyecto: require('./miniproyecto.model')(sequelize, DataTypes),
   TipoActividad: require('./tipoactividad.model')(sequelize, DataTypes),
   Actividad: require('./actividad.model')(sequelize, DataTypes),

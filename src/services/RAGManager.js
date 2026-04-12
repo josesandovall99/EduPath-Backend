@@ -25,8 +25,8 @@ function logTiming(label, startedAt) {
     console.log(`⏱️ ${label}: ${elapsedMs} ms`);
 }
 
-function normalizeTopK(topK) {
-    return 1;
+function normalizeTopK(topK, maxTopK = 1, defaultTopK = 1) {
+    return Math.max(1, Math.min(Number(topK) || defaultTopK, maxTopK));
 }
 
 
@@ -264,6 +264,10 @@ class RAGManager {
         this.config = config;
         // Priorizar Ollama si existen las variables en el .env
         this.provider = config.provider || (config.ollamaBaseUrl ? 'ollama' : 'groq');
+        this.defaultTopK = Math.max(1, Number(config.defaultTopK || 1));
+        this.maxTopK = Math.max(this.defaultTopK, Number(config.maxTopK || this.defaultTopK));
+        this.maxContextChars = Math.max(100, Number(config.maxContextChars || process.env.CHATBOT_MAX_CONTEXT_CHARS || 400));
+        this.systemPrompt = config.systemPrompt || 'Responde solo con base en el contexto. Si la respuesta no está en el contexto, responde: "No tengo esa información en los documentos cargados".';
         
         this.vectorStore = new SimpleVectorStore();
         this.textSplitter = new RecursiveCharacterTextSplitter({
@@ -285,8 +289,7 @@ class RAGManager {
         }
 
         this.promptTemplate = PromptTemplate.fromTemplate(`
-            Responde solo con base en el contexto.
-            Si la respuesta no está en el contexto, responde: "No tengo esa información en los documentos cargados".
+            ${this.systemPrompt}
             Contexto:
             {context}
             Pregunta: {question}
@@ -296,13 +299,13 @@ class RAGManager {
         console.log(` 🚀 Destino LLM: ${this.provider === 'ollama' ? config.ollamaBaseUrl : 'Groq Cloud'}`);
     }
 
-    async buildPrompt(question, topK = 2) {
+    async buildPrompt(question, topK = this.defaultTopK) {
         if (this.vectorStore.documents.length === 0) {
             return { success: false, answer: 'No hay documentos cargados para responder.' };
         }
 
-        const safeTopK = normalizeTopK(topK);
-        const maxContextChars = Number(process.env.CHATBOT_MAX_CONTEXT_CHARS || 400);
+        const safeTopK = normalizeTopK(topK, this.maxTopK, this.defaultTopK);
+        const maxContextChars = this.maxContextChars;
         const retrievalStart = nowMs();
         const relevantDocs = await this.vectorStore.similaritySearch(question, safeTopK);
         logTiming('Recuperación RAG', retrievalStart);
@@ -351,7 +354,7 @@ class RAGManager {
         }
     }
 
-    async chat(question, topK = 1) {
+    async chat(question, topK = this.defaultTopK) {
         const totalStart = nowMs();
         try {
             const promptData = await this.buildPrompt(question, topK);
@@ -379,7 +382,7 @@ class RAGManager {
         }
     }
 
-    async chatStream(question, topK = 1, onToken = async () => {}) {
+    async chatStream(question, topK = this.defaultTopK, onToken = async () => {}) {
         const totalStart = nowMs();
         try {
             const promptData = await this.buildPrompt(question, topK);
