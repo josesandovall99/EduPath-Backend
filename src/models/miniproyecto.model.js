@@ -30,6 +30,13 @@ module.exports = (sequelize, DataTypes) => {
         Miniproyecto.belongsTo(models.Area, {
             foreignKey: 'area_id'
         });
+
+        if (models.Chatbot) {
+            Miniproyecto.hasMany(models.Chatbot, {
+                foreignKey: 'miniproyecto_id',
+                as: 'chatbots'
+            });
+        }
     };
 
     return Miniproyecto;
