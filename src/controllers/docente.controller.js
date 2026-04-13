@@ -42,6 +42,13 @@ const crearDocente = async (req, res) => {
       });
     }
 
+    if (area.estado === false) {
+      await transaction.rollback();
+      return res.status(400).json({
+        mensaje: 'No se puede asignar un docente a un area inactiva',
+      });
+    }
+
     const passwordPlano = generarPassword();
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(passwordPlano, salt);
@@ -217,6 +224,13 @@ const actualizarDocente = async (req, res) => {
       });
     }
 
+    if (area.estado === false) {
+      await transaction.rollback();
+      return res.status(400).json({
+        mensaje: 'No se puede asignar un docente a un area inactiva',
+      });
+    }
+
     const personaUpdate = {
       ...(nombre !== undefined && { nombre: sanitizePlainText(nombre) }),
       ...(email !== undefined && { email: email.trim().toLowerCase() }),
@@ -287,18 +301,60 @@ const eliminarDocente = async (req, res) => {
       });
     }
 
-    await docente.destroy({ transaction });
-    await docente.persona.destroy({ transaction });
+    if (docente.persona.estado === false) {
+      await transaction.rollback();
+      return res.json({
+        mensaje: 'Docente ya estaba inhabilitado',
+      });
+    }
+
+    await docente.persona.update({ estado: false }, { transaction });
 
     await transaction.commit();
 
     res.json({
-      mensaje: "Docente eliminado correctamente",
+      mensaje: "Docente inhabilitado correctamente",
     });
   } catch (error) {
     await transaction.rollback();
     res.status(500).json({
-      mensaje: "Error al eliminar docente",
+      mensaje: "Error al inhabilitar docente",
+      error: error.message,
+    });
+  }
+};
+
+const toggleEstadoDocente = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+
+    const docente = await Docente.findByPk(id, {
+      include: {
+        model: Persona,
+        as: 'persona',
+      },
+    });
+
+    if (!docente) {
+      await transaction.rollback();
+      return res.status(404).json({ mensaje: 'Docente no encontrado' });
+    }
+
+    const nuevoEstado = docente.persona.estado === false;
+    await docente.persona.update({ estado: nuevoEstado }, { transaction });
+
+    await transaction.commit();
+
+    return res.json({
+      mensaje: `Docente ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
+      estado: nuevoEstado,
+    });
+  } catch (error) {
+    await transaction.rollback();
+    return res.status(500).json({
+      mensaje: 'Error al cambiar el estado del docente',
       error: error.message,
     });
   }
@@ -313,4 +369,5 @@ module.exports = {
   obtenerDocentePorId,
   actualizarDocente,
   eliminarDocente,
+  toggleEstadoDocente,
 };

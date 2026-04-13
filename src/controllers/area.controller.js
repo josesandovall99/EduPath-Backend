@@ -1,5 +1,7 @@
 const { Area } = require('../models');
 
+const canViewInactiveAreas = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
+
 // Crear un área (solo ADMINISTRADOR)
 exports.createArea = async (req, res) => {
   try {
@@ -14,6 +16,10 @@ exports.createArea = async (req, res) => {
 exports.getAreas = async (req, res) => {
   try {
     const where = {};
+
+    if (!canViewInactiveAreas(req)) {
+      where.estado = true;
+    }
     
     // Admin ve todas las áreas
     // Docente ve solo su área
@@ -57,7 +63,12 @@ exports.getAreaById = async (req, res) => {
       }
     }
 
-    const area = await Area.findByPk(req.params.id);
+    const where = { id: req.params.id };
+    if (!canViewInactiveAreas(req)) {
+      where.estado = true;
+    }
+
+    const area = await Area.findOne({ where });
     if (!area) return res.status(404).json({ message: "Área no encontrada" });
     res.json(area);
   } catch (error) {
@@ -76,7 +87,7 @@ exports.getMisAreasDocente = async (req, res) => {
       return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
     }
 
-    const areas = await Area.findAll({ where: { id: allowedAreaIds } });
+    const areas = await Area.findAll({ where: { id: allowedAreaIds, estado: true } });
     res.json(areas);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener las áreas del docente", error });
@@ -89,7 +100,10 @@ exports.updateArea = async (req, res) => {
     const area = await Area.findByPk(req.params.id);
     if (!area) return res.status(404).json({ message: "Área no encontrada" });
 
-    await area.update(req.body);
+    const payload = { ...req.body };
+    delete payload.estado;
+
+    await area.update(payload);
     res.json(area);
   } catch (error) {
     res.status(500).json({ message: "Error al actualizar el área", error });
@@ -102,9 +116,30 @@ exports.deleteArea = async (req, res) => {
     const area = await Area.findByPk(req.params.id);
     if (!area) return res.status(404).json({ message: "Área no encontrada" });
 
-    await area.destroy();
-    res.json({ message: "Área eliminada correctamente" });
+    if (area.estado === false) {
+      return res.json({ message: 'Área ya estaba inhabilitada' });
+    }
+
+    await area.update({ estado: false });
+    res.json({ message: "Área inhabilitada correctamente" });
   } catch (error) {
-    res.status(500).json({ message: "Error al eliminar el área", error });
+    res.status(500).json({ message: "Error al inhabilitar el área", error });
+  }
+};
+
+exports.toggleEstadoArea = async (req, res) => {
+  try {
+    const area = await Area.findByPk(req.params.id);
+    if (!area) return res.status(404).json({ message: 'Área no encontrada' });
+
+    const nuevoEstado = area.estado === false;
+    await area.update({ estado: nuevoEstado });
+
+    res.json({
+      message: `Área ${nuevoEstado ? 'habilitada' : 'inhabilitada'} correctamente`,
+      estado: nuevoEstado,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error al cambiar el estado del área', error });
   }
 };

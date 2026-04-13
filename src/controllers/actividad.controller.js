@@ -16,7 +16,8 @@ exports.create = async (req, res) => {
 exports.findAll = async (req, res) => {
   try {
     if (!Actividad) throw new Error("Modelo Actividad no encontrado en db");
-    const data = await Actividad.findAll();
+    const where = ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario) ? {} : { estado: true };
+    const data = await Actividad.findAll({ where });
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -25,7 +26,12 @@ exports.findAll = async (req, res) => {
 
 exports.findOne = async (req, res) => {
   try {
-    const data = await Actividad.findByPk(req.params.id);
+    const where = { id: req.params.id };
+    if (!['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario)) {
+      where.estado = true;
+    }
+
+    const data = await Actividad.findOne({ where });
     if (!data) return res.status(404).json({ message: "Actividad no encontrada" });
     res.json(data);
   } catch (e) {
@@ -45,9 +51,32 @@ exports.update = async (req, res) => {
 
 exports.delete = async (req, res) => {
   try {
-    const deleted = await Actividad.destroy({ where: { id: req.params.id } });
-    if (deleted === 0) return res.status(404).json({ message: "No se encontró la actividad" });
-    res.json({ message: 'Actividad eliminada' });
+    const actividad = await Actividad.findByPk(req.params.id);
+    if (!actividad) return res.status(404).json({ message: "No se encontró la actividad" });
+
+    if (actividad.estado === false) {
+      return res.json({ message: 'Actividad ya estaba inhabilitada' });
+    }
+
+    await actividad.update({ estado: false });
+    res.json({ message: 'Actividad inhabilitada' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+};
+
+exports.toggleEstado = async (req, res) => {
+  try {
+    const actividad = await Actividad.findByPk(req.params.id);
+    if (!actividad) return res.status(404).json({ message: 'Actividad no encontrada' });
+
+    const nuevoEstado = actividad.estado === false;
+    await actividad.update({ estado: nuevoEstado });
+
+    res.json({
+      message: `Actividad ${nuevoEstado ? 'habilitada' : 'inhabilitada'} correctamente`,
+      estado: nuevoEstado,
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

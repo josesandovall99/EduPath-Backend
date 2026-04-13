@@ -5,6 +5,9 @@ const { normalizarConfiguracionCompilador, validarConfiguracionCompilador } = re
 const submissionLocks = new Map();
 const umlValidator = require('../services/umlValidator');
 
+const canViewInactiveEjercicios = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
+const isEjercicioActivo = (ejercicio) => ejercicio?.actividad?.estado !== false && ejercicio?.contenido?.estado !== false;
+
 // Crear ejercicio con su actividad base (herencia con transacción)
 exports.createEjercicio = async (req, res) => {
   const t = await sequelize.transaction();
@@ -18,6 +21,11 @@ exports.createEjercicio = async (req, res) => {
     if (!contenidoExistente) {
       await t.rollback();
       return res.status(400).json({ message: "El contenido especificado no existe" });
+    }
+
+    if (contenidoExistente.estado === false) {
+      await t.rollback();
+      return res.status(400).json({ message: 'El contenido especificado está inactivo' });
     }
 
     if (req.docenteAreaId) {
@@ -164,6 +172,10 @@ exports.getEjercicios = async (req, res) => {
       });
     }
 
+    if (!canViewInactiveEjercicios(req)) {
+      ejercicios = ejercicios.filter(isEjercicioActivo);
+    }
+
     res.json(ejercicios);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener los ejercicios", error: error.message || error });
@@ -198,6 +210,9 @@ exports.getEjercicioById = async (req, res) => {
     }
 
     if (!ejercicio) return res.status(404).json({ message: "Ejercicio no encontrado" });
+    if (!canViewInactiveEjercicios(req) && !isEjercicioActivo(ejercicio)) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
     res.json(ejercicio);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener el ejercicio", error: error.message || error });
@@ -239,6 +254,11 @@ exports.updateEjercicio = async (req, res) => {
       if (!contenidoExistente) {
         await t.rollback();
         return res.status(400).json({ message: "El contenido especificado no existe" });
+      }
+
+      if (contenidoExistente.estado === false) {
+        await t.rollback();
+        return res.status(400).json({ message: 'El contenido especificado está inactivo' });
       }
 
       if (req.docenteAreaId) {
@@ -330,17 +350,64 @@ exports.deleteEjercicio = async (req, res) => {
 
     const actividad = await Actividad.findByPk(req.params.id);
 
-    // Eliminar ambos
-    await ejercicio.destroy({ transaction: t });
-    if (actividad) {
-      await actividad.destroy({ transaction: t });
+    if (!actividad) {
+      await t.rollback();
+      return res.status(404).json({ message: 'Actividad asociada no encontrada' });
     }
 
+    if (actividad.estado === false) {
+      await t.rollback();
+      return res.json({ message: 'Ejercicio ya estaba inhabilitado' });
+    }
+
+    await actividad.update({ estado: false }, { transaction: t });
+
     await t.commit();
-    res.json({ message: "Ejercicio y actividad eliminados correctamente" });
+    res.json({ message: "Ejercicio inhabilitado correctamente" });
   } catch (error) {
     await t.rollback();
-    res.status(500).json({ message: "Error al eliminar el ejercicio", error: error.message || error });
+    res.status(500).json({ message: "Error al inhabilitar el ejercicio", error: error.message || error });
+  }
+};
+
+exports.toggleEstadoEjercicio = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const ejercicio = await Ejercicio.findByPk(req.params.id);
+    if (!ejercicio) {
+      await t.rollback();
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    if (req.docenteAreaId) {
+      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
+        include: [{ model: Tema, attributes: ['area_id'] }]
+      });
+      const areaId = contenidoActual?.Tema?.area_id;
+      if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
+        await t.rollback();
+        return res.status(403).json({ message: 'Acceso denegado: área fuera de tu alcance' });
+      }
+    }
+
+    const actividad = await Actividad.findByPk(req.params.id);
+    if (!actividad) {
+      await t.rollback();
+      return res.status(404).json({ message: 'Actividad asociada no encontrada' });
+    }
+
+    const nuevoEstado = actividad.estado === false;
+    await actividad.update({ estado: nuevoEstado }, { transaction: t });
+
+    await t.commit();
+    return res.json({
+      message: `Ejercicio ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
+      estado: nuevoEstado,
+    });
+  } catch (error) {
+    await t.rollback();
+    return res.status(500).json({ message: 'Error al cambiar el estado del ejercicio', error: error.message || error });
   }
 };
 
@@ -353,9 +420,18 @@ exports.resolverEjercicio = async (req, res) => {
     const { respuesta, respuestas } = req.body; // 'respuestas' para cuestionarios
 
     // Buscar el ejercicio
-    const ejercicio = await Ejercicio.findByPk(ejercicioId);
+    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
+      include: [
+        { model: Actividad, as: 'actividad' },
+        { model: Contenido, as: 'contenido' }
+      ]
+    });
     if (!ejercicio) {
       return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    if (!isEjercicioActivo(ejercicio)) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
     }
 
     // Rama por tipo de ejercicio
@@ -518,9 +594,18 @@ exports.getRetroalimentacionEjercicio = async (req, res) => {
   try {
     const { ejercicioId } = req.params;
 
-    const ejercicio = await Ejercicio.findByPk(ejercicioId);
+    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
+      include: [
+        { model: Actividad, as: 'actividad' },
+        { model: Contenido, as: 'contenido' }
+      ]
+    });
     if (!ejercicio) {
       return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    if (!isEjercicioActivo(ejercicio)) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
     }
 
     res.json({
@@ -541,8 +626,17 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
     const { ejercicioId } = req.params;
     const { estudiante_id, respuesta } = req.body;
 
-    const ejercicio = await Ejercicio.findByPk(ejercicioId);
+    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
+      include: [
+        { model: Actividad, as: 'actividad' },
+        { model: Contenido, as: 'contenido' }
+      ]
+    });
     if (!ejercicio) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    if (!isEjercicioActivo(ejercicio)) {
       return res.status(404).json({ message: 'Ejercicio no encontrado' });
     }
 

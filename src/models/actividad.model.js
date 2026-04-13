@@ -17,6 +17,11 @@ module.exports = (sequelize, DataTypes) => {
     fecha_creacion: {
       type: DataTypes.DATE
     },
+    estado: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: true
+    },
     tipo_actividad_id: {
       type: DataTypes.BIGINT,
       allowNull: false // Recomendado para validar integridad

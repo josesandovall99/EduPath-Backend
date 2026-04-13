@@ -21,7 +21,7 @@ const { Op } = require('sequelize');
 exports.verificarContenidoDesbloqueado = async (estudianteId, contenidoId) => {
   try {
     // Verificar que el contenido existe
-    const contenido = await Contenido.findByPk(contenidoId);
+    const contenido = await Contenido.findOne({ where: { id: contenidoId, estado: true } });
     if (!contenido) {
       return { desbloqueado: false, razon: 'Contenido no encontrado' };
     }
@@ -73,7 +73,7 @@ exports.verificarSubtemaCompleto = async (estudianteId, subtemaId) => {
   try {
     // Obtener todos los contenidos del subtema
     const contenidos = await Contenido.findAll({
-      where: { subtema_id: subtemaId },
+      where: { subtema_id: subtemaId, estado: true },
       attributes: ['id']
     });
 
@@ -120,7 +120,7 @@ exports.verificarTemaCompleto = async (estudianteId, temaId) => {
   try {
     // Obtener todos los subtemas del tema
     const subtemas = await Subtema.findAll({
-      where: { tema_id: temaId },
+      where: { tema_id: temaId, estado: true },
       attributes: ['id']
     });
 
@@ -164,7 +164,7 @@ exports.obtenerEstadoContenidosTema = async (estudianteId, temaId) => {
   try {
     // Obtener todos los contenidos del tema con sus relaciones
     const contenidos = await Contenido.findAll({
-      where: { tema_id: temaId },
+      where: { tema_id: temaId, estado: true },
       include: [
         { model: Subtema, attributes: ['id', 'nombre'] }
       ],
@@ -214,7 +214,7 @@ exports.obtenerEstadoSubtemasTema = async (estudianteId, temaId) => {
   try {
     // Obtener todos los subtemas del tema
     const subtemas = await Subtema.findAll({
-      where: { tema_id: temaId },
+      where: { tema_id: temaId, estado: true },
       order: [['id', 'ASC']]
     });
 

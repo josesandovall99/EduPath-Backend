@@ -4,6 +4,12 @@ const evaluacionController = require('./evaluacion.controller');
 const { isNonEmptyString, sanitizePlainText, sanitizeRichText } = require('../utils/inputSecurity');
 const { enrichMiniproyectoResponse } = require('../utils/miniproyectoRubric');
 
+const canViewInactiveMiniproyectos = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
+const isMiniproyectoActivo = (registro) => {
+  const actividad = registro?.Actividad || registro?.actividad;
+  return actividad?.estado !== false;
+};
+
 // Función auxiliar para validar FKs (Evita repetir código)
 const validarRelaciones = async (tipo_id, area_id) => {
   if (tipo_id) {
@@ -13,6 +19,7 @@ const validarRelaciones = async (tipo_id, area_id) => {
   if (area_id) {
     const existe = await Area.findByPk(area_id);
     if (!existe) throw new Error(`El area_id (${area_id}) no existe.`);
+    if (existe.estado === false) throw new Error(`El area_id (${area_id}) está inactivo.`);
   }
 };
 
@@ -193,7 +200,7 @@ exports.findAll = async (req, res) => {
         }
       ]
     });
-    res.json(data);
+    res.json(canViewInactiveMiniproyectos(req) ? data : data.filter(isMiniproyectoActivo));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -215,6 +222,10 @@ exports.findOne = async (req, res) => {
     });
     if (!data) return res.status(404).json({ message: "Miniproyecto no encontrado" });
 
+    if (!canViewInactiveMiniproyectos(req) && !isMiniproyectoActivo(data)) {
+      return res.status(404).json({ message: 'Miniproyecto no encontrado' });
+    }
+
     if (req.docenteAreaId && parseInt(data.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
       return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
     }
@@ -233,18 +244,48 @@ exports.findOne = async (req, res) => {
 
 exports.delete = async (req, res) => {
   try {
-    if (req.docenteAreaId) {
-      const miniproyecto = await Miniproyecto.findByPk(req.params.id);
-      if (!miniproyecto) return res.status(404).json({ message: "Registro no encontrado" });
+    const miniproyecto = await Miniproyecto.findByPk(req.params.id);
+    if (!miniproyecto) return res.status(404).json({ message: "Registro no encontrado" });
 
+    if (req.docenteAreaId) {
       if (parseInt(miniproyecto.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
         return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
       }
     }
 
-    const deleted = await Actividad.destroy({ where: { id: req.params.id } });
-    if (deleted === 0) return res.status(404).json({ message: "Registro no encontrado" });
-    res.json({ message: 'Eliminado correctamente' });
+    const actividad = await Actividad.findByPk(req.params.id);
+    if (!actividad) return res.status(404).json({ message: 'Actividad asociada no encontrada' });
+
+    if (actividad.estado === false) {
+      return res.json({ message: 'Miniproyecto ya estaba inhabilitado' });
+    }
+
+    await actividad.update({ estado: false });
+    res.json({ message: 'Miniproyecto inhabilitado correctamente' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+exports.toggleEstado = async (req, res) => {
+  try {
+    const miniproyecto = await Miniproyecto.findByPk(req.params.id);
+    if (!miniproyecto) return res.status(404).json({ message: 'Miniproyecto no encontrado' });
+
+    if (req.docenteAreaId && parseInt(miniproyecto.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ error: 'Acceso denegado: área fuera de tu alcance' });
+    }
+
+    const actividad = await Actividad.findByPk(req.params.id);
+    if (!actividad) return res.status(404).json({ message: 'Actividad asociada no encontrada' });
+
+    const nuevoEstado = actividad.estado === false;
+    await actividad.update({ estado: nuevoEstado });
+
+    res.json({
+      message: `Miniproyecto ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
+      estado: nuevoEstado,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -267,8 +308,14 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
       return res.status(400).json({ message: `El estudiante_id (${estudiante_id}) no existe.` });
     }
 
-    const miniproyecto = await Miniproyecto.findByPk(id);
+    const miniproyecto = await Miniproyecto.findByPk(id, {
+      include: [{ model: Actividad }]
+    });
     if (!miniproyecto) {
+      return res.status(404).json({ message: 'Miniproyecto no encontrado' });
+    }
+
+    if (!isMiniproyectoActivo(miniproyecto)) {
       return res.status(404).json({ message: 'Miniproyecto no encontrado' });
     }
 

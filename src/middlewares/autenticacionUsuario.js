@@ -56,6 +56,12 @@ const autenticacionUsuario = async (req, res, next) => {
       });
     }
 
+    if (persona.estado === false) {
+      return res.status(403).json({
+        mensaje: 'Usuario inhabilitado',
+      });
+    }
+
     // Setear datos básicos
     req.personaId = personaId;
     req.tipoUsuario = persona.tipoUsuario;

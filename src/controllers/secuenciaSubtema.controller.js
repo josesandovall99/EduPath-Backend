@@ -48,12 +48,22 @@ async function validarSecuenciaSubtema(
       resultado.error = `Subtema origen con ID ${origenId} no existe`;
       return resultado;
     }
+    if (subtemaOrigen.estado === false) {
+      resultado.valido = false;
+      resultado.error = `Subtema origen con ID ${origenId} está inhabilitado`;
+      return resultado;
+    }
     resultado.validacionesRealizadas.push('✅ V1: Existencia de subtema origen');
 
     const subtemaDestino = await Subtema.findByPk(destinoId);
     if (!subtemaDestino) {
       resultado.valido = false;
       resultado.error = `Subtema destino con ID ${destinoId} no existe`;
+      return resultado;
+    }
+    if (subtemaDestino.estado === false) {
+      resultado.valido = false;
+      resultado.error = `Subtema destino con ID ${destinoId} está inhabilitado`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V2: Subtema destino existe');
@@ -68,7 +78,7 @@ async function validarSecuenciaSubtema(
 
     // ========== VALIDACIÓN 1.2: Continuidad de cadena (lineal) ==========
     const subtemasDelTema = await Subtema.findAll({
-      where: { tema_id: subtemaOrigen.tema_id },
+      where: { tema_id: subtemaOrigen.tema_id, estado: true },
       attributes: ['id']
     });
     const idsTema = subtemasDelTema.map((subtema) => Number(subtema.id));
@@ -333,7 +343,7 @@ exports.getSubtemasOrdenadosPorSecuencia = async (req, res) => {
 
     // Obtener todos los subtemas del tema
     const subtemas = await Subtema.findAll({
-      where: { tema_id: temaId }
+      where: { tema_id: temaId, estado: true }
     });
 
     if (subtemas.length === 0) {
@@ -460,6 +470,19 @@ exports.toggleEstadoSecuenciaSubtema = async (req, res) => {
     }
 
     // Alternar el estado
+    if (!secuencia.estado) {
+      const [origen, destino] = await Promise.all([
+        Subtema.findByPk(secuencia.subtema_origen_id),
+        Subtema.findByPk(secuencia.subtema_destino_id)
+      ]);
+
+      if (!origen || origen.estado === false || !destino || destino.estado === false) {
+        return res.status(400).json({
+          message: 'No se puede habilitar la secuencia porque el subtema origen o destino está inhabilitado'
+        });
+      }
+    }
+
     await secuencia.update({ estado: !secuencia.estado });
 
     res.json({
@@ -494,6 +517,19 @@ exports.updateSecuenciaSubtema = async (req, res) => {
     const destinoAnterior = Number(secuencia.subtema_destino_id);
     const cambiaOrigen = subtema_origen_id !== undefined && Number(subtema_origen_id) !== origenAnterior;
     const cambiaDestino = subtema_destino_id !== undefined && Number(subtema_destino_id) !== destinoAnterior;
+
+    if (subtema_origen_id || subtema_destino_id) {
+      const [subtemaOrigen, subtemaDestino] = await Promise.all([
+        Subtema.findByPk(Number(nuevoOrigen)),
+        Subtema.findByPk(Number(nuevoDestino))
+      ]);
+
+      if (!subtemaOrigen || subtemaOrigen.estado === false || !subtemaDestino || subtemaDestino.estado === false) {
+        return res.status(400).json({
+          message: 'No se puede actualizar la secuencia con subtemas inhabilitados'
+        });
+      }
+    }
 
     // Caso especial: inversión de tramo (ej. 1→2→3 al cambiar 1 por 3 => 3→2→1)
     if (cambiaOrigen && !cambiaDestino) {
@@ -596,13 +632,13 @@ exports.reorderSequences = async (req, res) => {
 
     // Validar que todos los subtemas existan
     const subtemasValidos = await Subtema.findAll({
-      where: { id: subtemas },
+      where: { id: subtemas, estado: true },
       attributes: ['id', 'tema_id']
     });
 
     if (subtemasValidos.length !== subtemas.length) {
       return res.status(400).json({ 
-        message: "Uno o más subtemas especificados no existen" 
+        message: "Uno o más subtemas especificados no existen o están inhabilitados" 
       });
     }
 

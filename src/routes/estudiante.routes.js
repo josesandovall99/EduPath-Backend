@@ -8,6 +8,7 @@ const {
   obtenerEstudiantePorId,
   actualizarEstudiante,
   eliminarEstudiante,
+  toggleEstadoEstudiante,
   importarEstudiantesDesdeExcel,
 } = require("../controllers/estudiante.controller");
 
@@ -34,6 +35,7 @@ router.post("/", autenticacionUsuario, requiereAdmin, crearEstudiante);
 router.get("/", autenticacionUsuario, requiereAdmin, obtenerEstudiantes);
 router.get("/:id", autenticacionUsuario, requiereAdmin, obtenerEstudiantePorId);
 router.put("/:id", autenticacionUsuario, requiereAdmin, actualizarEstudiante);
+router.put("/:id/toggle-estado", autenticacionUsuario, requiereAdmin, toggleEstadoEstudiante);
 router.delete("/:id", autenticacionUsuario, requiereAdmin, eliminarEstudiante);
 
 // Importar Excel

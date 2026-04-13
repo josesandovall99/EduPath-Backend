@@ -167,7 +167,7 @@ const actualizarEstudiante = async (req, res) => {
     if (codigoAcceso !== undefined) personaUpdate.codigoAcceso = sanitizePlainText(codigoAcceso);
     if (contraseña !== undefined) personaUpdate.contraseña = await bcrypt.hash(contraseña, 10);
 
-    await estudiante.Persona.update(
+    await estudiante.persona.update(
       personaUpdate,
       { transaction }
     );
@@ -183,7 +183,7 @@ const actualizarEstudiante = async (req, res) => {
       mensaje: "Estudiante actualizado correctamente",
       estudiante: {
         ...estudiante.toJSON(),
-        persona: removePersonaSensitiveFields(estudiante.Persona || estudiante.persona),
+        persona: removePersonaSensitiveFields(estudiante.persona),
       },
     });
   } catch (error) {
@@ -217,20 +217,60 @@ const eliminarEstudiante = async (req, res) => {
       });
     }
 
-    // Primero el hijo
-    await estudiante.destroy({ transaction });
-    // Luego el padre
-    await estudiante.Persona.destroy({ transaction });
+    if (estudiante.persona.estado === false) {
+      await transaction.rollback();
+      return res.json({
+        mensaje: 'Estudiante ya estaba inhabilitado',
+      });
+    }
+
+    await estudiante.persona.update({ estado: false }, { transaction });
 
     await transaction.commit();
 
     res.json({
-      mensaje: "Estudiante eliminado correctamente",
+      mensaje: "Estudiante inhabilitado correctamente",
     });
   } catch (error) {
     await transaction.rollback();
     res.status(500).json({
-      mensaje: "Error al eliminar estudiante",
+      mensaje: "Error al inhabilitar estudiante",
+      error: error.message,
+    });
+  }
+};
+
+const toggleEstadoEstudiante = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+
+    const estudiante = await Estudiante.findByPk(id, {
+      include: {
+        model: Persona,
+        as: 'persona',
+      }
+    });
+
+    if (!estudiante) {
+      await transaction.rollback();
+      return res.status(404).json({ mensaje: 'Estudiante no encontrado' });
+    }
+
+    const nuevoEstado = estudiante.persona.estado === false;
+    await estudiante.persona.update({ estado: nuevoEstado }, { transaction });
+
+    await transaction.commit();
+
+    return res.json({
+      mensaje: `Estudiante ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
+      estado: nuevoEstado,
+    });
+  } catch (error) {
+    await transaction.rollback();
+    return res.status(500).json({
+      mensaje: 'Error al cambiar el estado del estudiante',
       error: error.message,
     });
   }
@@ -358,6 +398,7 @@ module.exports = {
   obtenerEstudiantePorId,
   actualizarEstudiante,
   eliminarEstudiante,
+  toggleEstadoEstudiante,
   importarEstudiantesDesdeExcel,
 };
 

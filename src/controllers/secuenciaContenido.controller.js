@@ -51,12 +51,22 @@ async function validarSecuenciaContenido(
       resultado.error = `Contenido origen con ID ${origenId} no existe`;
       return resultado;
     }
+    if (contenidoOrigen.estado === false) {
+      resultado.valido = false;
+      resultado.error = `Contenido origen con ID ${origenId} está inhabilitado`;
+      return resultado;
+    }
     resultado.validacionesRealizadas.push('✅ V1: Existencia de contenidos');
 
     const contenidoDestino = await Contenido.findByPk(destinoId);
     if (!contenidoDestino) {
       resultado.valido = false;
       resultado.error = `Contenido destino con ID ${destinoId} no existe`;
+      return resultado;
+    }
+    if (contenidoDestino.estado === false) {
+      resultado.valido = false;
+      resultado.error = `Contenido destino con ID ${destinoId} está inhabilitado`;
       return resultado;
     }
     resultado.validacionesRealizadas.push('✅ V2: Contenido destino existe');
@@ -72,7 +82,7 @@ async function validarSecuenciaContenido(
     // ========== VALIDACIÓN 1.2: Continuidad de cadena (lineal) ==========
     if (validarSubtema) {
       const contenidosDelSubtema = await Contenido.findAll({
-        where: { subtema_id: contenidoOrigen.subtema_id },
+        where: { subtema_id: contenidoOrigen.subtema_id, estado: true },
         attributes: ['id']
       });
       const idsSubtema = contenidosDelSubtema.map((contenido) => Number(contenido.id));
@@ -336,7 +346,7 @@ exports.getContenidosOrdenadosPorSecuencia = async (req, res) => {
 
     // Obtener todos los contenidos del subtema
     const contenidos = await Contenido.findAll({
-      where: { subtema_id: subtemaId }
+      where: { subtema_id: subtemaId, estado: true }
     });
 
     if (contenidos.length === 0) {
@@ -466,6 +476,19 @@ exports.toggleEstadoSecuenciaContenido = async (req, res) => {
     }
 
     // Alternar el estado (true -> false, false -> true)
+    if (!secuencia.estado) {
+      const [origen, destino] = await Promise.all([
+        Contenido.findByPk(secuencia.contenido_origen_id),
+        Contenido.findByPk(secuencia.contenido_destino_id)
+      ]);
+
+      if (!origen || origen.estado === false || !destino || destino.estado === false) {
+        return res.status(400).json({
+          message: 'No se puede habilitar la secuencia porque el contenido origen o destino está inhabilitado'
+        });
+      }
+    }
+
     await secuencia.update({ estado: !secuencia.estado });
 
     res.json({
@@ -500,6 +523,19 @@ exports.updateSecuenciaContenido = async (req, res) => {
     const destinoAnterior = Number(secuencia.contenido_destino_id);
     const cambiaOrigen = contenido_origen_id !== undefined && Number(contenido_origen_id) !== origenAnterior;
     const cambiaDestino = contenido_destino_id !== undefined && Number(contenido_destino_id) !== destinoAnterior;
+
+    if (contenido_origen_id || contenido_destino_id) {
+      const [contenidoOrigen, contenidoDestino] = await Promise.all([
+        Contenido.findByPk(Number(nuevoOrigen)),
+        Contenido.findByPk(Number(nuevoDestino))
+      ]);
+
+      if (!contenidoOrigen || contenidoOrigen.estado === false || !contenidoDestino || contenidoDestino.estado === false) {
+        return res.status(400).json({
+          message: 'No se puede actualizar la secuencia con contenidos inhabilitados'
+        });
+      }
+    }
 
     // Caso especial: inversión de tramo (ej. 1→2→3 al cambiar 1 por 3 => 3→2→1)
     if (cambiaOrigen && !cambiaDestino) {
@@ -607,13 +643,13 @@ exports.reorderSequences = async (req, res) => {
 
     // Validar que todos los contenidos existan
     const contenidosValidos = await Contenido.findAll({
-      where: { id: contenidos },
+      where: { id: contenidos, estado: true },
       attributes: ['id', 'subtema_id']
     });
 
     if (contenidosValidos.length !== contenidos.length) {
       return res.status(400).json({ 
-        message: "Uno o más contenidos especificados no existen" 
+        message: "Uno o más contenidos especificados no existen o están inhabilitados" 
       });
     }
 

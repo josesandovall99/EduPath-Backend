@@ -5,6 +5,7 @@ const {
   obtenerAdministradorPorId,
   actualizarAdministrador,
   eliminarAdministrador,
+  toggleEstadoAdministrador,
 } = require("../controllers/administrador.controller");
 const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 const requiereAdmin = require('../middlewares/requiereAdmin');
@@ -19,6 +20,7 @@ router.post("/login", loginRateLimit, loginAdministrador);
 router.get("/", autenticacionUsuario, requiereAdmin, obtenerAdministradores);
 router.get("/:id", autenticacionUsuario, requiereAdmin, obtenerAdministradorPorId);
 router.put("/:id", autenticacionUsuario, requiereAdmin, actualizarAdministrador);
+router.put("/:id/toggle-estado", autenticacionUsuario, requiereAdmin, toggleEstadoAdministrador);
 router.delete("/:id", autenticacionUsuario, requiereAdmin, eliminarAdministrador);
 
 module.exports = router;

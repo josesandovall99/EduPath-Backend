@@ -1,5 +1,7 @@
 const { Subtema, Tema } = require('../models');
 
+const canViewInactiveSubtemas = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
+
 // Crear un subtema con validación de tema_id
 exports.createSubtema = async (req, res) => {
   try {
@@ -9,6 +11,10 @@ exports.createSubtema = async (req, res) => {
     const temaExistente = await Tema.findByPk(tema_id);
     if (!temaExistente) {
       return res.status(400).json({ message: "El tema especificado no existe" });
+    }
+
+    if (temaExistente.estado === false) {
+      return res.status(400).json({ message: 'El tema especificado está inactivo' });
     }
 
     if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
@@ -32,6 +38,9 @@ exports.createSubtema = async (req, res) => {
 exports.getSubtemas = async (req, res) => {
   try {
     const where = {};
+    if (!canViewInactiveSubtemas(req)) {
+      where.estado = true;
+    }
 
     if (req.docenteAreaId) {
       const temas = await Tema.findAll({
@@ -70,10 +79,18 @@ exports.getSubtemaById = async (req, res) => {
       }
 
       subtema = await Subtema.findOne({
-        where: { id: req.params.id, tema_id: temaIds }
+        where: {
+          id: req.params.id,
+          tema_id: temaIds,
+          ...(!canViewInactiveSubtemas(req) ? { estado: true } : {}),
+        }
       });
     } else {
-      subtema = await Subtema.findByPk(req.params.id);
+      const where = { id: req.params.id };
+      if (!canViewInactiveSubtemas(req)) {
+        where.estado = true;
+      }
+      subtema = await Subtema.findOne({ where });
     }
 
     if (!subtema) return res.status(404).json({ message: "Subtema no encontrado" });
@@ -103,6 +120,10 @@ exports.updateSubtema = async (req, res) => {
         return res.status(400).json({ message: "El tema especificado no existe" });
       }
 
+      if (temaExistente.estado === false) {
+        return res.status(400).json({ message: 'El tema especificado está inactivo' });
+      }
+
       if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
         return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
       }
@@ -128,10 +149,38 @@ exports.deleteSubtema = async (req, res) => {
       }
     }
 
-    await subtema.destroy();
-    res.json({ message: "Subtema eliminado correctamente" });
+    if (subtema.estado === false) {
+      return res.json({ message: 'Subtema ya estaba inhabilitado' });
+    }
+
+    await subtema.update({ estado: false });
+    res.json({ message: "Subtema inhabilitado correctamente" });
   } catch (error) {
-    res.status(500).json({ message: "Error al eliminar el subtema", error });
+    res.status(500).json({ message: "Error al inhabilitar el subtema", error });
+  }
+};
+
+exports.toggleEstadoSubtema = async (req, res) => {
+  try {
+    const subtema = await Subtema.findByPk(req.params.id);
+    if (!subtema) return res.status(404).json({ message: 'Subtema no encontrado' });
+
+    if (req.docenteAreaId) {
+      const temaActual = await Tema.findByPk(subtema.tema_id);
+      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+        return res.status(403).json({ message: 'Acceso denegado: área fuera de tu alcance' });
+      }
+    }
+
+    const nuevoEstado = subtema.estado === false;
+    await subtema.update({ estado: nuevoEstado });
+
+    res.json({
+      message: `Subtema ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
+      estado: nuevoEstado,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error al cambiar el estado del subtema', error });
   }
 };
 
@@ -151,7 +200,7 @@ exports.getSubtemasByTema = async (req, res) => {
       return res.status(404).json({ message: "Tema no encontrado" });
     }
 
-    const subtemas = await Subtema.findAll({ where: { tema_id: temaId } });
+    const subtemas = await Subtema.findAll({ where: { tema_id: temaId, estado: true } });
     res.json(subtemas);
   } catch (error) {
     res.status(500).json({ message: "Error al obtener los subtemas del tema", error });

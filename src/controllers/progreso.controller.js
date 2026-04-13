@@ -477,9 +477,9 @@ const buildFailuresReportData = async ({ estudianteId, areaIds } = {}) => {
     : null;
 
   const [areas, temas, contenidos, ejercicios, evaluaciones, respuestasEjercicio, respuestasMiniproyecto] = await Promise.all([
-    Area.findAll({ attributes: ['id', 'nombre'] }),
-    Tema.findAll({ attributes: ['id', 'area_id'] }),
-    Contenido.findAll({ attributes: ['id', 'tema_id'] }),
+    Area.findAll({ where: { estado: true }, attributes: ['id', 'nombre'] }),
+    Tema.findAll({ where: { estado: true }, attributes: ['id', 'area_id'] }),
+    Contenido.findAll({ where: { estado: true }, attributes: ['id', 'tema_id'] }),
     Ejercicio.findAll({ attributes: ['id', 'contenido_id'] }),
     Evaluacion.findAll({
       where: evaluacionWhere,
@@ -728,10 +728,10 @@ const applyStudentFilters = (students, { semester, dateFrom, dateTo } = {}) => {
 
 const getResumenGeneralData = async ({ semester, dateFrom, dateTo, areaIds } = {}) => {
   const [areas, temas, subtemas, contenidos, secuencias, estudiantes, ejercicios, miniproyectos] = await Promise.all([
-    Area.findAll({ attributes: ['id', 'nombre'] }),
-    Tema.findAll({ attributes: ['id', 'nombre', 'area_id'] }),
-    Subtema.findAll({ attributes: ['id', 'nombre', 'tema_id'] }),
-    Contenido.findAll({ attributes: ['id', 'tema_id', 'subtema_id'] }),
+    Area.findAll({ where: { estado: true }, attributes: ['id', 'nombre'] }),
+    Tema.findAll({ where: { estado: true }, attributes: ['id', 'nombre', 'area_id'] }),
+    Subtema.findAll({ where: { estado: true }, attributes: ['id', 'nombre', 'tema_id'] }),
+    Contenido.findAll({ where: { estado: true }, attributes: ['id', 'tema_id', 'subtema_id'] }),
     SecuenciaContenido.findAll({ where: { estado: true }, attributes: ['contenido_origen_id', 'contenido_destino_id'] }),
     Estudiante.findAll({
       attributes: ['id', 'createdAt', 'semestre'],
@@ -1052,10 +1052,10 @@ exports.obtenerProgresoEstudiantePorTema = async (req, res) => {
       return res.status(400).json({ message: "tema_id y estudiante_id deben ser números válidos" });
     }
 
-    const tema = await Tema.findByPk(tId);
+    const tema = await Tema.findOne({ where: { id: tId, estado: true } });
     if (!tema) return res.status(404).json({ message: "Tema no encontrado" });
 
-    const contenidosDelTema = await Contenido.findAll({ where: { tema_id: tId }, attributes: ['id'] });
+    const contenidosDelTema = await Contenido.findAll({ where: { tema_id: tId, estado: true }, attributes: ['id'] });
     const contenidoIdsDelTema = contenidosDelTema.map(c => c.id);
 
     const secuencias = await SecuenciaContenido.findAll({
@@ -1129,10 +1129,10 @@ exports.obtenerProgresoEstudiantePorSubtema = async (req, res) => {
       return res.status(400).json({ message: "subtema_id y estudiante_id deben ser números válidos" });
     }
 
-    const subtema = await Subtema.findByPk(sId);
+    const subtema = await Subtema.findOne({ where: { id: sId, estado: true } });
     if (!subtema) return res.status(404).json({ message: "Subtema no encontrado" });
 
-    const contenidosDelSubtema = await Contenido.findAll({ where: { subtema_id: sId }, attributes: ['id'] });
+    const contenidosDelSubtema = await Contenido.findAll({ where: { subtema_id: sId, estado: true }, attributes: ['id'] });
     const contenidoIdsDelSubtema = contenidosDelSubtema.map(c => c.id);
 
     const secuencias = await SecuenciaContenido.findAll({
@@ -1217,11 +1217,11 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
     let areaId = null;
 
     if (tipo === 'tema') {
-      const tema = await Tema.findByPk(uId);
+      const tema = await Tema.findOne({ where: { id: uId, estado: true } });
       if (!tema) return res.status(404).json({ message: 'Tema no encontrado' });
       areaId = tema.area_id;
 
-      const contenidos = await Contenido.findAll({ where: { tema_id: uId }, attributes: ['id'] });
+      const contenidos = await Contenido.findAll({ where: { tema_id: uId, estado: true }, attributes: ['id'] });
       const contenidoIdsDelTema = contenidos.map(c => c.id);
 
       // contenidos válidos en secuencia activa
@@ -1240,21 +1240,21 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
       secuencias.forEach(s => { contenidoIdsEnSecuencia.add(s.contenido_origen_id); contenidoIdsEnSecuencia.add(s.contenido_destino_id); });
       contenidoIds = [...contenidoIdsEnSecuencia].filter(id => contenidoIdsDelTema.includes(id));
 
-      const subtemas = await Subtema.findAll({ where: { tema_id: uId }, attributes: ['id'] });
+      const subtemas = await Subtema.findAll({ where: { tema_id: uId, estado: true }, attributes: ['id'] });
       const subtemaIds = subtemas.map(s => s.id);
-      const contenidosDelTemaParaEjercicios = await Contenido.findAll({ where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] } }, attributes: ['id'] });
+      const contenidosDelTemaParaEjercicios = await Contenido.findAll({ where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] }, estado: true }, attributes: ['id'] });
       const contenidoIdsParaEjercicios = contenidosDelTemaParaEjercicios.map(c => c.id);
       const ejercicios = await Ejercicio.findAll({ where: { contenido_id: { [Op.in]: contenidoIdsParaEjercicios.length > 0 ? contenidoIdsParaEjercicios : [0] } }, attributes: ['id'] });
       ejercicioIds = ejercicios.map(e => e.id);
 
     } else { // subtema
-      const subtema = await Subtema.findByPk(uId);
+      const subtema = await Subtema.findOne({ where: { id: uId, estado: true } });
       if (!subtema) return res.status(404).json({ message: 'Subtema no encontrado' });
 
-      const tema = await Tema.findByPk(subtema.tema_id);
+      const tema = await Tema.findOne({ where: { id: subtema.tema_id, estado: true } });
       areaId = tema ? tema.area_id : null;
 
-      const contenidos = await Contenido.findAll({ where: { subtema_id: uId }, attributes: ['id'] });
+      const contenidos = await Contenido.findAll({ where: { subtema_id: uId, estado: true }, attributes: ['id'] });
       const contenidoIdsDelSubtema = contenidos.map(c => c.id);
 
       const secuencias = await SecuenciaContenido.findAll({
@@ -1348,7 +1348,7 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
       });
     }
 
-    const area = await Area.findByPk(aId);
+    const area = await Area.findOne({ where: { id: aId, estado: true } });
     if (!area) {
       return res.status(404).json({ message: "Área no encontrada" });
     }
@@ -1369,7 +1369,7 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
     // 1. CONTENIDOS DEL ÁREA (filtrados por secuencia activa)
     // ==========================================
     const contenidosDelArea = await Contenido.findAll({
-      where: { tema_id: { [Op.in]: temaIds } },
+      where: { tema_id: { [Op.in]: temaIds }, estado: true },
       attributes: ['id']
     });
     const contenidoIdsDelArea = contenidosDelArea.map(c => c.id);
@@ -1410,14 +1410,14 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
     // 2. EJERCICIOS DEL ÁREA (desde respuestas enviadas o aprobadas)
     // ==========================================
     const subtemas = await Subtema.findAll({
-      where: { tema_id: { [Op.in]: temaIds } },
+      where: { tema_id: { [Op.in]: temaIds }, estado: true },
       attributes: ['id']
     });
     const subtemaIds = subtemas.map(s => s.id);
 
     // Obtener ejercicios del área a través de contenidos de esos subtemas
     const contenidosParaEjercicios = await Contenido.findAll({
-      where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] } },
+      where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] }, estado: true },
       attributes: ['id']
     });
     const contenidoIdsParaEjercicios = contenidosParaEjercicios.map(c => c.id);

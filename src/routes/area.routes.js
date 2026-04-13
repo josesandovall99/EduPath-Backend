@@ -14,6 +14,7 @@ router.get('/mis-areas', autenticacionUsuario, requiereDocente, areaController.g
 router.get('/:id', autenticacionUsuario, areaController.getAreaById);
 // PUT, DELETE: requieren ser ADMINISTRADOR
 router.put('/:id', autenticacionUsuario, requiereAdmin, areaController.updateArea);
+router.put('/:id/toggle-estado', autenticacionUsuario, requiereAdmin, areaController.toggleEstadoArea);
 router.delete('/:id', autenticacionUsuario, requiereAdmin, areaController.deleteArea);
 
 module.exports = router;

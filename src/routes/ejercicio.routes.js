@@ -8,6 +8,7 @@ const autorizacionDocente = require('../middlewares/autorizacionDocente');
 router.post('/', autenticacionUsuario, autorizacionDocente, ejercicioController.createEjercicio);
 router.get('/', autenticacionUsuario, ejercicioController.getEjercicios);
 router.get('/:id', autenticacionUsuario, ejercicioController.getEjercicioById);
+router.put('/:id/toggle-estado', autenticacionUsuario, autorizacionDocente, ejercicioController.toggleEstadoEjercicio);
 router.put('/:id', autenticacionUsuario, autorizacionDocente, ejercicioController.updateEjercicio);
 router.delete('/:id', autenticacionUsuario, autorizacionDocente, ejercicioController.deleteEjercicio);
 

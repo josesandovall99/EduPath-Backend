@@ -192,20 +192,60 @@ const eliminarAdministrador = async (req, res) => {
       });
     }
 
-    // Primero el hijo
-    await administrador.destroy({ transaction });
-    // Luego el padre
-    await administrador.persona.destroy({ transaction });
+    if (administrador.persona.estado === false) {
+      await transaction.rollback();
+      return res.json({
+        mensaje: 'Administrador ya estaba inhabilitado',
+      });
+    }
+
+    await administrador.persona.update({ estado: false }, { transaction });
 
     await transaction.commit();
 
     res.json({
-      mensaje: "Administrador eliminado correctamente",
+      mensaje: "Administrador inhabilitado correctamente",
     });
   } catch (error) {
     await transaction.rollback();
     res.status(500).json({
-      mensaje: "Error al eliminar administrador",
+      mensaje: "Error al inhabilitar administrador",
+      error: error.message,
+    });
+  }
+};
+
+const toggleEstadoAdministrador = async (req, res) => {
+  const transaction = await sequelize.transaction();
+
+  try {
+    const { id } = req.params;
+
+    const administrador = await Administrador.findByPk(id, {
+      include: {
+        model: Persona,
+        as: 'persona',
+      },
+    });
+
+    if (!administrador) {
+      await transaction.rollback();
+      return res.status(404).json({ mensaje: 'Administrador no encontrado' });
+    }
+
+    const nuevoEstado = administrador.persona.estado === false;
+    await administrador.persona.update({ estado: nuevoEstado }, { transaction });
+
+    await transaction.commit();
+
+    return res.json({
+      mensaje: `Administrador ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
+      estado: nuevoEstado,
+    });
+  } catch (error) {
+    await transaction.rollback();
+    return res.status(500).json({
+      mensaje: 'Error al cambiar el estado del administrador',
       error: error.message,
     });
   }
@@ -220,4 +260,5 @@ module.exports = {
   obtenerAdministradorPorId,
   actualizarAdministrador,
   eliminarAdministrador,
+  toggleEstadoAdministrador,
 };

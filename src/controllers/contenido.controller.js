@@ -1,5 +1,7 @@
 const { Contenido, Tema, Subtema, Area, Estudiante, SecuenciaContenido, Progreso } = require('../models');
 
+const canViewInactiveContenidos = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
+
 /**
  * Función auxiliar para manejar la redirección automática cuando un contenido es eliminado o inactivado
  * 
@@ -118,6 +120,10 @@ exports.createContenido = async (req, res) => {
       return res.status(400).json({ message: "El tema especificado no existe" });
     }
 
+    if (temaExistente.estado === false) {
+      return res.status(400).json({ message: 'El tema especificado está inactivo' });
+    }
+
     if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
       return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
     }
@@ -126,6 +132,10 @@ exports.createContenido = async (req, res) => {
     const subtemaExistente = await Subtema.findByPk(subtema_id);
     if (!subtemaExistente) {
       return res.status(400).json({ message: "El subtema especificado no existe" });
+    }
+
+    if (subtemaExistente.estado === false) {
+      return res.status(400).json({ message: 'El subtema especificado está inactivo' });
     }
 
     // Crear el contenido
@@ -162,7 +172,8 @@ exports.getContenidos = async (req, res) => {
 
       contenidos = await Contenido.findAll({ where: { tema_id: temaIds } });
     } else {
-      contenidos = await Contenido.findAll();
+      const where = canViewInactiveContenidos(req) ? {} : { estado: true };
+      contenidos = await Contenido.findAll({ where });
     }
 
     res.json(contenidos);
@@ -176,6 +187,10 @@ exports.getContenidoById = async (req, res) => {
   try {
     const contenido = await Contenido.findByPk(req.params.id);
     if (!contenido) return res.status(404).json({ message: "Contenido no encontrado" });
+
+    if (contenido.estado === false && !canViewInactiveContenidos(req)) {
+      return res.status(404).json({ message: 'Contenido no encontrado' });
+    }
 
     if (req.docenteAreaId) {
       const temaActual = await Tema.findByPk(contenido.tema_id);
@@ -210,6 +225,10 @@ exports.updateContenido = async (req, res) => {
         return res.status(400).json({ message: "El tema especificado no existe" });
       }
 
+      if (temaExistente.estado === false) {
+        return res.status(400).json({ message: 'El tema especificado está inactivo' });
+      }
+
       if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
         return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
       }
@@ -220,6 +239,10 @@ exports.updateContenido = async (req, res) => {
       const subtemaExistente = await Subtema.findByPk(req.body.subtema_id);
       if (!subtemaExistente) {
         return res.status(400).json({ message: "El subtema especificado no existe" });
+      }
+
+      if (subtemaExistente.estado === false) {
+        return res.status(400).json({ message: 'El subtema especificado está inactivo' });
       }
 
       if (req.docenteAreaId) {
@@ -250,18 +273,25 @@ exports.deleteContenido = async (req, res) => {
       }
     }
 
+    if (contenido.estado === false) {
+      return res.json({
+        message: 'Contenido ya estaba inhabilitado',
+        redirecccion: null,
+      });
+    }
+
     // Manejar la redirección automática de secuencias
     const resultadoRedirecccion = await handleSecuenciaRedirecccion(req.params.id);
 
-    // Eliminar el contenido
-    await contenido.destroy();
+    // Inhabilitar el contenido
+    await contenido.update({ estado: false });
 
     res.json({
-      message: "Contenido eliminado correctamente",
+      message: "Contenido inhabilitado correctamente",
       redirecccion: resultadoRedirecccion
     });
   } catch (error) {
-    res.status(500).json({ message: "Error al eliminar el contenido", error });
+    res.status(500).json({ message: "Error al inhabilitar el contenido", error });
   }
 };
 
@@ -276,6 +306,10 @@ exports.getContenidosPorSubtema = async (req, res) => {
       return res.status(404).json({ message: "Subtema no encontrado" });
     }
 
+    if (subtema.estado === false && !canViewInactiveContenidos(req)) {
+      return res.status(404).json({ message: 'Subtema no encontrado' });
+    }
+
     if (req.docenteAreaId) {
       const temaActual = await Tema.findByPk(subtema.tema_id);
       if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
@@ -285,7 +319,10 @@ exports.getContenidosPorSubtema = async (req, res) => {
 
     // Buscar contenidos asociados al subtema
     const contenidos = await Contenido.findAll({
-      where: { subtema_id: subtemaId }
+      where: {
+        subtema_id: subtemaId,
+        ...(canViewInactiveContenidos(req) ? {} : { estado: true })
+      }
     });
 
     res.json(contenidos);
@@ -301,13 +338,6 @@ exports.toggleEstadoContenido = async (req, res) => {
     const contenido = await Contenido.findByPk(req.params.id);
     if (!contenido) {
       return res.status(404).json({ message: "Contenido no encontrado" });
-    }
-
-    // Verificar si el modelo tiene un campo 'estado'
-    if (!('estado' in contenido.dataValues)) {
-      return res.status(400).json({ 
-        message: "El modelo Contenido no tiene un campo 'estado'. Debe agregarse primero a la migración de la base de datos." 
-      });
     }
 
     // Si el contenido va a ser inactivado, manejar la redirección
@@ -358,6 +388,10 @@ exports.getContenidosPorCategoria = async (req, res) => {
       where.tema_id = temaIds;
     }
 
+    if (!canViewInactiveContenidos(req)) {
+      where.estado = true;
+    }
+
     const contenidos = await Contenido.findAll({ where });
 
     if (contenidos.length === 0) {
@@ -376,7 +410,12 @@ exports.getContenidosPorAreaNombre = async (req, res) => {
     const { nombreArea } = req.params;
 
     // Buscar el área por nombre
-    const area = await Area.findOne({ where: { nombre: nombreArea } });
+    const area = await Area.findOne({
+      where: {
+        nombre: nombreArea,
+        ...(canViewInactiveContenidos(req) ? {} : { estado: true })
+      }
+    });
     if (!area) {
       return res.status(404).json({ message: "Área no encontrada" });
     }
@@ -386,12 +425,15 @@ exports.getContenidosPorAreaNombre = async (req, res) => {
     }
 
     // Buscar temas de esa área
-    const temas = await Tema.findAll({ where: { area_id: area.id } });
+    const temas = await Tema.findAll({ where: { area_id: area.id, estado: true } });
     const temaIds = temas.map(t => t.id);
 
     // Buscar contenidos relacionados a esos temas
     const contenidos = await Contenido.findAll({
-      where: { tema_id: temaIds },
+      where: {
+        tema_id: temaIds,
+        ...(canViewInactiveContenidos(req) ? {} : { estado: true })
+      },
       include: [
         { model: Tema },
         { model: Subtema }
@@ -432,21 +474,21 @@ exports.adaptarContenidoPorPerfil = async (req, res) => {
 
     // Buscar las áreas por nombre
     const areas = await Area.findAll({
-      where: { nombre: nombresAreas }
+      where: { nombre: nombresAreas, estado: true }
     });
 
     const areaIds = areas.map(area => area.id);
 
     // Buscar los temas de esas áreas
     const temas = await Tema.findAll({
-      where: { area_id: areaIds }
+      where: { area_id: areaIds, estado: true }
     });
 
     const temaIds = temas.map(tema => tema.id);
 
     // Buscar los contenidos relacionados a esos temas
     const contenidos = await Contenido.findAll({
-      where: { tema_id: temaIds },
+      where: { tema_id: temaIds, estado: true },
       include: [
         { model: Tema },
         { model: Subtema }
@@ -485,6 +527,12 @@ exports.marcarContenidoVisualizado = async (req, res) => {
     if (!contenido) {
       return res.status(404).json({
         message: "Contenido no encontrado"
+      });
+    }
+
+    if (contenido.estado === false) {
+      return res.status(400).json({
+        message: 'El contenido está inactivo'
       });
     }
 

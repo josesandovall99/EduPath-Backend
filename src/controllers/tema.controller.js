@@ -1,5 +1,7 @@
 const { Tema, Area } = require('../models');
 
+const canViewInactiveTemas = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
+
 const getAllowedAreaIds = (req) => {
   const areaIds = Array.isArray(req.docenteAreaIds)
     ? req.docenteAreaIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
@@ -27,6 +29,10 @@ exports.createTema = async (req, res) => {
       return res.status(400).json({ message: "El área especificada no existe" });
     }
 
+    if (areaExistente.estado === false) {
+      return res.status(400).json({ message: 'El área especificada está inactiva' });
+    }
+
     // Crear el tema
     const nuevoTema = await Tema.create({
       nombre,
@@ -45,6 +51,9 @@ exports.createTema = async (req, res) => {
 exports.getTemas = async (req, res) => {
   try {
     const where = {};
+    if (!canViewInactiveTemas(req)) {
+      where.estado = true;
+    }
     // Solo docentes están limitados a su área
     if (req.tipoUsuario === "DOCENTE") {
       const allowedAreaIds = getAllowedAreaIds(req);
@@ -73,7 +82,15 @@ exports.getTemaById = async (req, res) => {
       });
     } else {
       // Admin y otros usuarios ven cualquier tema
-      tema = await Tema.findByPk(req.params.id);
+      const where = { id: req.params.id };
+      if (!canViewInactiveTemas(req)) {
+        where.estado = true;
+      }
+      tema = await Tema.findOne({ where });
+    }
+
+    if (tema && req.tipoUsuario === 'DOCENTE' && !canViewInactiveTemas(req) && tema.estado === false) {
+      tema = null;
     }
 
     if (!tema) return res.status(404).json({ message: "Tema no encontrado" });
@@ -101,6 +118,10 @@ exports.updateTema = async (req, res) => {
       const areaExistente = await Area.findByPk(req.body.area_id);
       if (!areaExistente) {
         return res.status(400).json({ message: "El área especificada no existe" });
+      }
+
+      if (areaExistente.estado === false) {
+        return res.status(400).json({ message: 'El área especificada está inactiva' });
       }
 
       if (req.tipoUsuario === "DOCENTE") {
@@ -131,10 +152,38 @@ exports.deleteTema = async (req, res) => {
       }
     }
 
-    await tema.destroy();
-    res.json({ message: "Tema eliminado correctamente" });
+    if (tema.estado === false) {
+      return res.json({ message: 'Tema ya estaba inhabilitado' });
+    }
+
+    await tema.update({ estado: false });
+    res.json({ message: "Tema inhabilitado correctamente" });
   } catch (error) {
-    res.status(500).json({ message: "Error al eliminar el tema", error });
+    res.status(500).json({ message: "Error al inhabilitar el tema", error });
+  }
+};
+
+exports.toggleEstadoTema = async (req, res) => {
+  try {
+    const tema = await Tema.findByPk(req.params.id);
+    if (!tema) return res.status(404).json({ message: 'Tema no encontrado' });
+
+    if (req.tipoUsuario === 'DOCENTE') {
+      const allowedAreaIds = getAllowedAreaIds(req);
+      if (!allowedAreaIds.includes(Number(tema.area_id))) {
+        return res.status(403).json({ message: 'Acceso denegado: área fuera de tu alcance' });
+      }
+    }
+
+    const nuevoEstado = tema.estado === false;
+    await tema.update({ estado: nuevoEstado });
+
+    res.json({
+      message: `Tema ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
+      estado: nuevoEstado,
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error al cambiar el estado del tema', error });
   }
 };
 

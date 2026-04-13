@@ -21,7 +21,11 @@ const loginEstudiante = async (req, res) => {
 
     const estudiante = await Estudiante.findOne({
       where: { codigoEstudiantil },
-      include: { model: Persona, as: 'persona' },
+      include: {
+        model: Persona,
+        as: 'persona',
+        where: { estado: true },
+      },
     });
 
     if (!estudiante) return res.status(404).json({ mensaje: 'Usuario no encontrado' });
@@ -71,6 +75,10 @@ const cambiarContraseñaPrimerIngreso = async (req, res) => {
       return res.status(404).json({ mensaje: "Persona no encontrada" });
     }
 
+    if (persona.estado === false) {
+      return res.status(403).json({ mensaje: 'Usuario inhabilitado' });
+    }
+
     // 1. Encriptar la nueva clave
     const salt = await bcrypt.genSalt(10);
     persona.contraseña = await bcrypt.hash(nuevaContraseña, salt);
@@ -109,7 +117,7 @@ const loginAdministrador = async (req, res) => {
     }
 
     const persona = await Persona.findOne({
-      where: { codigoAcceso, tipoUsuario: 'ADMINISTRADOR' },
+      where: { codigoAcceso, tipoUsuario: 'ADMINISTRADOR', estado: true },
       include: { model: Administrador, as: 'administrador' },
     });
 
@@ -152,7 +160,7 @@ const loginDocente = async (req, res) => {
     }
 
     const persona = await Persona.findOne({
-      where: { codigoAcceso, tipoUsuario: 'DOCENTE' },
+      where: { codigoAcceso, tipoUsuario: 'DOCENTE', estado: true },
       include: {
         model: Docente,
         as: 'docente',
@@ -196,7 +204,7 @@ const solicitarResetPassword = async (req, res) => {
       return res.status(400).json({ mensaje: 'El email es invalido' });
     }
 
-    const persona = await Persona.findOne({ where: { email } });
+    const persona = await Persona.findOne({ where: { email, estado: true } });
 
     if (persona) {
       const rawToken = crypto.randomBytes(32).toString('hex');
@@ -234,6 +242,7 @@ const resetPassword = async (req, res) => {
     const persona = await Persona.findOne({
       where: {
         resetPasswordTokenHash: tokenHash,
+        estado: true,
       }
     });
 

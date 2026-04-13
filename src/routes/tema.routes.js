@@ -10,6 +10,7 @@ router.get('/', autenticacionUsuario, temaController.getTemas);
 router.get('/por-area/:areaId', autenticacionUsuario, temaController.getTemasByArea);
 router.get('/:id', autenticacionUsuario, temaController.getTemaById);
 router.put('/reordenar', autenticacionUsuario, autorizacionDocente, temaController.reordenarTemas);
+router.put('/:id/toggle-estado', autenticacionUsuario, autorizacionDocente, temaController.toggleEstadoTema);
 router.put('/:id', autenticacionUsuario, autorizacionDocente, temaController.updateTema);
 router.delete('/:id', autenticacionUsuario, autorizacionDocente, temaController.deleteTema);
 

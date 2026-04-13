@@ -5,6 +5,7 @@ const {
   obtenerDocentePorId,
   actualizarDocente,
   eliminarDocente,
+  toggleEstadoDocente,
 } = require("../controllers/docente.controller");
 const progresoController = require("../controllers/progreso.controller");
 const autenticacionUsuario = require("../middlewares/autenticacionUsuario");
@@ -33,6 +34,7 @@ router.get(
 );
 router.get("/:id", autenticacionUsuario, requiereAdmin, obtenerDocentePorId);
 router.put("/:id", autenticacionUsuario, requiereAdmin, actualizarDocente);
+router.put("/:id/toggle-estado", autenticacionUsuario, requiereAdmin, toggleEstadoDocente);
 router.delete("/:id", autenticacionUsuario, requiereAdmin, eliminarDocente);
 
 module.exports = router;
