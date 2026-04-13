@@ -5,6 +5,20 @@ const { normalizarConfiguracionCompilador, validarConfiguracionCompilador } = re
 const submissionLocks = new Map();
 const umlValidator = require('../services/umlValidator');
 
+const createDefaultUmlOptions = () => ({
+  minClasses: 2,
+  requireRelationships: false,
+  requireMultiplicities: false,
+});
+
+const normalizeUmlConfig = (configuracion = {}) => ({
+  ...configuracion,
+  opciones: {
+    ...createDefaultUmlOptions(),
+    ...(configuracion?.opciones || {}),
+  },
+});
+
 const canViewInactiveEjercicios = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
 const isEjercicioActivo = (ejercicio) => ejercicio?.actividad?.estado !== false && ejercicio?.contenido?.estado !== false;
 
@@ -65,7 +79,7 @@ exports.createEjercicio = async (req, res) => {
       if (tipo === 'Compilador') {
         configuracion = { tipo: 'programacion', esperado: ejercicio.resultado_ejercicio || '', casos_prueba: [] };
       } else if (tipo === 'Diagramas UML') {
-        configuracion = { opciones: { minClasses: 2, requireRelationships: false, requireMultiplicities: false } };
+        configuracion = normalizeUmlConfig();
       } else if (tipo === 'Opción única') {
         configuracion = { tipo: 'opcion-unica', enunciado: '', opciones: [], respuestaCorrecta: '' };
       } else if (tipo === 'Ordenar') {
@@ -75,6 +89,10 @@ exports.createEjercicio = async (req, res) => {
       } else {
         configuracion = { tipo: 'cuestionario', preguntas: [] };
       }
+    }
+
+    if (tipo === 'Diagramas UML') {
+      configuracion = normalizeUmlConfig(configuracion);
     }
 
     let codigoEstructura = ejercicio.codigoEstructura || null;
@@ -316,6 +334,10 @@ exports.updateEjercicio = async (req, res) => {
         }
       }
 
+      if ((data.tipo_ejercicio || ejercicio.tipo_ejercicio) === 'Diagramas UML') {
+        data.configuracion = normalizeUmlConfig(data.configuracion || ejercicio.configuracion || {});
+      }
+
       await ejercicio.update(data, { transaction: t });
     }
 
@@ -474,7 +496,7 @@ exports.resolverEjercicio = async (req, res) => {
 
       // Aplicar exclusivamente las reglas configuradas por el administrador en el ejercicio
       // Ignoramos opciones del request para evitar que el cliente relaje las validaciones
-      const result = umlValidator.validate(diagramPayload, cfg.opciones);
+      const result = umlValidator.validate(diagramPayload, normalizeUmlConfig(cfg).opciones);
       const esCorrecta = !!result.success;
       const puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       return res.status(esCorrecta ? 200 : 400).json({
@@ -698,7 +720,7 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
         submissionLocks.delete(key);
         return res.status(400).json({ message: 'Este ejercicio UML no tiene reglas configuradas (configuracion.opciones). Solicite al administrador que las establezca.' });
       }
-      const result = require('../services/umlValidator').validate(diagramPayload, cfg.opciones);
+      const result = require('../services/umlValidator').validate(diagramPayload, normalizeUmlConfig(cfg).opciones);
       esCorrecta = !!result.success;
       puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       detalle = { errors: result.errors, warnings: result.warnings };
