@@ -1,6 +1,25 @@
 const sequelize = require("../config/database");
 const bcrypt = require('bcryptjs');
 const { Persona, Administrador } = require("../models");
+const { generarPassword } = require("../utils/generarCredenciales");
+const enviarCorreoBienvenidaAdministrador = require("../utils/enviarCorreoBienvenidaAdministrador");
+const {
+  isNonEmptyString,
+  isValidEmail,
+  sanitizePlainText,
+  removePersonaSensitiveFields,
+} = require('../utils/inputSecurity');
+
+const buildSequelizeValidationMessage = (error) => {
+  if (!Array.isArray(error?.errors) || error.errors.length === 0) {
+    return error?.message || 'Validation error';
+  }
+
+  return error.errors
+    .map((detail) => detail.message)
+    .filter(Boolean)
+    .join(', ');
+};
 
 /* =========================
    CREAR ADMINISTRADOR
@@ -9,25 +28,27 @@ const crearAdministrador = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const {
-      nombre,
-      email,
-      codigoAcceso,
-      contraseña,
-      cargo,
-      nivelAcceso,
-    } = req.body;
+    const { nombre, email, codigoAcceso } = req.body;
+
+    if (!isNonEmptyString(nombre) || !isValidEmail(email) || !isNonEmptyString(codigoAcceso)) {
+      await transaction.rollback();
+      return res.status(400).json({
+        mensaje: "Datos invalidos para crear administrador",
+      });
+    }
+
+    const passwordPlano = generarPassword();
 
     // 🔒 Encriptar contraseña antes de crear Persona
     const salt = await bcrypt.genSalt(10);
-    const passwordHash = await bcrypt.hash(contraseña, salt);
+    const passwordHash = await bcrypt.hash(passwordPlano, salt);
 
     // 1️⃣ Crear Persona
     const persona = await Persona.create(
       {
-        nombre,
-        email,
-        codigoAcceso,
+        nombre: sanitizePlainText(nombre),
+        email: email.trim().toLowerCase(),
+        codigoAcceso: sanitizePlainText(codigoAcceso),
         contraseña: passwordHash,
         tipoUsuario: "ADMINISTRADOR",
       },
@@ -38,20 +59,51 @@ const crearAdministrador = async (req, res) => {
     const administrador = await Administrador.create(
       {
         persona_id: persona.id, // 🔥 FK correcta
-        cargo,
-        nivelAcceso,
       },
       { transaction }
     );
 
+    await enviarCorreoBienvenidaAdministrador({
+      email,
+      nombre,
+      codigoAcceso,
+      password: passwordPlano,
+    });
+
     await transaction.commit();
 
+    const administradorCreado = await Administrador.findByPk(administrador.id, {
+      include: {
+        model: Persona,
+        as: 'persona',
+        attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
+      },
+    });
+
     res.status(201).json({
-      persona,
-      administrador,
+      mensaje: 'Administrador creado correctamente y credenciales enviadas por correo.',
+      administrador: {
+        ...administradorCreado.toJSON(),
+        persona: removePersonaSensitiveFields(administradorCreado.persona),
+      },
     });
   } catch (error) {
     await transaction.rollback();
+
+    if (error?.name === 'SequelizeUniqueConstraintError') {
+      return res.status(409).json({
+        mensaje: 'Ya existe un usuario registrado con ese correo.',
+        error: buildSequelizeValidationMessage(error),
+      });
+    }
+
+    if (error?.name === 'SequelizeValidationError') {
+      return res.status(400).json({
+        mensaje: 'Datos invalidos para crear administrador',
+        error: buildSequelizeValidationMessage(error),
+      });
+    }
+
     res.status(500).json({
       mensaje: "Error al crear administrador",
       error: error.message,
@@ -68,10 +120,14 @@ const obtenerAdministradores = async (req, res) => {
       include: {
         model: Persona,
         as: "persona",
+        attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
       },
     });
 
-    res.json(administradores);
+    res.json(administradores.map((administrador) => ({
+      ...administrador.toJSON(),
+      persona: removePersonaSensitiveFields(administrador.persona),
+    })));
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener administradores",
@@ -91,6 +147,7 @@ const obtenerAdministradorPorId = async (req, res) => {
       include: {
         model: Persona,
         as: "persona",
+        attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
       },
     });
 
@@ -100,7 +157,10 @@ const obtenerAdministradorPorId = async (req, res) => {
       });
     }
 
-    res.json(administrador);
+    res.json({
+      ...administrador.toJSON(),
+      persona: removePersonaSensitiveFields(administrador.persona),
+    });
   } catch (error) {
     res.status(500).json({
       mensaje: "Error al obtener administrador",
@@ -131,17 +191,14 @@ const actualizarAdministrador = async (req, res) => {
       });
     }
 
-    const {
-      nombre,
-      email,
-      codigoAcceso,
-      contraseña,
-      cargo,
-      nivelAcceso,
-    } = req.body;
+    const { nombre, email, codigoAcceso, contraseña } = req.body;
 
     // 1️⃣ Actualizar Persona (hashear contraseña si es enviada)
-    const personaUpdate = { nombre, email, codigoAcceso };
+    const personaUpdate = {
+      ...(nombre !== undefined && { nombre: sanitizePlainText(nombre) }),
+      ...(email !== undefined && { email: email.trim().toLowerCase() }),
+      ...(codigoAcceso !== undefined && { codigoAcceso: sanitizePlainText(codigoAcceso) }),
+    };
     if (contraseña) {
       const salt = await bcrypt.genSalt(10);
       personaUpdate.contraseña = await bcrypt.hash(contraseña, salt);
@@ -149,17 +206,22 @@ const actualizarAdministrador = async (req, res) => {
 
     await administrador.persona.update(personaUpdate, { transaction });
 
-    // 2️⃣ Actualizar Administrador
-    await administrador.update(
-      { cargo, nivelAcceso },
-      { transaction }
-    );
-
     await transaction.commit();
+
+    const administradorActualizado = await Administrador.findByPk(id, {
+      include: {
+        model: Persona,
+        as: 'persona',
+        attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
+      },
+    });
 
     res.json({
       mensaje: "Administrador actualizado correctamente",
-      administrador,
+      administrador: {
+        ...administradorActualizado.toJSON(),
+        persona: removePersonaSensitiveFields(administradorActualizado.persona),
+      },
     });
   } catch (error) {
     await transaction.rollback();

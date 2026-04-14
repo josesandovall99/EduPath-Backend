@@ -12,16 +12,6 @@ module.exports = (sequelize, DataTypes) => {
         type: DataTypes.INTEGER,
         allowNull: false,
       },
-
-      cargo: {
-        type: DataTypes.STRING,
-        allowNull: false,
-      },
-
-      nivelAcceso: {
-        type: DataTypes.STRING,
-        allowNull: false,
-      },
     },
     {
       tableName: "administradores",

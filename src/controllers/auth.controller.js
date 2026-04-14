@@ -137,8 +137,6 @@ const loginAdministrador = async (req, res) => {
         personaId: persona.id,
         nombre: persona.nombre,
         email: persona.email,
-        cargo: persona.administrador.cargo,
-        nivelAcceso: persona.administrador.nivelAcceso,
       }
     });
   } catch (error) {
