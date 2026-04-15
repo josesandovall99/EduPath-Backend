@@ -45,11 +45,11 @@ module.exports = async (estudiantes) => {
       } = item;
 
       if (!email || !codigoEstudiantil || !password) {
-        console.error("❌ Datos incompletos para correo:", item);
+        console.error('Datos incompletos para correo:', item);
         continue;
       }
 
-      console.log("📤 Enviando correo a:", email);
+      console.log('Enviando correo a:', email);
 
       await enviarConReintento({
         email,
@@ -58,11 +58,11 @@ module.exports = async (estudiantes) => {
         password
       });
 
-      console.log("✅ Correo enviado a:", email);
+      console.log('Correo enviado a:', email);
 
-      await delay(5000); // ⏱️ pausa entre correos
+      await delay(5000);
     } catch (error) {
-      console.error("🔥 Error enviando correo:", {
+      console.error('Error enviando correo:', {
         email: item?.email || null,
         message: error.message,
         code: error.code || null,

@@ -139,7 +139,7 @@ const actualizarPersona = async (req, res) => {
 
 /* =========================
    ELIMINAR
-   ❌ Protegido por integridad
+  Protegido por integridad
 ========================= */
 const eliminarPersona = async (req, res) => {
   return res.status(400).json({

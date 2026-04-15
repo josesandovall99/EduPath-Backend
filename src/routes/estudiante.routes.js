@@ -12,7 +12,7 @@ const {
   importarEstudiantesDesdeExcel,
 } = require("../controllers/estudiante.controller");
 
-// 🔥 Importamos el NUEVO controlador de Auth
+// Controlador de autenticacion
 const { loginEstudiante, cambiarContraseñaPrimerIngreso } = require("../controllers/auth.controller");
 const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 const requiereAdmin = require('../middlewares/requiereAdmin');
@@ -26,7 +26,7 @@ const upload = multer({
 
 // === RUTAS ===
 
-// 🔐 Login (Usando el controlador separado)
+// Login
 router.post("/login", loginRateLimit, loginEstudiante);
 router.post("/cambiar-password-inicial", autenticacionUsuario, cambiarContraseñaPrimerIngreso);
 

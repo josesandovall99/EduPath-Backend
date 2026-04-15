@@ -302,7 +302,7 @@ exports.createSecuenciaSubtema = async (req, res) => {
     );
 
     if (!validacion.valido) {
-      console.log(`[CREATE] ❌ Validación fallida: ${validacion.error}`);
+      console.log(`[CREATE] Validacion fallida: ${validacion.error}`);
       return res.status(400).json({
         message: "Validación fallida",
         error: validacion.error,
@@ -319,7 +319,7 @@ exports.createSecuenciaSubtema = async (req, res) => {
       estado: estado !== undefined ? estado : true
     });
 
-    console.log(`[CREATE] ✅ Creada. ID: ${nuevaSecuencia.id}`);
+    console.log(`[CREATE] Secuencia creada. ID: ${nuevaSecuencia.id}`);
 
     return res.status(201).json({
       message: "Secuencia creada correctamente",
@@ -579,7 +579,7 @@ exports.updateSecuenciaSubtema = async (req, res) => {
       );
 
       if (!validacion.valido) {
-        console.log(`[UPDATE] ❌ Validación fallida: ${validacion.error}`);
+        console.log(`[UPDATE] Validacion fallida: ${validacion.error}`);
         return res.status(400).json({
           message: "Validación fallida",
           error: validacion.error,
@@ -597,7 +597,7 @@ exports.updateSecuenciaSubtema = async (req, res) => {
       estado: estado !== undefined ? estado : secuencia.estado
     });
 
-    console.log(`[UPDATE] ✅ ID ${secuencia.id} actualizada`);
+    console.log(`[UPDATE] ID ${secuencia.id} actualizada`);
 
     return res.json({
       message: "Secuencia actualizada correctamente",

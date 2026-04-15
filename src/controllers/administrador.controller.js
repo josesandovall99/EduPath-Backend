@@ -39,7 +39,7 @@ const crearAdministrador = async (req, res) => {
 
     const passwordPlano = generarPassword();
 
-    // 🔒 Encriptar contraseña antes de crear Persona
+    // Encriptar contraseña antes de crear persona
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(passwordPlano, salt);
 
@@ -58,7 +58,7 @@ const crearAdministrador = async (req, res) => {
     // 2️⃣ Crear Administrador
     const administrador = await Administrador.create(
       {
-        persona_id: persona.id, // 🔥 FK correcta
+        persona_id: persona.id,
       },
       { transaction }
     );

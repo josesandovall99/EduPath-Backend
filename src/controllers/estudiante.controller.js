@@ -26,7 +26,7 @@ const crearEstudiante = async (req, res) => {
       return res.status(400).json({ mensaje: 'Datos invalidos para crear estudiante' });
     }
 
-    // 🔒 Encriptar contraseña
+    // Encriptar contraseña
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(contraseña, salt);
 
@@ -35,7 +35,7 @@ const crearEstudiante = async (req, res) => {
         nombre,
         email: email.trim().toLowerCase(),
         codigoAcceso: sanitizePlainText(codigoAcceso),
-        contraseña: passwordHash, // <--- GUARDAMOS EL HASH, NO EL TEXTO PLANO
+        contraseña: passwordHash,
         tipoUsuario: "ESTUDIANTE",
       },
       { transaction }
@@ -43,7 +43,7 @@ const crearEstudiante = async (req, res) => {
 
     const estudiante = await Estudiante.create(
   {
-    persona_id: persona.id, // 🔥 CLAVE
+    persona_id: persona.id,
     codigoEstudiantil,
     programa,
     semestre,
@@ -309,7 +309,7 @@ const importarEstudiantesDesdeExcel = async (req, res) => {
       }
     });
 
-    console.log("📊 Datos del Excel:", datos);
+    console.log('Datos del Excel:', datos);
 
     const personasParaCorreo = [];
 
@@ -322,31 +322,31 @@ const importarEstudiantesDesdeExcel = async (req, res) => {
       const Semestre = fila["Semestre"];
 
       if (!Nombres || !Apellidos || !Email || !CodigoEstudiantil) {
-        console.log("⏭️ Fila ignorada:", fila);
+        console.log('Fila ignorada por datos incompletos:', fila);
         continue;
       }
 
-      // 🔐 Generar credenciales
-      const passwordPlana = generarPassword(); // Esta es para el correo
+      // Generar credenciales
+      const passwordPlana = generarPassword();
       const codigoAcceso = generarCodigoAcceso();
 
-      // 🔒 Encriptar para la Base de Datos
+      // Encriptar para la base de datos
       const salt = await bcrypt.genSalt(10);
-      const passwordHash = await bcrypt.hash(passwordPlana, salt); // Esta es para la BD
+      const passwordHash = await bcrypt.hash(passwordPlana, salt);
 
-      // 👤 Crear Persona
+      // Crear persona
       const persona = await Persona.create(
         {
           nombre: `${Nombres} ${Apellidos}`,
           email: Email,
-          contraseña: passwordHash, // <--- Guardamos encriptada
+          contraseña: passwordHash,
           codigoAcceso,
           tipoUsuario: "ESTUDIANTE",
         },
         { transaction }
       );
 
-      // 🎓 Crear Estudiante
+      // Crear estudiante
       await Estudiante.create(
         {
           persona_id: persona.id,
@@ -357,18 +357,18 @@ const importarEstudiantesDesdeExcel = async (req, res) => {
         { transaction }
       );
 
-      // 📧 Datos para correo (Usamos la plana para que el usuario pueda leerla)
+      // Datos para el correo
       personasParaCorreo.push({
         nombre: `${Nombres} ${Apellidos}`,
         email: Email,
         codigoEstudiantil: CodigoEstudiantil,
-        password: passwordPlana, // <--- Enviamos la original al correo
+        password: passwordPlana,
       });
     }
 
     await transaction.commit();
 
-    // 🚀 Envío de correos en segundo plano
+    // Envio de correos en segundo plano
     procesarCorreos(personasParaCorreo);
 
     res.status(201).json({

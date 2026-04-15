@@ -1,5 +1,5 @@
 const { Sequelize } = require('sequelize');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 const rawDatabaseUrl = process.env.DATABASE_URL?.trim();
 const databaseUrl = rawDatabaseUrl

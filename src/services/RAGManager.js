@@ -22,7 +22,7 @@ function nowMs() {
 
 function logTiming(label, startedAt) {
     const elapsedMs = nowMs() - startedAt;
-    console.log(`⏱️ ${label}: ${elapsedMs} ms`);
+    console.log(`${label}: ${elapsedMs} ms`);
 }
 
 function normalizeTopK(topK, maxTopK = 1, defaultTopK = 1) {
@@ -59,7 +59,7 @@ class OllamaHTTPClient {
         };
 
         try {
-            console.log(`📡 Enviando prompt a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | timeout ms: ${this.generateTimeoutMs}`);
+            console.log(`Enviando prompt a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | timeout ms: ${this.generateTimeoutMs}`);
             const requestStart = nowMs();
             const res = await fetch(url, {
                 method: 'POST',
@@ -75,7 +75,7 @@ class OllamaHTTPClient {
             }
 
             const json = await res.json();
-            console.log(` ℹ️ Ollama respondió vía ${endpoint}`);
+            console.log(`Ollama respondió vía ${endpoint}`);
             logTiming('Generación LLM total', generationStart);
             return json.response || json.choices?.[0]?.text || json.output || JSON.stringify(json);
         } catch (lastError) {
@@ -104,7 +104,7 @@ class OllamaHTTPClient {
         };
 
         try {
-            console.log(`📡 Enviando prompt streaming a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | start timeout ms: ${this.streamStartTimeoutMs}`);
+            console.log(`Enviando prompt streaming a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | start timeout ms: ${this.streamStartTimeoutMs}`);
             const requestStart = nowMs();
             const res = await fetch(url, {
                 method: 'POST',
@@ -295,8 +295,8 @@ class RAGManager {
             Pregunta: {question}
             Respuesta:`);
         
-        console.log(`✅ RAGManager configurado correctamente`);
-        console.log(` 🚀 Destino LLM: ${this.provider === 'ollama' ? config.ollamaBaseUrl : 'Groq Cloud'}`);
+        console.log('RAGManager configurado correctamente');
+        console.log(`Destino LLM: ${this.provider === 'ollama' ? config.ollamaBaseUrl : 'Groq Cloud'}`);
     }
 
     async buildPrompt(question, topK = this.defaultTopK) {
@@ -319,7 +319,7 @@ class RAGManager {
             .replace('{context}', context)
             .replace('{question}', question);
         logTiming('Construcción de prompt', promptStart);
-        console.log(`📏 Contexto chars: ${context.length} | Prompt chars: ${finalPrompt.length} | topK: ${safeTopK}`);
+        console.log(`Contexto chars: ${context.length} | Prompt chars: ${finalPrompt.length} | topK: ${safeTopK}`);
 
         return { success: true, finalPrompt, safeTopK };
     }
@@ -335,7 +335,7 @@ class RAGManager {
             await this.vectorStore.addDocuments(splitDocs);
             return { success: true, message: 'PDF cargado', chunks: splitDocs.length };
         } catch (error) {
-            console.error("❌ Error procesando buffer:", error.message);
+            console.error('Error procesando buffer:', error.message);
             throw error;
         } finally {
             await fs.unlink(tempPath).catch(() => {});
@@ -349,7 +349,7 @@ class RAGManager {
             const filename = path.basename(pdfPath);
             return await this.loadPDFFromBuffer(buffer, filename);
         } catch (error) {
-            console.error(`❌ Error cargando PDF desde ruta: ${pdfPath}`, error.message);
+            console.error(`Error cargando PDF desde ruta: ${pdfPath}`, error.message);
             throw error;
         }
     }
@@ -377,7 +377,7 @@ class RAGManager {
             return { success: true, answer };
         } catch (error) {
             logTiming('Chat total con error', totalStart);
-            console.error("❌ Error en chat RAG:", error.message);
+            console.error('Error en chat RAG:', error.message);
             return { success: false, error: error.message };
         }
     }
@@ -411,7 +411,7 @@ class RAGManager {
             return { success: true, answer };
         } catch (error) {
             logTiming('Chat stream total con error', totalStart);
-            console.error('❌ Error en chat RAG streaming:', error.message);
+            console.error('Error en chat RAG streaming:', error.message);
             return { success: false, error: error.message };
         }
     }

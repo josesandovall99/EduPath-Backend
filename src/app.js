@@ -1,4 +1,4 @@
-require('dotenv').config(); 
+require('dotenv').config({ quiet: true }); 
 const express = require('express');
 const cors = require('cors');
 const app = express();
@@ -74,7 +74,7 @@ app.use((req, res, next) => {
 // 1. Ruta del Compilador (Prioridad)
 const respuestasEjercicioRouter = require('./routes/respuestasEstudianteEjercicio.routes');
 app.use('/respuestasEstudianteEjercicio', respuestasEjercicioRouter);
-console.log('✅ Ruta /respuestasEstudianteEjercicio registrada');
+console.log('Ruta /respuestasEstudianteEjercicio registrada');
 
 // 2. Rutas Académicas y Usuarios
 app.use('/areas', require('./routes/area.routes'));
@@ -112,7 +112,7 @@ app.get('/debug', (req, res) => {
     if (process.env.NODE_ENV === 'production') {
         return res.status(404).json({ mensaje: 'No encontrado' });
     }
-    res.json({ mensaje: "El servidor responde ✅", estado: "Online", puerto: 4000 });
+    res.json({ mensaje: 'El servidor responde', estado: 'Online', puerto: 4000 });
 });
 
 // --- ARRANQUE DEL SERVIDOR CON SINCRONIZACIÓN ---
@@ -122,17 +122,17 @@ const PORT = process.env.PORT || 4000;
 // .sync({ alter: true }) creará las tablas automáticamente en la nueva BD de Render
 db.sequelize.sync({ alter: true })
     .then(async () => {
-        console.log('✅ Base de datos sincronizada con exito');
+        console.log('Base de datos sincronizada con exito');
         
         // Inicializar Chatbot RAG
         await initializeRAG();
         
         app.listen(PORT, () => {
-            console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+            console.log(`Servidor corriendo en http://localhost:${PORT}`);
         });
     })
     .catch((err) => {
-        console.error('❌ No se pudo conectar a la base de datos:', err.message);
+        console.error('No se pudo conectar a la base de datos:', err.message);
         if (err.code === 'ENOTFOUND') {
             console.log('El host configurado no se pudo resolver desde tu PC. Si usas Supabase localmente, prefiere DATABASE_URL con el pooler IPv4 del proyecto.');
         } else if (err.code === 'ECONNREFUSED') {

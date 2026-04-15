@@ -3,10 +3,10 @@ const transporter = require('./mailer');
 async function enviarCorreoBienvenida(estudiante) {
   return transporter.sendMail({
     from: `"EduPath" <${process.env.GMAIL_USER}>`,
-    to: estudiante.email, // ✅ CORRECTO
+    to: estudiante.email,
     subject: 'Bienvenido a EduPath',
     html: `
-      <h2>¡Bienvenido a EduPath, ${estudiante.nombre}! 🎓</h2>
+      <h2>Bienvenido a EduPath, ${estudiante.nombre}</h2>
 
       <p>
         EduPath es una plataforma web educativa diseñada para apoyar el aprendizaje
@@ -20,7 +20,7 @@ async function enviarCorreoBienvenida(estudiante) {
 
       <hr />
 
-      <h3>🔐 Credenciales de acceso</h3>
+      <h3>Credenciales de acceso</h3>
       <ul>
         <li><strong>Usuario:</strong> ${estudiante.codigoEstudiantil}</li>
         <li><strong>Contraseña:</strong> ${estudiante.password}</li>

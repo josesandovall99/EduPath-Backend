@@ -34,11 +34,11 @@ const initializeRAG = async () => {
         const useGroq = !!process.env.GROQ_API_KEY;
 
         if (!useOllama && !useGroq) {
-            console.warn('⚠️ Ni OLLAMA_BASE_URL ni GROQ_API_KEY encontradas. El chatbot no estará disponible.');
+            console.warn('Ni OLLAMA_BASE_URL ni GROQ_API_KEY encontradas. El chatbot no estará disponible.');
             return;
         }
 
-        console.log(`🔎 Env detectados: OLLAMA_BASE_URL=${useOllama ? process.env.OLLAMA_BASE_URL : 'no'}, GROQ_API_KEY=${useGroq ? 'si' : 'no'}`);
+        console.log(`Env detectados: OLLAMA_BASE_URL=${useOllama ? process.env.OLLAMA_BASE_URL : 'no'}, GROQ_API_KEY=${useGroq ? 'si' : 'no'}`);
 
         ragManager = buildRagManager();
 
@@ -48,18 +48,18 @@ const initializeRAG = async () => {
         const pdfFiles = files.filter((file) => file.toLowerCase().endsWith('.pdf'));
 
         if (pdfFiles.length === 0) {
-            console.log('📁 Carpeta chatbot-docs vacía. Esperando documentos...');
+            console.log('Carpeta chatbot-docs vacía. Esperando documentos...');
             return;
         }
 
-        console.log(`📚 Cargando ${pdfFiles.length} PDF(s) existente(s)...`);
+        console.log(`Cargando ${pdfFiles.length} PDF(s) existente(s)...`);
         for (const pdfFile of pdfFiles) {
             const pdfPath = path.join(chatbotDocsPath, pdfFile);
             try {
                 await ragManager.loadPDFFromPath(pdfPath);
-                console.log(`   ✓ ${pdfFile} cargado`);
+                console.log(`   ${pdfFile} cargado`);
             } catch (error) {
-                console.error(`   ✗ Error cargando ${pdfFile}: ${error.message}`);
+                console.error(`   Error cargando ${pdfFile}: ${error.message}`);
             }
         }
 
@@ -94,7 +94,7 @@ const uploadPDF = async (req, res) => {
         const result = await ragManager.loadPDFFromBuffer(req.file.buffer, req.file.originalname);
         return res.status(200).json(result);
     } catch (error) {
-        console.error('❌ Error en uploadPDF:', error.message);
+        console.error('Error en uploadPDF:', error.message);
         return res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -123,7 +123,7 @@ const chatWithBot = async (req, res) => {
 
         return res.status(200).json(result);
     } catch (error) {
-        console.error('❌ Error en chatWithBot:', error.message);
+        console.error('Error en chatWithBot:', error.message);
         return res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -159,7 +159,7 @@ const chatWithBotStream = async (req, res) => {
 
         return res.end();
     } catch (error) {
-        console.error('❌ Error en chatWithBotStream:', error.message);
+        console.error('Error en chatWithBotStream:', error.message);
         if (!res.headersSent) {
             return res.status(500).json({ success: false, error: error.message });
         }
@@ -177,7 +177,7 @@ const getStats = async (req, res) => {
 
         return res.status(200).json({ success: true, ...ragManager.getStats() });
     } catch (error) {
-        console.error('❌ Error en getStats:', error.message);
+        console.error('Error en getStats:', error.message);
         return res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -191,7 +191,7 @@ const clearVectorStore = async (req, res) => {
         ragManager.clear();
         return res.status(200).json({ success: true, message: 'Base de datos vectorial limpiada correctamente' });
     } catch (error) {
-        console.error('❌ Error en clearVectorStore:', error.message);
+        console.error('Error en clearVectorStore:', error.message);
         return res.status(500).json({ success: false, error: error.message });
     }
 };
@@ -227,7 +227,7 @@ const reloadDocuments = async (req, res) => {
             stats: ragManager.getStats(),
         });
     } catch (error) {
-        console.error('❌ Error en reloadDocuments:', error.message);
+        console.error('Error en reloadDocuments:', error.message);
         return res.status(500).json({ success: false, error: error.message });
     }
 };
