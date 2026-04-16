@@ -50,12 +50,33 @@ const PHRASE_ALIAS_CATALOG = [
 ];
 
 const KNOWN_SECTION_CONFIG = {
+  objetivoPrincipal: { label: 'Objetivo principal', weight: 15, validator: 'text' },
+  objetivosEspecificos: { label: 'Objetivos específicos', weight: 15, validator: 'text' },
   stakeholders: { label: 'Stakeholders', weight: 25, validator: 'text' },
   requisitosFuncionales: { label: 'Requisitos funcionales', weight: 45, validator: 'text' },
   requisitosNoFuncionales: { label: 'Requisitos no funcionales', weight: 30, validator: 'text' },
-  alcance: { label: 'Alcance del proyecto', weight: 30, validator: 'text' },
-  cronograma: { label: 'Cronograma del proyecto', weight: 30, validator: 'schedule' },
-  costos: { label: 'Costos y recursos', weight: 40, validator: 'costs' }
+  entregables: { label: 'Entregables clave', weight: 20, validator: 'text' },
+  cronograma: { label: 'Cronograma del proyecto', weight: 25, validator: 'schedule' },
+  costos: { label: 'Costos y recursos', weight: 25, validator: 'costs' }
+};
+
+const normalizeManagementMiniproyectoPayload = (payload = {}) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return payload;
+
+  const objetivoPrincipal = payload.objetivoPrincipal !== undefined
+    ? payload.objetivoPrincipal
+    : payload.objetivo !== undefined
+      ? payload.objetivo
+      : [];
+
+  return {
+    ...payload,
+    objetivoPrincipal,
+    objetivosEspecificos: payload.objetivosEspecificos !== undefined ? payload.objetivosEspecificos : [],
+    entregables: payload.entregables !== undefined ? payload.entregables : (payload.alcance !== undefined ? payload.alcance : []),
+    cronograma: payload.cronograma !== undefined ? payload.cronograma : [],
+    costos: payload.costos !== undefined ? payload.costos : []
+  };
 };
 
 const stripHtml = (value = '') => value
@@ -170,7 +191,7 @@ const detectStructuredMode = (payload) => {
 
   const sectionKeys = getStructuredSectionKeys(payload);
   if (sectionKeys.length === 0) return null;
-  if (sectionKeys.some((key) => ['alcance', 'cronograma', 'costos'].includes(key))) return 'management';
+  if (sectionKeys.some((key) => ['objetivoPrincipal', 'objetivosEspecificos', 'entregables', 'alcance', 'cronograma', 'costos', 'objetivo'].includes(key))) return 'management';
   if (sectionKeys.some((key) => ['stakeholders', 'requisitosFuncionales', 'requisitosNoFuncionales'].includes(key))) return 'analysis';
   return 'custom';
 };
@@ -223,22 +244,23 @@ const buildSectionDefinitions = (payload = {}) => {
 };
 
 const buildAutoRubric = (payload, context = {}) => {
-  const mode = detectStructuredMode(payload);
+  const normalizedPayload = normalizeManagementMiniproyectoPayload(payload);
+  const mode = detectStructuredMode(normalizedPayload);
   if (!mode) return payload;
 
-  const sectionDefinitions = buildSectionDefinitions(payload);
+  const sectionDefinitions = buildSectionDefinitions(normalizedPayload);
 
   const conceptGroups = {};
   sectionDefinitions.forEach((section) => {
-    conceptGroups[section.key] = buildConceptGroups(section.key, payload[section.key]);
+    conceptGroups[section.key] = buildConceptGroups(section.key, normalizedPayload[section.key]);
   });
 
-  const existingRubrica = payload.rubrica && typeof payload.rubrica === 'object' && !Array.isArray(payload.rubrica)
-    ? payload.rubrica
+  const existingRubrica = normalizedPayload.rubrica && typeof normalizedPayload.rubrica === 'object' && !Array.isArray(normalizedPayload.rubrica)
+    ? normalizedPayload.rubrica
     : {};
 
   return {
-    ...payload,
+    ...normalizedPayload,
     rubrica: {
       ...existingRubrica,
       version: 'auto-v1',
@@ -288,5 +310,6 @@ const getConceptCoverageFromGroup = (studentText = '', conceptGroup) => {
 
 module.exports = {
   enrichMiniproyectoResponse,
-  getConceptCoverageFromGroup
+  getConceptCoverageFromGroup,
+  normalizeManagementMiniproyectoPayload
 };

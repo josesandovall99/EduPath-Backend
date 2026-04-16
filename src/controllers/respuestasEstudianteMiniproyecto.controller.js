@@ -1,5 +1,5 @@
 const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto, Evaluacion } = require("../models");
-const { getConceptCoverageFromGroup } = require('../utils/miniproyectoRubric');
+const { getConceptCoverageFromGroup, normalizeManagementMiniproyectoPayload } = require('../utils/miniproyectoRubric');
 
 const getAuthenticatedStudentId = (req) => {
   const estudianteId = Number(req.estudianteId);
@@ -48,7 +48,7 @@ const normalizeText = (text = '') => text
 
 const MANAGEMENT_JUSTIFICATION_KEYWORDS = {
   schedule: ['supuesto', 'supuestos', 'duracion', 'duraciones', 'semanas', 'dias', 'fase', 'fases', 'prioridad', 'orden', 'dependencia'],
-  costs: ['supuesto', 'supuestos', 'tarifa', 'tarifas', 'licencia', 'licencias', 'equipo', 'personal', 'proveedor', 'cotizacion', 'mercado', 'infraestructura']
+  costs: ['supuesto', 'supuestos', 'tarifa', 'tarifas', 'licencia', 'licencias', 'equipo', 'personal', 'proveedor', 'cotizacion', 'mercado', 'infraestructura', 'porcentaje', 'imprevistos', 'utilidad']
 };
 
 const buildCriteriaFromExpected = (expected = '') => {
@@ -156,16 +156,23 @@ const average = (values = []) => {
   return validValues.reduce((sum, value) => sum + value, 0) / validValues.length;
 };
 
+const flattenTextFragments = (...values) => values
+  .flatMap((value) => {
+    if (Array.isArray(value)) return value;
+    return [value];
+  })
+  .map((value) => (typeof value === 'string' ? value.trim() : ''))
+  .filter(Boolean);
+
 const extractManagementJustification = (studentParsed = {}) => {
   if (!studentParsed || typeof studentParsed !== 'object' || Array.isArray(studentParsed)) return '';
 
-  return [
+  return flattenTextFragments(
     studentParsed.justificacionGestion,
     studentParsed.justificacion,
     studentParsed.supuestos,
     studentParsed.notas
-  ]
-    .filter((value) => typeof value === 'string' && value.trim())
+  )
     .join(' ')
     .trim();
 };
@@ -193,12 +200,14 @@ const scoreJustificationStrength = (text = '', keywords = []) => {
 
 const parseScheduleItem = (value = '') => {
   const text = value?.toString?.() ?? '';
+  const labeledDate = parseDateValue(extractLabeledText(text, 'Fecha'));
   const labeledStart = parseDateValue(extractLabeledText(text, 'Inicio'));
   const labeledEnd = parseDateValue(extractLabeledText(text, 'Fin'));
   const extractedDates = extractDates(text);
-  const start = labeledStart || extractedDates[0] || null;
-  const end = labeledEnd || extractedDates[1] || null;
-  const hasAnyDate = Boolean(start || end);
+  const start = labeledStart || extractedDates[0] || labeledDate || null;
+  const end = labeledEnd || extractedDates[1] || labeledDate || null;
+  const referenceDate = labeledDate || labeledEnd || labeledStart || extractedDates[0] || null;
+  const hasAnyDate = Boolean(start || end || referenceDate);
   const hasBothDates = Boolean(start && end);
   const isChronological = hasBothDates ? start <= end : false;
   const durationDays = hasBothDates && isChronological
@@ -206,9 +215,10 @@ const parseScheduleItem = (value = '') => {
     : null;
 
   return {
-    activity: extractLabeledText(text, 'Actividad') || text.split('|')[0].replace(/actividad\s*\d*:?/i, '').trim(),
+    activity: extractLabeledText(text, 'Hito') || extractLabeledText(text, 'Actividad') || text.split('|')[0].replace(/(?:hito|actividad)\s*\d*:?/i, '').trim(),
     start,
     end,
+    referenceDate,
     hasAnyDate,
     hasBothDates,
     isChronological,
@@ -240,6 +250,56 @@ const scoreMatchedIndexOrder = (indexes = []) => {
   }
 
   return inOrderPairs / (validIndexes.length - 1);
+};
+
+const scoreScheduleDateCompleteness = (item = {}) => {
+  if (item?.hasBothDates) return 1;
+  if (item?.hasAnyDate) return 0.5;
+  return 0;
+};
+
+const scoreScheduleChronology = (item = {}) => {
+  if (!item?.hasBothDates) return item?.hasAnyDate ? 0.4 : 0;
+  return item.isChronological ? 1 : 0;
+};
+
+const isCostSummaryLine = (text = '') => {
+  const normalized = normalizeText(text);
+  return normalized.includes('total general')
+    || normalized.startsWith('total:')
+    || normalized.startsWith('imprevistos')
+    || normalized.startsWith('utilidad')
+    || normalized.startsWith('total proyecto');
+};
+
+const extractSummaryLine = (items = [], label = '') => items.find((item) => {
+  if (typeof item !== 'string') return false;
+  return normalizeText(item).startsWith(normalizeText(label));
+}) || null;
+
+const extractPercentageFromLine = (text = '') => {
+  const match = text.toString().match(/([0-9]+(?:[.,][0-9]+)?)\s*%/);
+  if (!match || !match[1]) return null;
+  const value = Number(normalizeNumberString(match[1]));
+  return Number.isNaN(value) ? null : value;
+};
+
+const extractCostsSummary = (items = []) => {
+  const normalizedItems = normalizeCostItemsToStrings(items);
+  const totalLine = extractSummaryLine(normalizedItems, 'Total');
+  const contingencyLine = extractSummaryLine(normalizedItems, 'Imprevistos');
+  const utilityLine = extractSummaryLine(normalizedItems, 'Utilidad');
+  const projectTotalLine = extractSummaryLine(normalizedItems, 'Total proyecto');
+  const legacyTotal = extractTotalGeneral(normalizedItems);
+
+  return {
+    total: extractLabeledNumber(totalLine || '', 'Total') ?? legacyTotal,
+    contingencyPercentage: extractPercentageFromLine(contingencyLine || ''),
+    contingencyValue: extractLabeledNumber(contingencyLine || '', 'Valor'),
+    utilityPercentage: extractPercentageFromLine(utilityLine || ''),
+    utilityValue: extractLabeledNumber(utilityLine || '', 'Valor'),
+    projectTotal: extractLabeledNumber(projectTotalLine || '', 'Total proyecto')
+  };
 };
 
 const datesAreConcordant = (expectedText = '', studentText = '', toleranceDays = 3) => {
@@ -285,7 +345,7 @@ const computeCostsTotal = (items = []) => {
   let total = 0;
   let hasAny = false;
   items.forEach((item) => {
-    if (!item || isTotalLine(item)) return;
+    if (!item || isCostSummaryLine(item) || isTotalLine(item)) return;
     if (typeof item === 'object') {
       const qtyRaw = item.quantity ?? item.cantidad ?? null;
       const unitRaw = item.unitCost ?? item.costoUnitario ?? null;
@@ -367,17 +427,19 @@ const computeCostsTotalSafe = (items = []) => {
 const parseCostItem = (text = '') => {
   const normalized = normalizeText(text);
   const concept = normalized
-    .replace(/costo\s*\d*:?/g, '')
+    .replace(/(?:costo|entregable|concepto)\s*\d*:?/g, '')
     .split('|')[0]
     .replace(/tipo:.*/g, '')
+    .replace(/unidad de medida:.*/g, '')
     .trim();
   const type = normalized.includes('material') ? 'material'
     : normalized.includes('humano') ? 'humano'
     : null;
   const quantity = extractLabeledNumber(text, 'Cantidad');
-  const unit = extractLabeledNumber(text, 'Costo unitario');
+  const unit = extractLabeledNumber(text, 'Precio unitario') ?? extractLabeledNumber(text, 'Costo unitario');
   const subtotal = extractLabeledNumber(text, 'Subtotal');
-  return { concept, type, quantity, unit, subtotal };
+  const unitMeasure = extractLabeledText(text, 'Unidad de medida');
+  return { concept, type, quantity, unit, subtotal, unitMeasure };
 };
 
 const scoreCostItemConsistency = (itemText = '') => {
@@ -400,19 +462,43 @@ const scoreCostItemConsistency = (itemText = '') => {
 
 const scoreDeclaredTotalConsistency = (items = []) => {
   const normalizedItems = normalizeCostItemsToStrings(items);
-  const declaredTotal = extractTotalGeneral(normalizedItems);
   const computedTotal = computeCostsTotal(normalizedItems);
+  const summary = extractCostsSummary(normalizedItems);
 
-  if (declaredTotal === null && computedTotal === null) return 0;
-  if (declaredTotal === null) return computedTotal !== null ? 0.75 : 0;
-  if (computedTotal === null) return 0.4;
-  if (computedTotal === 0) return declaredTotal === 0 ? 1 : 0;
+  if (computedTotal === null) return 0;
 
-  const diffRatio = Math.abs(computedTotal - declaredTotal) / computedTotal;
-  if (diffRatio <= 0.02) return 1;
-  if (diffRatio <= 0.08) return 0.8;
-  if (diffRatio <= 0.15) return 0.5;
-  return 0;
+  const checks = [];
+
+  if (summary.total !== null) {
+    checks.push(numberWithinTolerance(computedTotal, summary.total, 0.02) ? 1 : 0);
+  }
+
+  let contingencyExpected = null;
+  if (summary.contingencyPercentage !== null) {
+    contingencyExpected = computedTotal * (summary.contingencyPercentage / 100);
+    if (summary.contingencyValue !== null) {
+      checks.push(numberWithinTolerance(contingencyExpected, summary.contingencyValue, 0.03) ? 1 : 0);
+    }
+  }
+
+  let utilityExpected = null;
+  if (summary.utilityPercentage !== null) {
+    utilityExpected = computedTotal * (summary.utilityPercentage / 100);
+    if (summary.utilityValue !== null) {
+      checks.push(numberWithinTolerance(utilityExpected, summary.utilityValue, 0.03) ? 1 : 0);
+    }
+  }
+
+  if (summary.projectTotal !== null) {
+    const computedProjectTotal = computedTotal + (contingencyExpected ?? 0) + (utilityExpected ?? 0);
+    checks.push(numberWithinTolerance(computedProjectTotal, summary.projectTotal, 0.03) ? 1 : 0);
+  }
+
+  if (checks.length === 0) {
+    return summary.total !== null ? 0.4 : 0;
+  }
+
+  return average(checks);
 };
 
 const scoreExpectedTotalBand = (expectedTotal, studentTotal) => {
@@ -427,7 +513,7 @@ const scoreExpectedTotalBand = (expectedTotal, studentTotal) => {
 };
 
 const scoreCostTypeAlignment = (expectedType, studentType) => {
-  if (!expectedType && !studentType) return 0.75;
+  if (!expectedType && !studentType) return 1;
   if (!expectedType) return studentType ? 1 : 0.75;
   if (!studentType) return 0.6;
   return expectedType === studentType ? 1 : 0.4;
@@ -583,7 +669,7 @@ const scoreGenericListSection = ({ label, expected, student, weight, sectionConc
 const scoreScheduleSection = ({ expected, student, weight, sectionConceptGroups = [], studentParsed }) => {
   const expectedItems = toArrayOfStrings(expected);
   const studentItems = toArrayOfStrings(student);
-  const justificationText = extractManagementJustification(studentParsed);
+  const parsedStudentItems = studentItems.map((item) => parseScheduleItem(item));
 
   if (expectedItems.length === 0) return null;
 
@@ -593,23 +679,26 @@ const scoreScheduleSection = ({ expected, student, weight, sectionConceptGroups 
     let bestMatch = {
       studentIndex: -1,
       coverage: 0,
+      dateCompleteness: 0,
       chronology: 0,
       duration: 0,
       combined: 0
     };
 
     studentItems.forEach((studentItem, studentIndex) => {
-      const keywordScore = getKeywordCoverage(expectedItem, studentItem, { conceptGroup });
-      const studentScheduleItem = parseScheduleItem(studentItem);
-      const chronologyScore = studentScheduleItem.hasBothDates
-        ? (studentScheduleItem.isChronological ? 1 : 0)
-        : 0;
+      const expectedActivityText = expectedScheduleItem.activity || expectedItem;
+      const studentScheduleItem = parsedStudentItems[studentIndex];
+      const studentActivityText = studentScheduleItem?.activity || studentItem;
+      const keywordScore = getKeywordCoverage(expectedActivityText, studentActivityText, { conceptGroup });
+      const dateCompleteness = scoreScheduleDateCompleteness(studentScheduleItem);
+      const chronologyScore = scoreScheduleChronology(studentScheduleItem);
       const durationScore = scoreScheduleDurationAlignment(expectedScheduleItem, studentScheduleItem);
-      const combinedScore = (keywordScore * 0.65) + (chronologyScore * 0.2) + (durationScore * 0.15);
+      const combinedScore = (keywordScore * 0.55) + (dateCompleteness * 0.15) + (chronologyScore * 0.15) + (durationScore * 0.15);
       if (combinedScore > bestMatch.combined) {
         bestMatch = {
           studentIndex,
           coverage: keywordScore,
+          dateCompleteness,
           chronology: chronologyScore,
           duration: durationScore,
           combined: combinedScore
@@ -621,33 +710,29 @@ const scoreScheduleSection = ({ expected, student, weight, sectionConceptGroups 
   });
 
   const coverageAverage = average(matches.map((match) => match.coverage));
+  const dateCompletenessAverage = average(matches.map((match) => match.dateCompleteness));
   const chronologyAverage = average(matches.map((match) => match.chronology));
   const durationAverage = average(matches.map((match) => match.duration));
   const sequenceScore = scoreMatchedIndexOrder(matches.map((match) => match.studentIndex));
-  const justificationScore = scoreJustificationStrength(
-    justificationText,
-    MANAGEMENT_JUSTIFICATION_KEYWORDS.schedule
-  );
   const score = clampPercentage((
     coverageAverage * 0.5 +
+    dateCompletenessAverage * 0.15 +
     chronologyAverage * 0.15 +
-    durationAverage * 0.15 +
-    sequenceScore * 0.1 +
-    justificationScore * 0.1
+    durationAverage * 0.1 +
+    sequenceScore * 0.1
   ) * 100);
 
   return buildWeightedCriterion({
     criterio: 'Cronograma del proyecto',
     puntaje: score,
     peso: weight,
-    detalle: `Se ponderan actividades clave (${Math.round(coverageAverage * 100)}%), secuencia lógica (${Math.round(sequenceScore * 100)}%), coherencia temporal (${Math.round(((chronologyAverage + durationAverage) / 2) * 100)}%) y supuestos (${Math.round(justificationScore * 100)}%).`
+    detalle: `Se ponderan hitos clave (${Math.round(coverageAverage * 100)}%), fechas de inicio y fin (${Math.round(dateCompletenessAverage * 100)}%), coherencia temporal (${Math.round(((chronologyAverage + durationAverage) / 2) * 100)}%) y secuencia lógica (${Math.round(sequenceScore * 100)}%).`
   });
 };
 
 const scoreCostsSection = ({ expected, student, weight, sectionConceptGroups = [], studentParsed }) => {
-  const expectedItems = toArrayOfStrings(expected).filter((item) => !isTotalLine(item));
-  const studentItems = toArrayOfStrings(student).filter((item) => !isTotalLine(item));
-  const justificationText = extractManagementJustification(studentParsed);
+  const expectedItems = toArrayOfStrings(expected).filter((item) => !isCostSummaryLine(item));
+  const studentItems = toArrayOfStrings(student).filter((item) => !isCostSummaryLine(item));
 
   if (expectedItems.length === 0) return null;
 
@@ -683,10 +768,6 @@ const scoreCostsSection = ({ expected, student, weight, sectionConceptGroups = [
   const rowConsistencyScore = average(studentItems.map((item) => scoreCostItemConsistency(item)));
   const totalConsistencyScore = scoreDeclaredTotalConsistency(student);
   const arithmeticScore = average([rowConsistencyScore, totalConsistencyScore]);
-  const justificationScore = scoreJustificationStrength(
-    justificationText,
-    MANAGEMENT_JUSTIFICATION_KEYWORDS.costs
-  );
 
   const conceptAverage = conceptScores.length > 0
     ? conceptScores.reduce((sum, score) => sum + score, 0) / conceptScores.length
@@ -695,18 +776,17 @@ const scoreCostsSection = ({ expected, student, weight, sectionConceptGroups = [
     ? typeScores.reduce((sum, score) => sum + score, 0) / typeScores.length
     : 0;
   const score = clampPercentage((
-    conceptAverage * 0.35 +
-    arithmeticScore * 0.25 +
-    totalBandScore * 0.15 +
-    typeAverage * 0.1 +
-    justificationScore * 0.15
+    conceptAverage * 0.4 +
+    arithmeticScore * 0.3 +
+    totalBandScore * 0.2 +
+    typeAverage * 0.1
   ) * 100);
 
   return buildWeightedCriterion({
     criterio: 'Costos y recursos',
     puntaje: score,
     peso: weight,
-    detalle: `Se ponderan rubros (${Math.round(conceptAverage * 100)}%), consistencia aritmética (${Math.round(arithmeticScore * 100)}%), rango razonable del total (${Math.round(totalBandScore * 100)}%) y supuestos (${Math.round(justificationScore * 100)}%).`
+    detalle: `Se ponderan rubros (${Math.round(conceptAverage * 100)}%), consistencia aritmética (${Math.round(arithmeticScore * 100)}%), rango razonable del total (${Math.round(totalBandScore * 100)}%) y tipo de costo (${Math.round(typeAverage * 100)}%).`
   });
 };
 
@@ -717,11 +797,13 @@ const SECTION_SCORERS = {
 };
 
 const getDefaultSectionDefinitions = (expectedParsed = {}) => {
-  if (expectedParsed?.alcance || expectedParsed?.cronograma || expectedParsed?.costos) {
+  if (expectedParsed?.objetivoPrincipal || expectedParsed?.objetivosEspecificos || expectedParsed?.entregables || expectedParsed?.cronograma || expectedParsed?.costos || expectedParsed?.objetivo || expectedParsed?.alcance) {
     return [
-      { key: 'alcance', label: 'Alcance del proyecto', weight: 30, validator: 'text' },
-      { key: 'cronograma', label: 'Cronograma del proyecto', weight: 30, validator: 'schedule' },
-      { key: 'costos', label: 'Costos y recursos', weight: 40, validator: 'costs' }
+      { key: 'objetivoPrincipal', label: 'Objetivo principal', weight: 15, validator: 'text' },
+      { key: 'objetivosEspecificos', label: 'Objetivos específicos', weight: 15, validator: 'text' },
+      { key: 'entregables', label: 'Entregables clave', weight: 20, validator: 'text' },
+      { key: 'cronograma', label: 'Cronograma del proyecto', weight: 25, validator: 'schedule' },
+      { key: 'costos', label: 'Costos y recursos', weight: 25, validator: 'costs' }
     ];
   }
 
@@ -794,14 +876,16 @@ const buildStructuredRubric = (expectedParsed, studentParsed) => {
 const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '') => {
   if (!expectedResponseValue) return null;
 
-  const expectedParsed = tryParseJson(expectedResponseValue);
-  const studentParsed = typeof studentResponseValue === 'string'
+  const expectedRawParsed = tryParseJson(expectedResponseValue);
+  const studentRawParsed = typeof studentResponseValue === 'string'
     ? tryParseJson(studentResponseValue)
     : studentResponseValue;
+  const expectedParsed = normalizeManagementMiniproyectoPayload(expectedRawParsed);
+  const studentParsed = normalizeManagementMiniproyectoPayload(studentRawParsed);
 
   const hasStructuredExpected = expectedParsed && typeof expectedParsed === 'object' && (
     expectedParsed.stakeholders || expectedParsed.requisitosFuncionales || expectedParsed.requisitosNoFuncionales ||
-    expectedParsed.alcance || expectedParsed.cronograma || expectedParsed.costos
+    expectedParsed.objetivoPrincipal || expectedParsed.objetivosEspecificos || expectedParsed.entregables || expectedParsed.cronograma || expectedParsed.costos
   );
 
   if (hasStructuredExpected) {
@@ -919,19 +1003,19 @@ const crearRespuestaMiniproyecto = async (req, res) => {
     }
 
     if (studentResponseValue && typeof studentResponseValue === 'object') {
-      studentResponseText = [
+      studentResponseText = flattenTextFragments(
         studentResponseValue.stakeholders,
         studentResponseValue.requisitosFuncionales,
         studentResponseValue.requisitosNoFuncionales,
         studentResponseValue.alcance,
+        studentResponseValue.entregables,
         studentResponseValue.cronograma,
         studentResponseValue.costos,
         studentResponseValue.justificacionGestion,
         studentResponseValue.justificacion,
         studentResponseValue.supuestos,
         studentResponseValue.notas
-      ]
-        .filter(Boolean)
+      )
         .join(' ');
     } else {
       studentResponseText = studentResponseValue || '';
@@ -1097,19 +1181,19 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
       }
 
       if (studentResponseValue && typeof studentResponseValue === 'object') {
-        studentResponseText = [
+        studentResponseText = flattenTextFragments(
           studentResponseValue.stakeholders,
           studentResponseValue.requisitosFuncionales,
           studentResponseValue.requisitosNoFuncionales,
           studentResponseValue.alcance,
+          studentResponseValue.entregables,
           studentResponseValue.cronograma,
           studentResponseValue.costos,
           studentResponseValue.justificacionGestion,
           studentResponseValue.justificacion,
           studentResponseValue.supuestos,
           studentResponseValue.notas
-        ]
-          .filter(Boolean)
+        )
           .join(' ');
       } else {
         studentResponseText = studentResponseValue || '';

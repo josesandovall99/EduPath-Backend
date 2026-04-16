@@ -47,6 +47,28 @@ test('enrichMiniproyectoResponse preserves programming miniproject payloads', ()
   assert.equal(Object.prototype.hasOwnProperty.call(parsedPayload, 'rubrica'), false);
 });
 
+test('enrichMiniproyectoResponse injects charter objective into management rubric', () => {
+  const storedPayload = enrichMiniproyectoResponse(JSON.stringify({
+    objetivoPrincipal: ['Digitalizar el proceso de matricula para reducir tiempos y errores operativos.'],
+    objetivosEspecificos: ['Permitir el registro en linea', 'Reducir errores administrativos'],
+    entregables: ['Modulo de matricula en linea'],
+    cronograma: ['Hito 1: Analisis | Inicio: 2026-04-01 | Fin: 2026-04-05'],
+    costos: ['Entregable 1: Modulo de matricula en linea | Unidad de medida: Unidad | Cantidad: 1 | Precio unitario: 3000000 | Subtotal: 3000000']
+  }), {
+    titulo: 'Sistema de matricula',
+    descripcion: 'Charter base del proyecto',
+    entregable: 'Propuesta inicial'
+  });
+
+  const parsedPayload = JSON.parse(storedPayload);
+
+  assert.equal(parsedPayload.rubrica.mode, 'management');
+  assert.equal(parsedPayload.rubrica.sections[0].key, 'objetivoPrincipal');
+  assert.equal(parsedPayload.rubrica.sections[0].weight, 15);
+  assert.equal(parsedPayload.rubrica.conceptGroups.objetivoPrincipal.length, 1);
+  assert.equal(parsedPayload.rubrica.conceptGroups.objetivosEspecificos.length, 2);
+});
+
 test('enrichMiniproyectoResponse registers dynamic custom text sections', () => {
   const storedPayload = enrichMiniproyectoResponse(JSON.stringify({
     casosDeUso: ['El sistema debe permitir consultar pedidos pendientes y confirmar su despacho.'],

@@ -22,6 +22,19 @@ const formatDate = (value) => {
   }
 };
 
+const formatPercentValue = (value) => {
+  const numeric = Number(value || 0);
+  if (!Number.isFinite(numeric)) return '0';
+  const rounded = Math.round(numeric * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+};
+
+const getStudentProgressStatus = (average) => {
+  if (average >= 70) return 'Al día';
+  if (average >= 50) return 'Regular';
+  return 'Rezagado';
+};
+
 const isApprovedStatus = (estado) => String(estado || '').toUpperCase() === 'APROBADO';
 
 const toSafeInt = (value) => {
@@ -79,7 +92,7 @@ const buildReportHtml = ({ type, data }) => {
     ? `
       <div class="chart-grid">
         ${charts.map((chart) => `
-          <div class="chart-card">
+          <div class="chart-card ${chart.span === 2 ? 'chart-card--wide' : ''}" style="--chart-height:${escapeHtml(chart.height || 180)}px">
             <div class="chart-title">${escapeHtml(chart.title || '')}</div>
             ${chart.subtitle ? `<div class="chart-sub">${escapeHtml(chart.subtitle)}</div>` : ''}
             <div class="chart-canvas">
@@ -98,6 +111,11 @@ const buildReportHtml = ({ type, data }) => {
         window.__chartsReady = false;
         const chartsData = ${JSON.stringify(charts)};
         const palette = ['#4A90E2', '#7ED6A7', '#F5A97F', '#A78BFA', '#FBBF24', '#34D399', '#60A5FA'];
+        const truncateLabel = (value, maxLength = 18) => {
+          const label = String(value ?? '');
+          if (label.length <= maxLength) return label;
+          return label.slice(0, Math.max(maxLength - 3, 1)) + '...';
+        };
         chartsData.forEach((chart, index) => {
           const ctx = document.getElementById(chart.id);
           if (!ctx) return;
@@ -120,17 +138,78 @@ const buildReportHtml = ({ type, data }) => {
             },
             options: {
               responsive: true,
+              maintainAspectRatio: false,
               animation: false,
+              layout: {
+                padding: { top: 6, right: 8, bottom: 0, left: 8 }
+              },
+              indexAxis: chart.orientation === 'horizontal' ? 'y' : 'x',
               plugins: {
                 legend: {
                   display: chart.showLegend !== false,
-                  position: chart.legendPosition || 'bottom'
+                  position: chart.legendPosition || 'bottom',
+                  labels: {
+                    usePointStyle: true,
+                    boxWidth: 10,
+                    padding: 12,
+                    font: {
+                      size: 11
+                    }
+                  }
                 }
               },
-              scales: chart.type === 'bar' ? {
-                y: { beginAtZero: true, ticks: { precision: 0 } },
-                x: { ticks: { maxRotation: 0, autoSkip: true } }
-              } : undefined
+              scales: chart.type === 'bar'
+                ? (chart.orientation === 'horizontal'
+                    ? {
+                        x: {
+                          beginAtZero: true,
+                          max: chart.percentScale ? 100 : undefined,
+                          ticks: {
+                            precision: 0,
+                            callback: (value) => chart.percentScale ? String(value) + '%' : value,
+                            font: { size: 10 }
+                          },
+                          grid: {
+                            color: '#E5E7EB'
+                          }
+                        },
+                        y: {
+                          ticks: {
+                            autoSkip: false,
+                            callback: (value) => truncateLabel(chart.labels?.[value] ?? value, chart.labelMaxLength || 24),
+                            font: { size: 10 }
+                          },
+                          grid: {
+                            display: false
+                          }
+                        }
+                      }
+                    : {
+                        y: {
+                          beginAtZero: true,
+                          max: chart.percentScale ? 100 : undefined,
+                          ticks: {
+                            precision: 0,
+                            callback: (value) => chart.percentScale ? String(value) + '%' : value,
+                            font: { size: 10 }
+                          },
+                          grid: {
+                            color: '#E5E7EB'
+                          }
+                        },
+                        x: {
+                          ticks: {
+                            maxRotation: 0,
+                            autoSkip: true,
+                            callback: (value, labelIndex) => truncateLabel(chart.labels?.[labelIndex] ?? value, chart.labelMaxLength || 14),
+                            font: { size: 10 }
+                          },
+                          grid: {
+                            display: false
+                          }
+                        }
+                      })
+                : undefined
             }
           });
         });
@@ -199,7 +278,7 @@ const buildReportHtml = ({ type, data }) => {
       .cards {
         margin-top: 20px;
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 16px;
       }
       .card {
@@ -228,6 +307,7 @@ const buildReportHtml = ({ type, data }) => {
         border-radius: 18px;
         overflow: hidden;
         box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+        page-break-inside: avoid;
       }
       .section-header {
         padding: 18px 22px;
@@ -278,7 +358,7 @@ const buildReportHtml = ({ type, data }) => {
       .list li:last-child { border-bottom: none; }
       .meta {
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 12px;
         margin-top: 12px;
       }
@@ -301,12 +381,17 @@ const buildReportHtml = ({ type, data }) => {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 16px;
+        align-items: start;
       }
       .chart-card {
         background: #fff;
         border-radius: 18px;
-        padding: 16px 18px 18px;
+        padding: 14px 16px 16px;
         box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+        page-break-inside: avoid;
+      }
+      .chart-card--wide {
+        grid-column: span 2;
       }
       .chart-title {
         font-size: 14px;
@@ -320,7 +405,7 @@ const buildReportHtml = ({ type, data }) => {
       }
       .chart-canvas {
         margin-top: 12px;
-        height: 200px;
+        height: var(--chart-height, 180px);
       }
       .chart-canvas canvas {
         width: 100% !important;
@@ -344,12 +429,55 @@ const buildReportHtml = ({ type, data }) => {
         color: var(--muted);
         vertical-align: middle;
       }
+      .report-table-student {
+        table-layout: fixed;
+      }
+      .report-table-student th,
+      .report-table-student td {
+        padding: 9px 8px;
+        font-size: 11px;
+      }
+      .report-table-student th:nth-child(1),
+      .report-table-student td:nth-child(1) {
+        width: 15%;
+      }
+      .report-table-student th:nth-child(2),
+      .report-table-student td:nth-child(2) {
+        width: 24%;
+      }
+      .report-table-student th:nth-child(3),
+      .report-table-student td:nth-child(3) {
+        width: 9%;
+        white-space: nowrap;
+      }
+      .report-table-student th:nth-child(4),
+      .report-table-student td:nth-child(4) {
+        width: 11%;
+        white-space: nowrap;
+      }
+      .report-table-student th:nth-child(5),
+      .report-table-student td:nth-child(5) {
+        width: 23%;
+      }
+      .report-table-student th:nth-child(6),
+      .report-table-student td:nth-child(6) {
+        width: 10%;
+      }
+      .report-table-student th:nth-child(7),
+      .report-table-student td:nth-child(7) {
+        width: 8%;
+        white-space: nowrap;
+      }
       .progress-bar {
         width: 140px;
         height: 8px;
         background: #E5E7EB;
         border-radius: 999px;
         overflow: hidden;
+      }
+      .report-table-student .progress-bar {
+        width: 100%;
+        min-width: 86px;
       }
       .progress-fill {
         height: 100%;
@@ -379,7 +507,7 @@ const buildReportHtml = ({ type, data }) => {
       }
       .stat-grid {
         display: grid;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
         gap: 12px;
         margin-bottom: 12px;
       }
@@ -411,6 +539,25 @@ const buildReportHtml = ({ type, data }) => {
         color: #4A90E2;
         font-size: 11px;
         font-weight: 600;
+      }
+      .activity-summary {
+        display: flex;
+        gap: 4px;
+        flex-wrap: nowrap;
+        align-items: center;
+      }
+      .activity-chip {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 28px;
+        padding: 3px 6px;
+        border-radius: 999px;
+        background: #F3F4F6;
+        color: var(--text);
+        font-size: 9px;
+        font-weight: 600;
+        white-space: nowrap;
       }
       @media print {
         body { background: #ffffff; }
@@ -1755,13 +1902,23 @@ exports.generarPdfReporte = async (req, res) => {
           const avg = student.subjects.length
             ? student.subjects.reduce((acc, subj) => acc + (subj.progress || 0), 0) / student.subjects.length
             : 0;
-          const status = avg >= 70 ? 'Al día' : avg >= 50 ? 'Regular' : 'Rezagado';
+          const status = getStudentProgressStatus(avg);
           return { ...student, avg, status };
         });
 
         const avgProgress = totalStudents
           ? studentSummaries.reduce((sum, s) => sum + s.avg, 0) / totalStudents
           : 0;
+
+        const totalContents = studentSummaries.reduce((sum, student) => {
+          return sum + student.subjects.reduce((acc, subj) => acc + (subj.contentViewed || 0), 0);
+        }, 0);
+        const totalExercises = studentSummaries.reduce((sum, student) => {
+          return sum + student.subjects.reduce((acc, subj) => acc + (subj.exercisesCompleted || 0), 0);
+        }, 0);
+        const totalMinis = studentSummaries.reduce((sum, student) => {
+          return sum + student.subjects.reduce((acc, subj) => acc + (subj.miniprojectsSubmitted || 0), 0);
+        }, 0);
 
         const statusCounts = studentSummaries.reduce((acc, s) => {
           if (s.status === 'Al día') acc.ok += 1;
@@ -1770,15 +1927,41 @@ exports.generarPdfReporte = async (req, res) => {
           return acc;
         }, { ok: 0, warn: 0, bad: 0 });
 
-        const areaLabels = areas.map(area => area.nombre || `Área ${area.id}`);
-        const areaValues = areas.map(area => {
+        const topStudent = studentSummaries.reduce((best, current) => {
+          if (!best) return current;
+          return current.avg > best.avg ? current : best;
+        }, null);
+
+        const areaSummaries = areas.map((area) => {
           const areaId = String(area.id);
-          const values = studentSummaries.map((student) => {
-            const subject = student.subjects.find(subj => String(subj.areaId ?? '') === areaId || subj.name === (area.nombre || `Área ${areaId}`));
-            return subject ? (subject.progress || 0) : 0;
+          let totalAreaProgress = 0;
+          let activeStudents = 0;
+          let totalAreaContents = 0;
+          let totalAreaExercises = 0;
+          let totalAreaMinis = 0;
+
+          studentSummaries.forEach((student) => {
+            const subject = student.subjects.find((subj) => String(subj.areaId ?? '') === areaId || subj.name === (area.nombre || `Área ${areaId}`));
+            if (!subject) return;
+            activeStudents += 1;
+            totalAreaProgress += subject.progress || 0;
+            totalAreaContents += subject.contentViewed || 0;
+            totalAreaExercises += subject.exercisesCompleted || 0;
+            totalAreaMinis += subject.miniprojectsSubmitted || 0;
           });
-          return values.length ? values.reduce((sum, v) => sum + v, 0) / values.length : 0;
-        });
+
+          return {
+            name: area.nombre || `Área ${area.id}`,
+            avgProgress: activeStudents ? totalAreaProgress / activeStudents : 0,
+            activeStudents,
+            totalContents: totalAreaContents,
+            totalExercises: totalAreaExercises,
+            totalMinis: totalAreaMinis
+          };
+        }).sort((a, b) => b.avgProgress - a.avgProgress);
+
+        const areaLabels = areas.map(area => area.nombre || `Área ${area.id}`);
+        const areaValues = areaSummaries.map((area) => area.avgProgress);
 
         const tableRows = studentSummaries.map((student) => {
           const statusClass = student.status === 'Al día'
@@ -1787,14 +1970,25 @@ exports.generarPdfReporte = async (req, res) => {
               ? 'status-warn'
               : 'status-bad';
           const progress = Math.round(student.avg);
+          const totalContent = student.subjects.reduce((sum, subj) => sum + (subj.contentViewed || 0), 0);
+          const totalExercise = student.subjects.reduce((sum, subj) => sum + (subj.exercisesCompleted || 0), 0);
+          const totalMini = student.subjects.reduce((sum, subj) => sum + (subj.miniprojectsSubmitted || 0), 0);
           return `
             <tr>
               <td>${escapeHtml(student.name)}</td>
               <td>${escapeHtml(student.email || '-')}</td>
+              <td>${escapeHtml(student.semester || '-')}</td>
               <td>${progress}%</td>
               <td>
                 <div class="progress-bar">
                   <div class="progress-fill" style="width:${progress}%"></div>
+                </div>
+              </td>
+              <td>
+                <div class="activity-summary">
+                  <span class="activity-chip">C ${totalContent}</span>
+                  <span class="activity-chip">E ${totalExercise}</span>
+                  <span class="activity-chip">M ${totalMini}</span>
                 </div>
               </td>
               <td><span class="status-pill ${statusClass}">${escapeHtml(student.status)}</span></td>
@@ -1802,19 +1996,50 @@ exports.generarPdfReporte = async (req, res) => {
           `;
         }).join('');
 
+        const areaTableRows = areaSummaries.map((area) => `
+          <tr>
+            <td>${escapeHtml(area.name)}</td>
+            <td>${area.activeStudents}</td>
+            <td>${formatPercentValue(area.avgProgress)}%</td>
+            <td>${area.totalContents}</td>
+            <td>${area.totalExercises}</td>
+            <td>${area.totalMinis}</td>
+          </tr>
+        `).join('');
+
         const tableHtml = `
-          <table class="report-table">
+          <table class="report-table report-table-student">
             <thead>
               <tr>
                 <th>Estudiante</th>
                 <th>Correo</th>
+                <th>Semestre</th>
                 <th>Promedio</th>
                 <th>Progreso</th>
+                <th>Actividad</th>
                 <th>Estado</th>
               </tr>
             </thead>
             <tbody>
-              ${tableRows || '<tr><td colspan="5">Sin datos</td></tr>'}
+              ${tableRows || '<tr><td colspan="7">Sin datos</td></tr>'}
+            </tbody>
+          </table>
+        `;
+
+        const areaTableHtml = `
+          <table class="report-table">
+            <thead>
+              <tr>
+                <th>Área</th>
+                <th>Estudiantes activos</th>
+                <th>Promedio</th>
+                <th>Contenidos</th>
+                <th>Ejercicios</th>
+                <th>Miniproyectos</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${areaTableRows || '<tr><td colspan="6">Sin datos</td></tr>'}
             </tbody>
           </table>
         `;
@@ -1824,13 +2049,33 @@ exports.generarPdfReporte = async (req, res) => {
           stats: [
             { label: 'Total estudiantes', value: totalStudents, sub: 'Filtrados' },
             { label: 'Promedio general', value: avgProgress.toFixed(1), sub: 'En todas las áreas' },
-            { label: 'Al día', value: statusCounts.ok, sub: '≥ 70% de progreso' }
+            { label: 'Al día', value: statusCounts.ok, sub: '≥ 70% de progreso' },
+            { label: 'Rezagados', value: statusCounts.bad, sub: '< 50% de progreso' }
           ],
           sections: [
             {
+              title: 'Indicadores del Grupo',
+              subtitle: 'Resumen operativo del reporte filtrado',
+              body: `
+                <div class="meta">
+                  <div class="meta-item">Mejor promedio<strong>${escapeHtml(topStudent?.name || 'Sin datos')} (${formatPercentValue(topStudent?.avg || 0)}%)</strong></div>
+                  <div class="meta-item">Áreas analizadas<strong>${areas.length}</strong></div>
+                  <div class="meta-item">Contenidos vistos<strong>${totalContents}</strong></div>
+                  <div class="meta-item">Ejercicios completados<strong>${totalExercises}</strong></div>
+                  <div class="meta-item">Miniproyectos entregados<strong>${totalMinis}</strong></div>
+                  <div class="meta-item">Estudiantes regulares<strong>${statusCounts.warn}</strong></div>
+                </div>
+              `
+            },
+            {
               title: 'Resumen por Estudiante',
-              subtitle: 'Progreso general y estado actual',
+              subtitle: 'Progreso general, actividad acumulada y estado actual',
               body: tableHtml
+            },
+            {
+              title: 'Resumen por Área',
+              subtitle: 'Promedio y volumen de actividad por materia',
+              body: areaTableHtml
             }
           ],
           charts: [
@@ -1838,20 +2083,27 @@ exports.generarPdfReporte = async (req, res) => {
               id: 'areaAvgChart',
               type: 'bar',
               title: 'Progreso Promedio por Área',
-              labels: areaLabels,
+              subtitle: 'Se compacta en formato horizontal para mejorar la lectura de nombres largos.',
+              labels: areaSummaries.map((area) => area.name),
               data: areaValues,
               color: '#4A90E2',
-              showLegend: false
+              showLegend: false,
+              orientation: 'horizontal',
+              percentScale: true,
+              labelMaxLength: 26,
+              height: 180
             },
             {
               id: 'statusDistChart',
-              type: 'pie',
+              type: 'doughnut',
               title: 'Distribución de Estudiantes',
+              subtitle: 'Estado general del grupo según el promedio acumulado.',
               labels: ['Al día', 'Regular', 'Rezagado'],
               data: [statusCounts.ok, statusCounts.warn, statusCounts.bad],
               colors: ['#7ED6A7', '#FBBF24', '#F5A97F'],
               showLegend: true,
-              legendPosition: 'bottom'
+              legendPosition: 'bottom',
+              height: 180
             }
           ]
         };
@@ -1906,19 +2158,25 @@ exports.generarPdfReporte = async (req, res) => {
             id: 'cohortAvgChart',
             type: 'bar',
             title: 'Progreso Promedio por Cohorte',
+            subtitle: 'Promedio simple del avance acumulado por fecha de creación.',
             labels: cohortLabels,
             data: cohortAvgs,
             color: '#7ED6A7',
-            showLegend: false
+            showLegend: false,
+            percentScale: true,
+            labelMaxLength: 12,
+            height: 180
           },
           {
             id: 'cohortDistChart',
-            type: 'pie',
+            type: 'doughnut',
             title: 'Distribución de Estudiantes',
+            subtitle: 'Cantidad de estudiantes por cohorte visible.',
             labels: cohortLabels,
             data: cohortStudents,
             showLegend: true,
-            legendPosition: 'bottom'
+            legendPosition: 'bottom',
+            height: 180
           }
         ]
       };
@@ -2068,22 +2326,29 @@ exports.generarPdfReporte = async (req, res) => {
         charts: [
           {
             id: 'activityDistChart',
-            type: 'pie',
+            type: 'doughnut',
             title: 'Distribución de Actividades',
+            subtitle: 'Volumen agregado de contenidos, ejercicios y miniproyectos.',
             labels: ['Contenidos Visualizados', 'Ejercicios Completados', 'Miniproyectos Entregados'],
             data: [totalContenidos, totalEjercicios, totalMinis],
             colors: ['#4A90E2', '#7ED6A7', '#F5A97F'],
             showLegend: true,
-            legendPosition: 'bottom'
+            legendPosition: 'bottom',
+            height: 180
           },
           {
             id: 'areaProgressChart',
             type: 'bar',
             title: 'Progreso Promedio por Área',
+            subtitle: 'Vista compacta por materia para evitar expansión innecesaria.',
             labels: areaLabels,
             data: areaValues,
             color: '#4A90E2',
-            showLegend: false
+            showLegend: false,
+            orientation: 'horizontal',
+            percentScale: true,
+            labelMaxLength: 26,
+            height: 180
           }
         ]
       };
@@ -2236,30 +2501,38 @@ exports.generarPdfReporte = async (req, res) => {
             id: 'failuresAreaChart',
             type: 'bar',
             title: 'Fallos por Área',
+            subtitle: 'Comparativo compacto por materia filtrada.',
             labels: areaLabels,
             data: areaFallos,
             color: '#F5A97F',
-            showLegend: false
+            showLegend: false,
+            orientation: 'horizontal',
+            labelMaxLength: 26,
+            height: 180
           },
           {
             id: 'hitsVsFailsChart',
-            type: 'pie',
+            type: 'doughnut',
             title: 'Aciertos vs Fallos',
+            subtitle: 'Relación global de resultados sobre los intentos.',
             labels: ['Aciertos', 'Fallos'],
             data: [totalAciertos, totalFallos],
             colors: ['#7ED6A7', '#F5A97F'],
             showLegend: true,
-            legendPosition: 'bottom'
+            legendPosition: 'bottom',
+            height: 180
           },
           {
             id: 'failuresTypeChart',
-            type: 'pie',
+            type: 'doughnut',
             title: 'Distribución de Fallos por Tipo',
+            subtitle: 'Separación entre ejercicios y miniproyectos.',
             labels: ['Ejercicios', 'Miniproyectos'],
             data: [fallosEjercicios, fallosMinis],
             colors: ['#4A90E2', '#7ED6A7'],
             showLegend: true,
-            legendPosition: 'bottom'
+            legendPosition: 'bottom',
+            height: 180
           }
         ]
       };
