@@ -459,25 +459,51 @@ exports.adaptarContenidoPorPerfil = async (req, res) => {
 
     const semestre = estudiante.semestre;
 
-    // Determinar áreas permitidas según el semestre
-    let nombresAreas = [];
+    // Determinar áreas base permitidas según el semestre.
+    // Cualquier área nueva activa queda disponible para todos los estudiantes.
+    let nombresAreasBase = [];
 
     if (semestre >= 1 && semestre <= 4) {
-      nombresAreas = ["Fundamentos de programación"];
+      nombresAreasBase = ["Fundamentos de programación"];
     } else if (semestre >= 5 && semestre <= 6) {
-      nombresAreas = ["Fundamentos de programación", "Análisis de sistemas"];
+      nombresAreasBase = ["Fundamentos de programación", "Análisis de sistemas"];
     } else if (semestre >= 7 && semestre <= 10) {
-      nombresAreas = ["Fundamentos de programación", "Análisis de sistemas", "ATC"];
+      nombresAreasBase = ["Fundamentos de programación", "Análisis de sistemas", "ATC"];
     } else {
       return res.status(400).json({ message: "Semestre fuera de rango válido (1-10)" });
     }
 
-    // Buscar las áreas por nombre
-    const areas = await Area.findAll({
-      where: { nombre: nombresAreas, estado: true }
+    const areasActivas = await Area.findAll({
+      where: { estado: true }
+    });
+
+    const nombresAreasBaseNormalizados = new Set(
+      nombresAreasBase.map((nombre) => nombre.trim().toLowerCase())
+    );
+
+    const areasBaseRestringidas = new Set([
+      "fundamentos de programación",
+      "análisis de sistemas",
+      "atc"
+    ].map((nombre) => nombre.trim().toLowerCase()));
+
+    const areas = areasActivas.filter((area) => {
+      const nombreArea = String(area.nombre || '').trim();
+      const nombreNormalizado = nombreArea.toLowerCase();
+
+      if (!nombreArea) {
+        return false;
+      }
+
+      if (!areasBaseRestringidas.has(nombreNormalizado)) {
+        return true;
+      }
+
+      return nombresAreasBaseNormalizados.has(nombreNormalizado);
     });
 
     const areaIds = areas.map(area => area.id);
+    const nombresAreas = areas.map(area => area.nombre);
 
     // Buscar los temas de esas áreas
     const temas = await Tema.findAll({
