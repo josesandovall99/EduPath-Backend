@@ -145,6 +145,7 @@ exports.getEjercicios = async (req, res) => {
   try {
     let ejercicios = [];
     const contenidoId = req.query.contenido_id ? parseInt(req.query.contenido_id, 10) : null;
+    const areaId = req.query.area_id ? parseInt(req.query.area_id, 10) : null;
 
     if (req.docenteAreaId) {
       const temas = await Tema.findAll({
@@ -172,20 +173,49 @@ exports.getEjercicios = async (req, res) => {
         where.contenido_id = contenidoIds.filter((id) => parseInt(id, 10) === contenidoId);
       }
 
+      if (areaId && parseInt(req.docenteAreaId, 10) !== areaId) {
+        return res.status(403).json({ message: 'Acceso denegado: área fuera de tu alcance' });
+      }
+
       ejercicios = await Ejercicio.findAll({
         where,
         include: [
           { model: Actividad, as: 'actividad' },
-          { model: Contenido, as: 'contenido' }
+          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['area_id'] }] }
         ]
       });
     } else {
-      const where = contenidoId ? { contenido_id: contenidoId } : undefined;
+      let where = contenidoId ? { contenido_id: contenidoId } : undefined;
+
+      if (areaId) {
+        const temas = await Tema.findAll({
+          where: { area_id: areaId, estado: true },
+          attributes: ['id']
+        });
+        const temaIds = temas.map((tema) => tema.id);
+
+        if (temaIds.length === 0) {
+          return res.json([]);
+        }
+
+        const contenidos = await Contenido.findAll({
+          where: { tema_id: temaIds, estado: true },
+          attributes: ['id']
+        });
+        const contenidoIds = contenidos.map((contenido) => contenido.id);
+
+        if (contenidoIds.length === 0) {
+          return res.json([]);
+        }
+
+        where = { ...(where || {}), contenido_id: contenidoId ? contenidoId : contenidoIds };
+      }
+
       ejercicios = await Ejercicio.findAll({
         where,
         include: [
           { model: Actividad, as: 'actividad' },
-          { model: Contenido, as: 'contenido' }
+          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['area_id'] }] }
         ]
       });
     }

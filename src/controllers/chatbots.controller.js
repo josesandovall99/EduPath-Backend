@@ -1,5 +1,4 @@
 const sequelize = require('../config/database');
-const { Op } = require('sequelize');
 const { Chatbot, ChatbotDocumento, Area, Miniproyecto, Persona } = require('../models');
 const {
   saveDocumentFile,
@@ -75,6 +74,10 @@ async function validateChatbotDependencies(req, payload, currentChatbot = null) 
   const miniproyectoId = payload.miniproyecto_id !== undefined && payload.miniproyecto_id !== null ? Number(payload.miniproyecto_id) : (currentChatbot?.miniproyecto_id ?? null);
 
   if (type === 'GENERAL') {
+    if (!isAdmin(req) && !Number.isFinite(areaId)) {
+      return { error: { status: 400, payload: { mensaje: 'Como docente debes asignar el chatbot a una de tus áreas' } } };
+    }
+
     if (areaId !== null && Number.isFinite(areaId) && !canManageArea(req, areaId)) {
       return { error: { status: 403, payload: { mensaje: 'No tienes permisos para usar esa área' } } };
     }
@@ -131,6 +134,10 @@ async function findManagedChatbot(req, chatbotId) {
 
   if (!chatbot) {
     return { error: { status: 404, payload: { mensaje: 'Chatbot no encontrado' } } };
+  }
+
+  if (!isAdmin(req) && !Number.isFinite(Number(chatbot.area_id))) {
+    return { error: { status: 403, payload: { mensaje: 'Acceso denegado al chatbot solicitado' } } };
   }
 
   if (chatbot.area_id && !canManageArea(req, chatbot.area_id)) {
@@ -282,12 +289,7 @@ exports.getChatbots = async (req, res) => {
     const teacherAreaIds = getTeacherAreaIds(req);
     const where = isAdmin(req)
       ? {}
-      : {
-          [Op.or]: [
-            { area_id: teacherAreaIds },
-            { tipo: 'GENERAL', area_id: null },
-          ],
-        };
+      : { area_id: teacherAreaIds };
     const chatbots = await Chatbot.findAll({
       where,
       include: [
