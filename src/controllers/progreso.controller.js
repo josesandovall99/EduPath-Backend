@@ -35,6 +35,168 @@ const getStudentProgressStatus = (average) => {
   return 'Rezagado';
 };
 
+const getStudentAverageProgress = (student) => {
+  if (!student?.subjects?.length) return 0;
+  return student.subjects.reduce((acc, subj) => acc + (subj.progress || 0), 0) / student.subjects.length;
+};
+
+const buildStudentDetailedProgressHtml = (student) => {
+  const average = getStudentAverageProgress(student);
+  const status = getStudentProgressStatus(average);
+  const statusClass = status === 'Al día'
+    ? 'status-ok'
+    : status === 'Regular'
+      ? 'status-warn'
+      : 'status-bad';
+
+  const subjectCards = (student.subjects || []).map((subject) => {
+    const subjectColor = subject.color || '#4A90E2';
+    const topicsHtml = (subject.topics || []).map((topic) => {
+      const subtopicsHtml = (topic.subtopics || []).map((subtopic) => `
+        <div class="subtopic-row">
+          <div class="subtopic-name">
+            ${escapeHtml(subtopic.name)}
+            ${subtopic.hasContent === false ? '<span class="subtopic-empty">Sin contenido</span>' : ''}
+          </div>
+          <div class="subtopic-progress-wrap">
+            <div class="progress-bar compact-progress">
+              <div class="progress-fill" style="width:${Math.max(0, Math.min(100, subtopic.progress || 0))}%; background:${escapeHtml(subjectColor)}"></div>
+            </div>
+            <span class="subtopic-progress-value">${formatPercentValue(subtopic.progress)}%</span>
+          </div>
+        </div>
+      `).join('');
+
+      return `
+        <div class="topic-block">
+          <div class="topic-header">
+            <span class="topic-name">${escapeHtml(topic.name)}</span>
+            <span class="topic-progress">${formatPercentValue(topic.progress)}%</span>
+          </div>
+          <div class="progress-bar compact-progress topic-progress-bar">
+            <div class="progress-fill" style="width:${Math.max(0, Math.min(100, topic.progress || 0))}%; background:${escapeHtml(subjectColor)}"></div>
+          </div>
+          <div class="subtopic-list">
+            ${subtopicsHtml || '<div class="subtopic-empty-row">Sin subtemas registrados</div>'}
+          </div>
+        </div>
+      `;
+    }).join('');
+
+    return `
+      <div class="subject-card-detail">
+        <div class="subject-card-header">
+          <div>
+            <div class="subject-title-row">
+              <span class="subject-color-dot" style="background:${escapeHtml(subjectColor)}"></span>
+              <span class="subject-name">${escapeHtml(subject.name)}</span>
+            </div>
+            <div class="subject-activity-row">
+              <span class="activity-chip">C ${subject.contentViewed || 0}</span>
+              <span class="activity-chip">E ${subject.exercisesCompleted || 0}</span>
+              <span class="activity-chip">M ${subject.miniprojectsSubmitted || 0}</span>
+            </div>
+          </div>
+          <div class="subject-progress-badge">${formatPercentValue(subject.progress)}%</div>
+        </div>
+        <div class="progress-bar subject-progress-bar-detail">
+          <div class="progress-fill" style="width:${Math.max(0, Math.min(100, subject.progress || 0))}%; background:${escapeHtml(subjectColor)}"></div>
+        </div>
+        <div class="topic-list">
+          ${topicsHtml || '<div class="subtopic-empty-row">Sin temas registrados</div>'}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  return `
+    <div class="student-detail-block">
+      <div class="student-detail-header">
+        <div>
+          <div class="student-detail-name">${escapeHtml(student.name || 'Estudiante')}</div>
+          <div class="student-detail-meta">${escapeHtml(student.email || '-')} | Semestre ${escapeHtml(student.semester || '-')}</div>
+        </div>
+        <div class="student-detail-summary">
+          <div class="student-detail-average">${formatPercentValue(average)}%</div>
+          <span class="status-pill ${statusClass}">${escapeHtml(status)}</span>
+        </div>
+      </div>
+      <div class="subject-card-grid">
+        ${subjectCards || '<div class="subtopic-empty-row">Sin áreas registradas</div>'}
+      </div>
+    </div>
+  `;
+};
+
+const buildStudentAreaProgressSummaryHtml = (student) => {
+  const rows = (student.subjects || []).map((subject) => {
+    const color = subject.color || '#4A90E2';
+    const progress = Math.max(0, Math.min(100, subject.progress || 0));
+    return `
+      <div class="inline-area-row">
+        <span class="inline-area-name">${escapeHtml(subject.name)}</span>
+        <div class="progress-bar inline-area-progress">
+          <div class="progress-fill" style="width:${progress}%; background:${escapeHtml(color)}"></div>
+        </div>
+        <span class="inline-area-value">${formatPercentValue(progress)}%</span>
+      </div>
+    `;
+  }).join('');
+
+  return `<div class="inline-area-list">${rows || '<div class="subtopic-empty-row">Sin áreas registradas</div>'}</div>`;
+};
+
+const buildCohortDetailedHtml = (cohorts = []) => {
+  return cohorts.map((cohort) => {
+    const studentRows = (cohort.students || []).map((student) => {
+      const average = getStudentAverageProgress(student);
+      const status = getStudentProgressStatus(average);
+      const statusClass = status === 'Al día'
+        ? 'status-ok'
+        : status === 'Regular'
+          ? 'status-warn'
+          : 'status-bad';
+
+      return `
+        <tr>
+          <td>${escapeHtml(student.name || 'Estudiante')}</td>
+          <td>${buildStudentAreaProgressSummaryHtml(student)}</td>
+          <td>${formatPercentValue(average)}%</td>
+          <td><span class="status-pill ${statusClass}">${escapeHtml(status)}</span></td>
+        </tr>
+      `;
+    }).join('');
+
+    return `
+      <div class="cohort-block">
+        <div class="cohort-header">
+          <div>
+            <div class="cohort-title">Cohorte: ${escapeHtml(cohort.cohortLabel || cohort.date || 'Sin fecha')}</div>
+            <div class="cohort-sub">${cohort.studentCount || 0} estudiantes</div>
+          </div>
+          <div class="cohort-metric">
+            <div class="cohort-metric-value">${formatPercentValue(cohort.avgProgress || 0)}%</div>
+            <div class="cohort-metric-sub">Promedio de avance</div>
+          </div>
+        </div>
+        <table class="report-table report-table-cohort">
+          <thead>
+            <tr>
+              <th>Estudiante</th>
+              <th>Áreas</th>
+              <th>Promedio</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${studentRows || '<tr><td colspan="4">Sin datos</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }).join('');
+};
+
 const isApprovedStatus = (estado) => String(estado || '').toUpperCase() === 'APROBADO';
 
 const toSafeInt = (value) => {
@@ -468,6 +630,27 @@ const buildReportHtml = ({ type, data }) => {
         width: 8%;
         white-space: nowrap;
       }
+      .report-table-cohort {
+        table-layout: fixed;
+      }
+      .report-table-cohort th:nth-child(1),
+      .report-table-cohort td:nth-child(1) {
+        width: 22%;
+      }
+      .report-table-cohort th:nth-child(2),
+      .report-table-cohort td:nth-child(2) {
+        width: 53%;
+      }
+      .report-table-cohort th:nth-child(3),
+      .report-table-cohort td:nth-child(3) {
+        width: 12%;
+        white-space: nowrap;
+      }
+      .report-table-cohort th:nth-child(4),
+      .report-table-cohort td:nth-child(4) {
+        width: 13%;
+        white-space: nowrap;
+      }
       .progress-bar {
         width: 140px;
         height: 8px;
@@ -558,6 +741,227 @@ const buildReportHtml = ({ type, data }) => {
         font-size: 9px;
         font-weight: 600;
         white-space: nowrap;
+      }
+      .student-detail-block {
+        border: 1px solid #E5E7EB;
+        border-radius: 16px;
+        padding: 16px;
+        margin-bottom: 18px;
+        page-break-inside: auto;
+      }
+      .student-detail-block:last-child {
+        margin-bottom: 0;
+      }
+      .student-detail-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 14px;
+      }
+      .student-detail-name {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .student-detail-meta {
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .student-detail-summary {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+      }
+      .student-detail-average {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .subject-card-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 12px;
+      }
+      .subject-card-detail {
+        background: #F9FAFB;
+        border-radius: 14px;
+        padding: 14px;
+      }
+      .subject-card-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+      }
+      .subject-title-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .subject-color-dot {
+        width: 10px;
+        height: 10px;
+        border-radius: 999px;
+        flex: 0 0 auto;
+      }
+      .subject-name {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .subject-activity-row {
+        display: flex;
+        gap: 4px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+      }
+      .subject-progress-badge {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--text);
+        white-space: nowrap;
+      }
+      .subject-progress-bar-detail {
+        width: 100%;
+        margin-top: 10px;
+      }
+      .topic-list {
+        margin-top: 12px;
+        display: grid;
+        gap: 10px;
+      }
+      .topic-block {
+        background: #FFFFFF;
+        border: 1px solid #E5E7EB;
+        border-radius: 12px;
+        padding: 10px 12px;
+      }
+      .topic-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+      }
+      .topic-name {
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .topic-progress {
+        font-size: 11px;
+        font-weight: 700;
+        color: var(--text);
+        white-space: nowrap;
+      }
+      .topic-progress-bar {
+        width: 100%;
+        margin-top: 8px;
+      }
+      .subtopic-list {
+        display: grid;
+        gap: 6px;
+        margin-top: 10px;
+      }
+      .subtopic-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 180px;
+        gap: 10px;
+        align-items: center;
+      }
+      .subtopic-name {
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .subtopic-progress-wrap {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .compact-progress {
+        width: 100%;
+        min-width: 0;
+        height: 7px;
+      }
+      .subtopic-progress-value {
+        font-size: 10px;
+        color: var(--muted);
+        min-width: 34px;
+        text-align: right;
+      }
+      .subtopic-empty,
+      .subtopic-empty-row {
+        display: inline-block;
+        font-size: 10px;
+        color: #B45309;
+      }
+      .subtopic-empty-row {
+        color: #9CA3AF;
+      }
+      .inline-area-list {
+        display: grid;
+        gap: 6px;
+      }
+      .inline-area-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 110px 36px;
+        gap: 8px;
+        align-items: center;
+      }
+      .inline-area-name {
+        font-size: 10px;
+        color: var(--text);
+      }
+      .inline-area-progress {
+        width: 100%;
+        min-width: 0;
+        height: 7px;
+      }
+      .inline-area-value {
+        font-size: 10px;
+        color: var(--muted);
+        text-align: right;
+      }
+      .cohort-block {
+        border: 1px solid #E5E7EB;
+        border-radius: 16px;
+        padding: 16px;
+        margin-bottom: 18px;
+        page-break-inside: avoid;
+      }
+      .cohort-block:last-child {
+        margin-bottom: 0;
+      }
+      .cohort-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 16px;
+        margin-bottom: 14px;
+      }
+      .cohort-title {
+        font-size: 16px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .cohort-sub {
+        margin-top: 4px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .cohort-metric {
+        text-align: right;
+      }
+      .cohort-metric-value {
+        font-size: 22px;
+        font-weight: 700;
+        color: var(--text);
+      }
+      .cohort-metric-sub {
+        font-size: 10px;
+        color: var(--muted);
       }
       @media print {
         body { background: #ffffff; }
@@ -1832,6 +2236,7 @@ exports.generarPdfReporte = async (req, res) => {
         const totalContents = estudiante.subjects.reduce((sum, subj) => sum + (subj.contentViewed || 0), 0);
         const totalExercises = estudiante.subjects.reduce((sum, subj) => sum + (subj.exercisesCompleted || 0), 0);
         const totalMinis = estudiante.subjects.reduce((sum, subj) => sum + (subj.miniprojectsSubmitted || 0), 0);
+        const averageProgress = getStudentAverageProgress(estudiante);
 
         const areaRows = estudiante.subjects.map((subject) => {
           const progress = Math.round(subject.progress || 0);
@@ -1884,6 +2289,8 @@ exports.generarPdfReporte = async (req, res) => {
                 <div class="meta">
                   <div class="meta-item">Nombre<strong>${escapeHtml(estudianteNombre)}</strong></div>
                   <div class="meta-item">Correo<strong>${escapeHtml(estudianteEmail)}</strong></div>
+                  <div class="meta-item">Semestre<strong>${escapeHtml(estudiante.semester || '-')}</strong></div>
+                  <div class="meta-item">Promedio general<strong>${formatPercentValue(averageProgress)}%</strong></div>
                 </div>
               `
             },
@@ -1891,6 +2298,11 @@ exports.generarPdfReporte = async (req, res) => {
               title: 'Desempeño por Área',
               subtitle: 'Contenidos vistos, actividades y progreso',
               body: areasTable
+            },
+            {
+              title: 'Detalle Completo por Área, Tema y Subtema',
+              subtitle: 'Muestra el mismo desglose de porcentajes visible en la aplicación.',
+              body: buildStudentDetailedProgressHtml(estudiante)
             }
           ]
         };
@@ -1905,6 +2317,15 @@ exports.generarPdfReporte = async (req, res) => {
           const status = getStudentProgressStatus(avg);
           return { ...student, avg, status };
         });
+
+        const sortedStudentSummaries = [...studentSummaries].sort((a, b) => {
+          if (b.avg !== a.avg) return b.avg - a.avg;
+          return String(a.name || '').localeCompare(String(b.name || ''));
+        });
+        const displayedStudentSummaries = sortedStudentSummaries.slice(0, 15);
+        const detailedStudentsHtml = displayedStudentSummaries
+          .map((student) => buildStudentDetailedProgressHtml(student))
+          .join('');
 
         const avgProgress = totalStudents
           ? studentSummaries.reduce((sum, s) => sum + s.avg, 0) / totalStudents
@@ -1927,7 +2348,7 @@ exports.generarPdfReporte = async (req, res) => {
           return acc;
         }, { ok: 0, warn: 0, bad: 0 });
 
-        const topStudent = studentSummaries.reduce((best, current) => {
+        const topStudent = sortedStudentSummaries.reduce((best, current) => {
           if (!best) return current;
           return current.avg > best.avg ? current : best;
         }, null);
@@ -1963,7 +2384,7 @@ exports.generarPdfReporte = async (req, res) => {
         const areaLabels = areas.map(area => area.nombre || `Área ${area.id}`);
         const areaValues = areaSummaries.map((area) => area.avgProgress);
 
-        const tableRows = studentSummaries.map((student) => {
+        const tableRows = displayedStudentSummaries.map((student) => {
           const statusClass = student.status === 'Al día'
             ? 'status-ok'
             : student.status === 'Regular'
@@ -2048,7 +2469,8 @@ exports.generarPdfReporte = async (req, res) => {
           ...reportData,
           stats: [
             { label: 'Total estudiantes', value: totalStudents, sub: 'Filtrados' },
-            { label: 'Promedio general', value: avgProgress.toFixed(1), sub: 'En todas las áreas' },
+            { label: 'Mostrados en detalle', value: displayedStudentSummaries.length, sub: 'Top 15 por progreso' },
+            { label: 'Promedio general', value: `${formatPercentValue(avgProgress)}%`, sub: 'Porcentaje promedio en todas las áreas' },
             { label: 'Al día', value: statusCounts.ok, sub: '≥ 70% de progreso' },
             { label: 'Rezagados', value: statusCounts.bad, sub: '< 50% de progreso' }
           ],
@@ -2069,13 +2491,18 @@ exports.generarPdfReporte = async (req, res) => {
             },
             {
               title: 'Resumen por Estudiante',
-              subtitle: 'Progreso general, actividad acumulada y estado actual',
+              subtitle: 'Top 15 estudiantes con mayor progreso general, actividad acumulada y estado actual',
               body: tableHtml
             },
             {
               title: 'Resumen por Área',
               subtitle: 'Promedio y volumen de actividad por materia',
               body: areaTableHtml
+            },
+            {
+              title: 'Detalle Completo de Estudiantes',
+              subtitle: 'Se muestran hasta 15 estudiantes ordenados por mayor progreso, con áreas, temas y subtemas.',
+              body: detailedStudentsHtml || '<div class="subtopic-empty-row">Sin estudiantes para mostrar</div>'
             }
           ],
           charts: [
@@ -2118,39 +2545,68 @@ exports.generarPdfReporte = async (req, res) => {
         groups[date].push(student);
       });
 
-      const tableRows = [];
-      let totalEstudiantes = 0;
-      let totalPromedios = 0;
-      const cohortLabels = [];
-      const cohortAvgs = [];
-      const cohortStudents = [];
-
-      for (const date of Object.keys(groups).sort()) {
-        const list = groups[date];
-        const sumAvg = list.reduce((sum, s) => {
-          const avg = s.subjects.length
-            ? s.subjects.reduce((acc, subj) => acc + (subj.progress || 0), 0) / s.subjects.length
-            : 0;
-          return sum + avg;
-        }, 0);
+      const allCohorts = Object.keys(groups).sort().map((date) => {
+        const list = [...groups[date]].sort((a, b) => {
+          const avgA = getStudentAverageProgress(a);
+          const avgB = getStudentAverageProgress(b);
+          if (avgB !== avgA) return avgB - avgA;
+          return String(a.name || '').localeCompare(String(b.name || ''));
+        });
+        const sumAvg = list.reduce((sum, s) => sum + getStudentAverageProgress(s), 0);
         const avgCohorte = list.length ? (sumAvg / list.length) : 0;
-        totalEstudiantes += list.length;
-        totalPromedios += avgCohorte;
-        tableRows.push([date, list.length, avgCohorte.toFixed(1)]);
-        cohortLabels.push(date);
-        cohortAvgs.push(parseFloat(avgCohorte.toFixed(1)));
-        cohortStudents.push(list.length);
-      }
+        return {
+          date,
+          cohortLabel: formatDate(date),
+          avgProgress: parseFloat(avgCohorte.toFixed(1)),
+          studentCount: list.length,
+          students: list
+        };
+      });
+
+      const sortedCohorts = [...allCohorts].sort((a, b) => {
+        if (b.avgProgress !== a.avgProgress) return b.avgProgress - a.avgProgress;
+        if (b.studentCount !== a.studentCount) return b.studentCount - a.studentCount;
+        return String(a.date).localeCompare(String(b.date));
+      });
+      const visibleCohorts = sortedCohorts.slice(0, 8);
+      const hiddenCohortsCount = Math.max(0, sortedCohorts.length - visibleCohorts.length);
+      const totalEstudiantes = allCohorts.reduce((sum, cohort) => sum + cohort.studentCount, 0);
+      const totalPromedios = allCohorts.reduce((sum, cohort) => sum + cohort.avgProgress, 0);
+      const tableRows = visibleCohorts.map((cohort) => [cohort.cohortLabel, cohort.studentCount, `${formatPercentValue(cohort.avgProgress)}%`]);
+      const cohortLabels = visibleCohorts.map((cohort) => cohort.cohortLabel);
+      const cohortAvgs = visibleCohorts.map((cohort) => cohort.avgProgress);
+      const cohortStudents = visibleCohorts.map((cohort) => cohort.studentCount);
+      const cohortDetailsHtml = buildCohortDetailedHtml(visibleCohorts);
 
       reportData = {
         ...reportData,
         stats: [
           { label: 'Cohortes analizadas', value: Object.keys(groups).length, sub: 'Fechas de creación' },
+          { label: 'Cohortes visibles', value: visibleCohorts.length, sub: 'Top 8 por avance' },
           { label: 'Total de estudiantes', value: totalEstudiantes, sub: 'Todas las cohortes' },
-          { label: 'Promedio general', value: Object.keys(groups).length ? (totalPromedios / Object.keys(groups).length).toFixed(1) : '0', sub: 'Promedio simple' }
+          { label: 'Promedio general', value: `${formatPercentValue(Object.keys(groups).length ? (totalPromedios / Object.keys(groups).length) : 0)}%`, sub: 'Porcentaje promedio simple entre cohortes' }
+        ],
+        sections: [
+          {
+            title: 'Notas del Informe',
+            subtitle: 'Contexto del comparativo por cohorte',
+            body: `
+              <div class="meta">
+                <div class="meta-item">Criterio de orden<strong>Las cohortes se muestran por mayor progreso promedio.</strong></div>
+                <div class="meta-item">Detalle visible<strong>Hasta 8 cohortes para conservar legibilidad.</strong></div>
+                <div class="meta-item">Cohortes ocultas<strong>${hiddenCohortsCount}</strong></div>
+                <div class="meta-item">Fuente<strong>Promedio por áreas y estado actual de estudiantes.</strong></div>
+              </div>
+            `
+          },
+          {
+            title: 'Análisis por Fecha de Creación',
+            subtitle: 'Comparación de cohortes y estudiantes rezagados como en la aplicación.',
+            body: cohortDetailsHtml || '<div class="subtopic-empty-row">Sin cohortes para mostrar</div>'
+          }
         ],
         tableTitle: 'Comparativo por Cohorte',
-        tableSubtitle: 'Promedio simple según progreso por áreas',
+        tableSubtitle: 'Top 8 cohortes ordenadas por progreso promedio',
         tableHeaders: ['Fecha', 'Estudiantes', 'Promedio'],
         tableRows,
         charts: [
@@ -2477,12 +2933,24 @@ exports.generarPdfReporte = async (req, res) => {
           { label: 'Intentos totales', value: totalIntentos, sub: estudianteId ? 'Del estudiante' : 'Agregado' },
           { label: 'Aciertos totales', value: totalAciertos, sub: 'Intentos aprobados' },
           { label: 'Fallos totales', value: totalFallos, sub: 'Intentos no aprobados' },
-          { label: 'Tasa de acierto', value: `${tasaAciertos}%`, sub: 'Aciertos/Intentos' }
+          { label: 'Tasa de acierto', value: `${tasaAciertos}%`, sub: 'Porcentaje de aciertos sobre intentos' }
         ],
         sections: [
           {
+            title: 'Notas del Informe',
+            subtitle: 'Contexto del reporte de fallos',
+            body: `
+              <div class="meta">
+                <div class="meta-item">Alcance<strong>${estudianteId ? 'Resumen del estudiante seleccionado' : 'Vista agregada del grupo filtrado'}</strong></div>
+                <div class="meta-item">Top visible<strong>${estudianteId ? 'Todas las actividades del estudiante' : 'Top 20 actividades con más fallos'}</strong></div>
+                <div class="meta-item">Tasa de acierto<strong>${tasaAciertos}%</strong></div>
+                <div class="meta-item">Tasa de fallos<strong>${tasaFallos}%</strong></div>
+              </div>
+            `
+          },
+          {
             title: 'Resumen por Área',
-            subtitle: 'Intentos y fallos acumulados',
+            subtitle: 'Intentos y fallos acumulados, como se visualiza en la aplicación.',
             body: areaTable
           },
           {

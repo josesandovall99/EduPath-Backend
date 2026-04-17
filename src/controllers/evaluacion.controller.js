@@ -745,12 +745,90 @@ exports.evaluateCompilerSubmission = async ({ codigo, lenguaje_id, configuracion
     return { status: 400, message: 'Faltan campos: lenguaje_id, codigo' };
   }
 
-  const cfg = configuracion || {};
+  const cfg = normalizarConfiguracionCompilador({
+    configuracion: configuracion || {},
+    codigoEstructura: configuracion?.metodo?.plantilla || configuracion?.plantillaMetodo,
+    resultadoEjercicio: esperado
+  });
+  const usaCasosPrueba = Array.isArray(cfg.casos_prueba) && cfg.casos_prueba.length > 0;
   const lenguajesPermitidos = cfg.lenguajesPermitidos;
   if (Array.isArray(lenguajesPermitidos) && lenguajesPermitidos.length > 0) {
     if (!lenguajesPermitidos.includes(lenguajeIdNum)) {
       return { status: 400, message: 'Lenguaje no permitido para este ejercicio' };
     }
+  }
+
+  if (usaCasosPrueba) {
+    const validacionConfiguracion = validarConfiguracionCompilador({
+      configuracion: cfg,
+      codigoEstructura: cfg?.metodo?.plantilla
+    });
+
+    if (!validacionConfiguracion.ok) {
+      return {
+        status: 500,
+        message: `Configuracion invalida del miniproyecto: ${validacionConfiguracion.errores.join('; ')}`
+      };
+    }
+
+    if (lenguajeIdNum !== 62) {
+      return { status: 400, message: 'El miniproyecto de programacion solo admite Java.' };
+    }
+
+    if (tieneMainJava(codigo)) {
+      return { status: 400, message: 'No fue posible aislar correctamente el metodo enviado desde la clase Java.' };
+    }
+
+    const validacionSintaxis = validarSintaxis(codigo, cfg, lenguajeIdNum);
+    if (!validacionSintaxis.ok) {
+      return {
+        status: 400,
+        data: {
+          esCorrecta: false,
+          estado: 'Sintaxis invalida',
+          erroresSintaxis: validacionSintaxis.errores
+        }
+      };
+    }
+
+    const codigoNormalizado = normalizarCodigoJavaEstudiante(codigo, cfg.metodo);
+    const resultadoEvaluacion = await evaluadorCasos.evaluarCasosPrueba(
+      codigoNormalizado,
+      lenguajeIdNum,
+      cfg.casos_prueba,
+      cfg.metodo
+    );
+
+    if (resultadoEvaluacion.errorTecnico || resultadoEvaluacion.errorConfiguracion) {
+      return {
+        status: resultadoEvaluacion.errorConfiguracion ? 500 : 502,
+        message: resultadoEvaluacion.resumen,
+        data: {
+          esCorrecta: false,
+          estado: resultadoEvaluacion.resumen,
+          casosPrueba: resultadoEvaluacion.resultados || []
+        }
+      };
+    }
+
+    const casoReferencia = resultadoEvaluacion.resultados.find((caso) => caso.ejecutado && !caso.omitido && !caso.paso)
+      || resultadoEvaluacion.resultados.find((caso) => caso.ejecutado && !caso.omitido)
+      || {};
+
+    return {
+      status: resultadoEvaluacion.aprobado ? 200 : 400,
+      data: {
+        esCorrecta: resultadoEvaluacion.aprobado,
+        stdout: casoReferencia.outputObtenido || '',
+        stderr: resultadoEvaluacion.aprobado ? '' : (casoReferencia.error || ''),
+        esperado: casoReferencia.outputEsperado || '',
+        obtenido: normalizarSalida(casoReferencia.outputObtenido || ''),
+        estado: resultadoEvaluacion.resumen,
+        resumen: resultadoEvaluacion.resumen,
+        casosPrueba: resultadoEvaluacion.resultados,
+        puntosObtenidos: resultadoEvaluacion.aprobado ? 100 : 0,
+      }
+    };
   }
 
   const validacionSintaxis = validarSintaxis(codigo, cfg, lenguajeIdNum);

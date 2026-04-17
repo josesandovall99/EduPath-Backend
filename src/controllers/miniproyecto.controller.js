@@ -3,11 +3,50 @@ const { Actividad, Miniproyecto, TipoActividad, Area, Evaluacion, Estudiante, Re
 const evaluacionController = require('./evaluacion.controller');
 const { isNonEmptyString, sanitizePlainText, sanitizeRichText } = require('../utils/inputSecurity');
 const { enrichMiniproyectoResponse } = require('../utils/miniproyectoRubric');
+const { normalizarConfiguracionCompilador } = require('../utils/compilerExercise');
 
 const canViewInactiveMiniproyectos = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
 const isMiniproyectoActivo = (registro) => {
   const actividad = registro?.Actividad || registro?.actividad;
   return actividad?.estado !== false;
+};
+
+const loadProgrammingMiniproyectoConfig = (miniproyecto) => {
+  let esperado = miniproyecto?.respuesta_miniproyecto || '';
+  let configuracion = {};
+
+  if (miniproyecto?.respuesta_miniproyecto) {
+    try {
+      const parsed = JSON.parse(miniproyecto.respuesta_miniproyecto);
+      if (parsed && typeof parsed === 'object') {
+        if (parsed.tipo === 'programacion' || parsed.esperado || parsed.lenguajesPermitidos || parsed.sintaxis || parsed.casos_prueba || parsed.metodo) {
+          configuracion = normalizarConfiguracionCompilador({
+            configuracion: parsed,
+            codigoEstructura: parsed?.metodo?.plantilla || parsed?.plantillaMetodo,
+            resultadoEjercicio: parsed?.esperado || esperado
+          });
+          esperado = configuracion.esperado || esperado;
+        }
+      }
+    } catch (err) {
+      // Si no es JSON, se deja como texto esperado.
+    }
+  }
+
+  return { esperado, configuracion };
+};
+
+const isProgrammingMiniproyecto = (miniproyecto) => {
+  const { configuracion } = loadProgrammingMiniproyectoConfig(miniproyecto);
+
+  return Boolean(
+    configuracion?.tipo === 'programacion' ||
+    configuracion?.metodo?.plantilla ||
+    (Array.isArray(configuracion?.casos_prueba) && configuracion.casos_prueba.length > 0) ||
+    (Array.isArray(configuracion?.lenguajesPermitidos) && configuracion.lenguajesPermitidos.length > 0) ||
+    (Array.isArray(configuracion?.sintaxis) && configuracion.sintaxis.length > 0) ||
+    configuracion?.esperado
+  );
 };
 
 // Función auxiliar para validar FKs (Evita repetir código)
@@ -291,6 +330,55 @@ exports.toggleEstado = async (req, res) => {
   }
 };
 
+exports.ejecutarMiniproyectoProgramacion = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto || '';
+    const lenguaje_id = req.body?.lenguaje_id || req.body?.respuesta?.lenguaje_id || 62;
+
+    if (!codigo || !lenguaje_id) {
+      return res.status(400).json({ message: 'Faltan campos: lenguaje_id, codigo' });
+    }
+
+    const miniproyecto = await Miniproyecto.findByPk(id, {
+      include: [{ model: Actividad }]
+    });
+    if (!miniproyecto || !isMiniproyectoActivo(miniproyecto)) {
+      return res.status(404).json({ message: 'Miniproyecto no encontrado' });
+    }
+
+    if (!isProgrammingMiniproyecto(miniproyecto)) {
+      return res.status(400).json({ message: 'El miniproyecto no es de programacion' });
+    }
+
+    const { configuracion } = loadProgrammingMiniproyectoConfig(miniproyecto);
+
+    const evaluacion = await evaluacionController.evaluateCompilerSubmission({
+      codigo,
+      lenguaje_id,
+      configuracion,
+      esperado: configuracion?.esperado || miniproyecto.respuesta_miniproyecto || ''
+    });
+
+    if (!evaluacion || evaluacion.status >= 500) {
+      return res.status(500).json({ message: evaluacion?.message || 'Error ejecutando el miniproyecto' });
+    }
+
+    return res.status(200).json({
+      modo: 'ejecucion',
+      message: 'Ejecucion completada.',
+      resumen: evaluacion?.data?.resumen || evaluacion?.data?.estado || 'Codigo ejecutado sin calificar.',
+      casos: evaluacion?.data?.casosPrueba || [],
+      stdout: evaluacion?.data?.stdout || '',
+      stderr: evaluacion?.data?.stderr || '',
+      esperado: evaluacion?.data?.esperado || '',
+      obtenido: evaluacion?.data?.obtenido || ''
+    });
+  } catch (err) {
+    return res.status(500).json({ message: 'Error ejecutando miniproyecto', error: err.message || err });
+  }
+};
+
 // Enviar respuesta para miniproyecto de programacion
 exports.enviarMiniproyectoProgramacion = async (req, res) => {
   try {
@@ -319,8 +407,7 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
       return res.status(404).json({ message: 'Miniproyecto no encontrado' });
     }
 
-    // Validar que sea miniproyecto de programacion (actividad_id = 1)
-    if (Number(miniproyecto.actividad_id) !== 1) {
+    if (!isProgrammingMiniproyecto(miniproyecto)) {
       return res.status(400).json({ message: 'El miniproyecto no es de programacion' });
     }
 
@@ -331,26 +418,7 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
       return res.status(409).json({ message: 'Miniproyecto ya aprobado para el estudiante' });
     }
 
-    let esperado = miniproyecto.respuesta_miniproyecto || '';
-    let configuracion = {};
-
-    if (miniproyecto.respuesta_miniproyecto) {
-      try {
-        const parsed = JSON.parse(miniproyecto.respuesta_miniproyecto);
-        if (parsed && typeof parsed === 'object') {
-          if (parsed.tipo === 'programacion' || parsed.esperado || parsed.lenguajesPermitidos || parsed.sintaxis) {
-            esperado = parsed.esperado || '';
-            configuracion = {
-              esperado,
-              sintaxis: parsed.sintaxis || [],
-              lenguajesPermitidos: parsed.lenguajesPermitidos || []
-            };
-          }
-        }
-      } catch (err) {
-        // Si no es JSON, se deja como texto esperado
-      }
-    }
+    const { esperado, configuracion } = loadProgrammingMiniproyectoConfig(miniproyecto);
 
     const evaluacion = await evaluacionController.evaluateCompilerSubmission({
       codigo,
@@ -359,7 +427,7 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
       esperado
     });
 
-    if (!evaluacion || evaluacion.status === 500) {
+    if (!evaluacion || evaluacion.status >= 500) {
       return res.status(500).json({ message: evaluacion?.message || 'Error evaluando el miniproyecto' });
     }
 
