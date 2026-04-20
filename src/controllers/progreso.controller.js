@@ -1187,6 +1187,7 @@ const buildFailuresReportData = async ({ estudianteId, areaIds } = {}) => {
   });
 
   const byArea = areas
+    .filter((area) => !areaFilterSet || areaFilterSet.has(String(area.id)))
     .map((area) => {
       const key = String(area.id);
       const current = byAreaMap.get(key);
@@ -2203,14 +2204,23 @@ exports.generarPdfReporte = async (req, res) => {
     if (!['student', 'date', 'activity', 'failures'].includes(type)) {
       return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'|'failures'" });
     }
+    const isDocente = req.tipoUsuario === 'DOCENTE';
+    const docenteAreaId = isDocente ? resolveDocenteAreaIdFromRequest(req) : null;
+
+    if (isDocente && !docenteAreaId) {
+      return res.status(403).json({ message: 'No se pudo determinar el área asignada al docente' });
+    }
+
+    const areaIds = docenteAreaId ? [docenteAreaId] : undefined;
     const filters = {
       semester: req.query.semester,
       dateFrom: req.query.dateFrom,
-      dateTo: req.query.dateTo
+      dateTo: req.query.dateTo,
+      areaIds
     };
 
     let reportData = {
-      subtitle: `Reporte generado el ${formatDate(new Date())}`,
+      subtitle: `Reporte generado el ${formatDate(new Date())}${docenteAreaId ? ` · Área asignada ${docenteAreaId}` : ''}`,
       stats: [],
       sections: [],
       tableHeaders: [],
@@ -2641,15 +2651,15 @@ exports.generarPdfReporte = async (req, res) => {
       const { students, areas } = await getResumenGeneralData(filters);
       const studentIds = students.map(student => student.id);
 
-      const totalContenidos = studentIds.length
-        ? await Progreso.count({ where: { estudiante_id: { [Op.in]: studentIds }, completado: true, estado: 'Visualizado' } })
-        : 0;
-      const totalEjercicios = studentIds.length
-        ? await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: { [Op.in]: studentIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } })
-        : 0;
-      const totalMinis = studentIds.length
-        ? await RespuestaEstudianteMiniproyecto.count({ where: { estudiante_id: { [Op.in]: studentIds }, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } } })
-        : 0;
+      const totalContenidos = students.reduce((sum, student) => {
+        return sum + student.subjects.reduce((acc, subj) => acc + (subj.contentViewed || 0), 0);
+      }, 0);
+      const totalEjercicios = students.reduce((sum, student) => {
+        return sum + student.subjects.reduce((acc, subj) => acc + (subj.exercisesCompleted || 0), 0);
+      }, 0);
+      const totalMinis = students.reduce((sum, student) => {
+        return sum + student.subjects.reduce((acc, subj) => acc + (subj.miniprojectsSubmitted || 0), 0);
+      }, 0);
 
       const areaRows = areas.map((area) => {
         const areaName = area.nombre || `Área ${area.id}`;
@@ -2817,24 +2827,52 @@ exports.generarPdfReporte = async (req, res) => {
         return res.status(400).json({ message: 'estudiante_id debe ser numerico o "all"' });
       }
 
-      const failuresData = await buildFailuresReportData({ estudianteId });
+      const failuresData = await buildFailuresReportData({ estudianteId, areaIds });
       const totalIntentos = failuresData.totals.intentos;
       const totalFallos = failuresData.totals.fallos;
       const totalAciertos = failuresData.totals.aciertos;
       const tasaFallos = totalIntentos > 0 ? Math.round((totalFallos / totalIntentos) * 100) : 0;
       const tasaAciertos = totalIntentos > 0 ? Math.round((totalAciertos / totalIntentos) * 100) : 0;
 
-      const itemsOrdenados = [...failuresData.items].sort((a, b) => {
+      const itemsAgrupados = estudianteId
+        ? [...failuresData.items]
+        : Array.from(
+            failuresData.items.reduce((map, item) => {
+              const key = `${item.tipo}-${item.actividad_id}-${item.area_id ?? 'sin-area'}`;
+              const current = map.get(key);
+              if (!current) {
+                map.set(key, {
+                  ...item,
+                  estudiante_id: 0,
+                  aprobado: Boolean(item.aprobado),
+                  estudiantesAfectados: 1
+                });
+                return map;
+              }
+
+              current.intentos += item.intentos || 0;
+              current.fallos += item.fallos || 0;
+              current.aciertos += item.aciertos || 0;
+              current.aprobado = current.aprobado && Boolean(item.aprobado);
+              current.estudiantesAfectados = (current.estudiantesAfectados || 0) + 1;
+              map.set(key, current);
+              return map;
+            }, new Map()).values()
+          );
+      const itemsOrdenados = [...itemsAgrupados].sort((a, b) => {
         if (b.fallos !== a.fallos) return b.fallos - a.fallos;
         return b.intentos - a.intentos;
       });
       const itemsListados = estudianteId ? itemsOrdenados : itemsOrdenados.slice(0, 20);
+      const shouldShowAreaColumn = !isDocente || !estudianteId;
+      const activityColumnHeader = isDocente ? (estudianteId ? '' : '<th>Estudiantes afectados</th>') : '<th>Área</th>';
+      const emptyActivityColspan = shouldShowAreaColumn ? 7 : 6;
 
       const activityRows = itemsListados.map((item) => `
         <tr>
           <td>${escapeHtml(item.tipo)}</td>
           <td>${escapeHtml(item.titulo)}</td>
-          <td>${escapeHtml(item.area_name || '-')}</td>
+          ${shouldShowAreaColumn ? `<td>${escapeHtml(isDocente ? String(item.estudiantesAfectados || 0) : (item.area_name || '-'))}</td>` : ''}
           <td>${item.intentos}</td>
           <td>${item.aciertos}</td>
           <td>${item.fallos}</td>
@@ -2848,7 +2886,7 @@ exports.generarPdfReporte = async (req, res) => {
             <tr>
               <th>Tipo</th>
               <th>Actividad</th>
-              <th>Área</th>
+              ${activityColumnHeader}
               <th>Intentos</th>
               <th>Aciertos</th>
               <th>Fallos</th>
@@ -2856,7 +2894,7 @@ exports.generarPdfReporte = async (req, res) => {
             </tr>
           </thead>
           <tbody>
-            ${activityRows || '<tr><td colspan="7">Sin datos</td></tr>'}
+            ${activityRows || `<tr><td colspan="${emptyActivityColspan}">Sin datos</td></tr>`}
           </tbody>
         </table>
       `;
@@ -2926,6 +2964,97 @@ exports.generarPdfReporte = async (req, res) => {
       const areaFallos = failuresData.byArea.map((area) => area.fallos);
       const fallosEjercicios = failuresData.byType.ejercicios.fallos;
       const fallosMinis = failuresData.byType.miniproyectos.fallos;
+      const topStudentChartRows = failuresData.byStudent
+        .slice(0, 8)
+        .map((student) => ({
+          label: student.nombre || `Estudiante ${student.estudiante_id}`,
+          value: student.fallos
+        }));
+      const topActivityChartRows = itemsOrdenados
+        .slice(0, 8)
+        .map((item) => ({
+          label: item.titulo || `${item.tipo} ${item.actividad_id}`,
+          value: item.fallos
+        }));
+      const docenteCharts = [
+        {
+          id: 'topStudentsFailuresChart',
+          type: 'bar',
+          title: 'Estudiantes con Más Fallos',
+          subtitle: estudianteId ? 'El estudiante filtrado dentro del grupo actual.' : 'Top estudiantes que requieren atención prioritaria.',
+          labels: topStudentChartRows.map((item) => item.label),
+          data: topStudentChartRows.map((item) => item.value),
+          color: '#F97316',
+          showLegend: false,
+          orientation: 'horizontal',
+          labelMaxLength: 26,
+          height: 220
+        },
+        {
+          id: 'hitsVsFailsChart',
+          type: 'doughnut',
+          title: 'Aciertos vs Fallos',
+          subtitle: 'Relación global de resultados sobre los intentos.',
+          labels: ['Aciertos', 'Fallos'],
+          data: [totalAciertos, totalFallos],
+          colors: ['#7ED6A7', '#F5A97F'],
+          showLegend: true,
+          legendPosition: 'bottom',
+          height: 180
+        },
+        {
+          id: 'topActivitiesFailuresChart',
+          type: 'bar',
+          title: 'Actividades con Más Fallos',
+          subtitle: estudianteId ? 'Actividades donde el estudiante presenta más dificultad.' : 'Top actividades donde la materia concentra más errores.',
+          labels: topActivityChartRows.map((item) => item.label),
+          data: topActivityChartRows.map((item) => item.value),
+          color: '#DC2626',
+          showLegend: false,
+          orientation: 'horizontal',
+          labelMaxLength: 30,
+          height: 220
+        }
+      ];
+      const defaultCharts = [
+        {
+          id: 'failuresAreaChart',
+          type: 'bar',
+          title: 'Fallos por Área',
+          subtitle: 'Comparativo compacto por materia filtrada.',
+          labels: areaLabels,
+          data: areaFallos,
+          color: '#F5A97F',
+          showLegend: false,
+          orientation: 'horizontal',
+          labelMaxLength: 26,
+          height: 180
+        },
+        {
+          id: 'hitsVsFailsChart',
+          type: 'doughnut',
+          title: 'Aciertos vs Fallos',
+          subtitle: 'Relación global de resultados sobre los intentos.',
+          labels: ['Aciertos', 'Fallos'],
+          data: [totalAciertos, totalFallos],
+          colors: ['#7ED6A7', '#F5A97F'],
+          showLegend: true,
+          legendPosition: 'bottom',
+          height: 180
+        },
+        {
+          id: 'failuresTypeChart',
+          type: 'doughnut',
+          title: 'Distribución de Fallos por Tipo',
+          subtitle: 'Separación entre ejercicios y miniproyectos.',
+          labels: ['Ejercicios', 'Miniproyectos'],
+          data: [fallosEjercicios, fallosMinis],
+          colors: ['#4A90E2', '#7ED6A7'],
+          showLegend: true,
+          legendPosition: 'bottom',
+          height: 180
+        }
+      ];
 
       reportData = {
         ...reportData,
@@ -2964,45 +3093,7 @@ exports.generarPdfReporte = async (req, res) => {
             body: activityTable
           }
         ],
-        charts: [
-          {
-            id: 'failuresAreaChart',
-            type: 'bar',
-            title: 'Fallos por Área',
-            subtitle: 'Comparativo compacto por materia filtrada.',
-            labels: areaLabels,
-            data: areaFallos,
-            color: '#F5A97F',
-            showLegend: false,
-            orientation: 'horizontal',
-            labelMaxLength: 26,
-            height: 180
-          },
-          {
-            id: 'hitsVsFailsChart',
-            type: 'doughnut',
-            title: 'Aciertos vs Fallos',
-            subtitle: 'Relación global de resultados sobre los intentos.',
-            labels: ['Aciertos', 'Fallos'],
-            data: [totalAciertos, totalFallos],
-            colors: ['#7ED6A7', '#F5A97F'],
-            showLegend: true,
-            legendPosition: 'bottom',
-            height: 180
-          },
-          {
-            id: 'failuresTypeChart',
-            type: 'doughnut',
-            title: 'Distribución de Fallos por Tipo',
-            subtitle: 'Separación entre ejercicios y miniproyectos.',
-            labels: ['Ejercicios', 'Miniproyectos'],
-            data: [fallosEjercicios, fallosMinis],
-            colors: ['#4A90E2', '#7ED6A7'],
-            showLegend: true,
-            legendPosition: 'bottom',
-            height: 180
-          }
-        ]
+        charts: isDocente ? docenteCharts : defaultCharts
       };
     }
 
