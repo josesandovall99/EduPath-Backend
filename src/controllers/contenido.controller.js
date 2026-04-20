@@ -1,6 +1,273 @@
+const { Op } = require('sequelize');
 const { Contenido, Tema, Subtema, Area, Estudiante, SecuenciaContenido, Progreso } = require('../models');
 
 const canViewInactiveContenidos = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
+const CONTENIDO_TYPE_MAP = {
+  video: 'video',
+  document: 'document',
+  documento: 'document',
+  pdf: 'document',
+  activity: 'activity',
+  actividad: 'activity',
+  explicacion: 'activity',
+  'explicación': 'activity'
+};
+
+const parsePositiveInteger = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return Number.NaN;
+  }
+
+  return parsed;
+};
+
+const stripRichText = (value) => String(value || '')
+  .replace(/<[^>]*>/g, ' ')
+  .replace(/&nbsp;/gi, ' ')
+  .replace(/\s+/g, ' ')
+  .trim();
+
+async function validateContenidoPayload(req, rawPayload) {
+  const titulo = String(rawPayload.titulo || '').trim();
+  const tipo = CONTENIDO_TYPE_MAP[String(rawPayload.tipo || '').trim().toLowerCase()];
+  const descripcion = String(rawPayload.descripcion || '').trim();
+  const descripcionTexto = stripRichText(descripcion);
+  const url = String(rawPayload.url || '').trim();
+  const temaId = parsePositiveInteger(rawPayload.tema_id);
+  const subtemaId = parsePositiveInteger(rawPayload.subtema_id);
+
+  if (!titulo || !tipo || !descripcionTexto || !url || !temaId || !subtemaId || Number.isNaN(temaId) || Number.isNaN(subtemaId)) {
+    return {
+      error: {
+        status: 400,
+        message: 'Completa todos los campos obligatorios del contenido antes de guardar.'
+      }
+    };
+  }
+
+  try {
+    new URL(url);
+  } catch (error) {
+    return {
+      error: {
+        status: 400,
+        message: 'La URL del contenido debe ser válida.'
+      }
+    };
+  }
+
+  const temaExistente = await Tema.findByPk(temaId);
+  if (!temaExistente) {
+    return {
+      error: {
+        status: 400,
+        message: 'El tema especificado no existe'
+      }
+    };
+  }
+
+  if (temaExistente.estado === false) {
+    return {
+      error: {
+        status: 400,
+        message: 'El tema especificado está inactivo'
+      }
+    };
+  }
+
+  if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+    return {
+      error: {
+        status: 403,
+        message: 'Acceso denegado: área fuera de tu alcance'
+      }
+    };
+  }
+
+  const subtemaExistente = await Subtema.findByPk(subtemaId);
+  if (!subtemaExistente) {
+    return {
+      error: {
+        status: 400,
+        message: 'El subtema especificado no existe'
+      }
+    };
+  }
+
+  if (subtemaExistente.estado === false) {
+    return {
+      error: {
+        status: 400,
+        message: 'El subtema especificado está inactivo'
+      }
+    };
+  }
+
+  if (parseInt(subtemaExistente.tema_id, 10) !== parseInt(temaExistente.id, 10)) {
+    return {
+      error: {
+        status: 400,
+        message: 'El subtema seleccionado no pertenece al tema indicado.'
+      }
+    };
+  }
+
+  return {
+    payload: {
+      titulo,
+      tipo,
+      descripcion,
+      url,
+      tema_id: temaId,
+      subtema_id: subtemaId
+    }
+  };
+}
+
+async function resolveContenidoScope(req) {
+  let areaId = parsePositiveInteger(req.query.areaId);
+  let temaId = parsePositiveInteger(req.query.temaId);
+  let subtemaId = parsePositiveInteger(req.query.subtemaId);
+
+  if ([areaId, temaId, subtemaId].some((value) => Number.isNaN(value))) {
+    return {
+      error: {
+        status: 400,
+        message: 'Los filtros de área, tema y subtema deben ser identificadores válidos.'
+      }
+    };
+  }
+
+  const docenteAreaId = req.docenteAreaId ? parseInt(req.docenteAreaId, 10) : null;
+  let tema = null;
+
+  if (docenteAreaId) {
+    if (areaId && areaId !== docenteAreaId) {
+      return {
+        error: {
+          status: 403,
+          message: 'Acceso denegado: área fuera de tu alcance'
+        }
+      };
+    }
+
+    areaId = docenteAreaId;
+  }
+
+  if (temaId) {
+    tema = await Tema.findByPk(temaId);
+    if (!tema) {
+      return {
+        error: {
+          status: 404,
+          message: 'Tema no encontrado'
+        }
+      };
+    }
+
+    if (tema.estado === false && !canViewInactiveContenidos(req)) {
+      return {
+        error: {
+          status: 404,
+          message: 'Tema no encontrado'
+        }
+      };
+    }
+
+    const temaAreaId = parseInt(tema.area_id, 10);
+    if (docenteAreaId && temaAreaId !== docenteAreaId) {
+      return {
+        error: {
+          status: 403,
+          message: 'Acceso denegado: área fuera de tu alcance'
+        }
+      };
+    }
+
+    if (areaId && temaAreaId !== areaId) {
+      return {
+        error: {
+          status: 400,
+          message: 'El tema no pertenece al área seleccionada'
+        }
+      };
+    }
+
+    areaId = temaAreaId;
+  }
+
+  if (subtemaId) {
+    const subtema = await Subtema.findByPk(subtemaId);
+    if (!subtema) {
+      return {
+        error: {
+          status: 404,
+          message: 'Subtema no encontrado'
+        }
+      };
+    }
+
+    if (subtema.estado === false && !canViewInactiveContenidos(req)) {
+      return {
+        error: {
+          status: 404,
+          message: 'Subtema no encontrado'
+        }
+      };
+    }
+
+    const subtemaTemaId = parseInt(subtema.tema_id, 10);
+    if (temaId && subtemaTemaId !== temaId) {
+      return {
+        error: {
+          status: 400,
+          message: 'El subtema no pertenece al tema seleccionado'
+        }
+      };
+    }
+
+    if (!tema || parseInt(tema.id, 10) !== subtemaTemaId) {
+      tema = await Tema.findByPk(subtemaTemaId);
+      if (!tema) {
+        return {
+          error: {
+            status: 404,
+            message: 'Tema no encontrado para el subtema indicado'
+          }
+        };
+      }
+    }
+
+    const temaAreaId = parseInt(tema.area_id, 10);
+    if (docenteAreaId && temaAreaId !== docenteAreaId) {
+      return {
+        error: {
+          status: 403,
+          message: 'Acceso denegado: área fuera de tu alcance'
+        }
+      };
+    }
+
+    if (areaId && temaAreaId !== areaId) {
+      return {
+        error: {
+          status: 400,
+          message: 'El subtema no pertenece al área seleccionada'
+        }
+      };
+    }
+
+    temaId = subtemaTemaId;
+    areaId = temaAreaId;
+  }
+
+  return { areaId, temaId, subtemaId };
+}
 
 /**
  * Función auxiliar para manejar la redirección automática cuando un contenido es eliminado o inactivado
@@ -112,41 +379,13 @@ async function handleSecuenciaRedirecccion(contenidoId) {
 // Crear un contenido con validación de tema_id y subtema_id
 exports.createContenido = async (req, res) => {
   try {
-    const { titulo, tipo, descripcion, url, tema_id, subtema_id } = req.body;
-
-    // Validar que el tema exista
-    const temaExistente = await Tema.findByPk(tema_id);
-    if (!temaExistente) {
-      return res.status(400).json({ message: "El tema especificado no existe" });
-    }
-
-    if (temaExistente.estado === false) {
-      return res.status(400).json({ message: 'El tema especificado está inactivo' });
-    }
-
-    if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
-      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
-    }
-
-    // Validar que el subtema exista
-    const subtemaExistente = await Subtema.findByPk(subtema_id);
-    if (!subtemaExistente) {
-      return res.status(400).json({ message: "El subtema especificado no existe" });
-    }
-
-    if (subtemaExistente.estado === false) {
-      return res.status(400).json({ message: 'El subtema especificado está inactivo' });
+    const validation = await validateContenidoPayload(req, req.body);
+    if (validation.error) {
+      return res.status(validation.error.status).json({ message: validation.error.message });
     }
 
     // Crear el contenido
-    const nuevoContenido = await Contenido.create({
-      titulo,
-      tipo,
-      descripcion,
-      url,
-      tema_id,
-      subtema_id
-    });
+    const nuevoContenido = await Contenido.create(validation.payload);
 
     res.status(201).json(nuevoContenido);
   } catch (error) {
@@ -157,24 +396,35 @@ exports.createContenido = async (req, res) => {
 // Listar todos los contenidos
 exports.getContenidos = async (req, res) => {
   try {
-    let contenidos = [];
+    const scope = await resolveContenidoScope(req);
+    if (scope.error) {
+      return res.status(scope.error.status).json({ message: scope.error.message });
+    }
 
-    if (req.docenteAreaId) {
+    const where = canViewInactiveContenidos(req) ? {} : { estado: true };
+
+    if (scope.subtemaId) {
+      where.subtema_id = scope.subtemaId;
+    } else if (scope.temaId) {
+      where.tema_id = scope.temaId;
+    } else if (scope.areaId) {
       const temas = await Tema.findAll({
-        where: { area_id: req.docenteAreaId },
+        where: {
+          area_id: scope.areaId,
+          ...(canViewInactiveContenidos(req) ? {} : { estado: true })
+        },
         attributes: ['id']
       });
-      const temaIds = temas.map((tema) => tema.id);
 
+      const temaIds = temas.map((tema) => tema.id);
       if (temaIds.length === 0) {
         return res.json([]);
       }
 
-      contenidos = await Contenido.findAll({ where: { tema_id: temaIds } });
-    } else {
-      const where = canViewInactiveContenidos(req) ? {} : { estado: true };
-      contenidos = await Contenido.findAll({ where });
+      where.tema_id = { [Op.in]: temaIds };
     }
+
+    const contenidos = await Contenido.findAll({ where });
 
     res.json(contenidos);
   } catch (error) {
@@ -218,42 +468,21 @@ exports.updateContenido = async (req, res) => {
       }
     }
 
-    // Si se envía un tema_id, validar que exista
-    if (req.body.tema_id) {
-      const temaExistente = await Tema.findByPk(req.body.tema_id);
-      if (!temaExistente) {
-        return res.status(400).json({ message: "El tema especificado no existe" });
-      }
+    const mergedPayload = {
+      titulo: req.body.titulo ?? contenido.titulo,
+      tipo: req.body.tipo ?? contenido.tipo,
+      descripcion: req.body.descripcion ?? contenido.descripcion,
+      url: req.body.url ?? contenido.url,
+      tema_id: req.body.tema_id ?? contenido.tema_id,
+      subtema_id: req.body.subtema_id ?? contenido.subtema_id
+    };
 
-      if (temaExistente.estado === false) {
-        return res.status(400).json({ message: 'El tema especificado está inactivo' });
-      }
-
-      if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
-        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
-      }
+    const validation = await validateContenidoPayload(req, mergedPayload);
+    if (validation.error) {
+      return res.status(validation.error.status).json({ message: validation.error.message });
     }
 
-    // Si se envía un subtema_id, validar que exista
-    if (req.body.subtema_id) {
-      const subtemaExistente = await Subtema.findByPk(req.body.subtema_id);
-      if (!subtemaExistente) {
-        return res.status(400).json({ message: "El subtema especificado no existe" });
-      }
-
-      if (subtemaExistente.estado === false) {
-        return res.status(400).json({ message: 'El subtema especificado está inactivo' });
-      }
-
-      if (req.docenteAreaId) {
-        const temaDelSubtema = await Tema.findByPk(subtemaExistente.tema_id);
-        if (!temaDelSubtema || parseInt(temaDelSubtema.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
-          return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
-        }
-      }
-    }
-
-    await contenido.update(req.body);
+    await contenido.update(validation.payload);
     res.json(contenido);
   } catch (error) {
     res.status(500).json({ message: "Error al actualizar el contenido", error });

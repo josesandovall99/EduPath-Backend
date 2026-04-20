@@ -1,6 +1,106 @@
 const { SecuenciaContenido, Contenido, sequelize } = require('../models');
 const { Op } = require('sequelize');
 
+const parsePositiveInteger = (value) => {
+  if (value === undefined || value === null || value === '') {
+    return null;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    return Number.NaN;
+  }
+
+  return parsed;
+};
+
+async function loadSubtemaSequenceGraph(subtemaId, includeInactiveSequences = false) {
+  const parsedSubtemaId = parsePositiveInteger(subtemaId);
+
+  if (!parsedSubtemaId || Number.isNaN(parsedSubtemaId)) {
+    return {
+      subtemaId: null,
+      contenidos: [],
+      contenidoIds: [],
+      secuencias: []
+    };
+  }
+
+  const contenidos = await Contenido.findAll({
+    where: {
+      subtema_id: parsedSubtemaId,
+      estado: true
+    },
+    attributes: ['id', 'titulo', 'tipo', 'descripcion', 'tema_id', 'subtema_id', 'estado']
+  });
+
+  const contenidoIds = contenidos.map((contenido) => Number(contenido.id));
+  if (contenidoIds.length === 0) {
+    return {
+      subtemaId: parsedSubtemaId,
+      contenidos,
+      contenidoIds,
+      secuencias: []
+    };
+  }
+
+  const where = {
+    contenido_origen_id: { [Op.in]: contenidoIds },
+    contenido_destino_id: { [Op.in]: contenidoIds },
+    ...(includeInactiveSequences ? {} : { estado: true })
+  };
+
+  const secuencias = await SecuenciaContenido.findAll({
+    where,
+    attributes: ['id', 'contenido_origen_id', 'contenido_destino_id', 'descripcion', 'estado']
+  });
+
+  return {
+    subtemaId: parsedSubtemaId,
+    contenidos,
+    contenidoIds,
+    secuencias
+  };
+}
+
+function buildCreationContextFromGraph(graph, requestedOriginId = null) {
+  const availableContentIds = graph.contenidoIds.map((id) => Number(id));
+  const activeSequences = graph.secuencias.filter((sequence) => sequence.estado !== false);
+  const origenes = new Set(activeSequences.map((sequence) => Number(sequence.contenido_origen_id)));
+  const destinos = new Set(activeSequences.map((sequence) => Number(sequence.contenido_destino_id)));
+  const connectedContentIds = new Set([...origenes, ...destinos]);
+  const tailCandidates = [...destinos].filter((destinoId) => !origenes.has(destinoId));
+
+  const hasExistingChain = activeSequences.length > 0;
+  const lockedOriginId = hasExistingChain && tailCandidates.length === 1 ? Number(tailCandidates[0]) : null;
+  const normalizedRequestedOriginId = requestedOriginId && availableContentIds.includes(Number(requestedOriginId))
+    ? Number(requestedOriginId)
+    : null;
+  const effectiveOriginId = hasExistingChain
+    ? lockedOriginId
+    : normalizedRequestedOriginId;
+
+  const availableOriginIds = hasExistingChain
+    ? (lockedOriginId ? [lockedOriginId] : [])
+    : availableContentIds;
+
+  const availableDestinationIds = hasExistingChain
+    ? availableContentIds.filter((contentId) => contentId !== effectiveOriginId && !connectedContentIds.has(contentId))
+    : availableContentIds.filter((contentId) => contentId !== effectiveOriginId);
+
+  return {
+    subtemaId: graph.subtemaId,
+    hasExistingChain,
+    lockedOriginId,
+    effectiveOriginId,
+    availableOriginIds,
+    availableDestinationIds,
+    connectedContentIds: [...connectedContentIds],
+    totalActiveContents: availableContentIds.length,
+    contents: graph.contenidos
+  };
+}
+
 /**
  * Función auxiliar para validar la integridad de una secuencia de contenido
  * 
@@ -413,10 +513,52 @@ exports.getContenidosOrdenadosPorSecuencia = async (req, res) => {
   }
 };
 
+exports.getSecuenciaContenidoCreationContext = async (req, res) => {
+  try {
+    const subtemaId = parsePositiveInteger(req.params.subtemaId);
+    const origenId = parsePositiveInteger(req.query.origenId);
+
+    if (!subtemaId || Number.isNaN(subtemaId)) {
+      return res.status(400).json({ message: 'El subtema indicado no es válido' });
+    }
+
+    if (Number.isNaN(origenId)) {
+      return res.status(400).json({ message: 'El origen indicado no es válido' });
+    }
+
+    const graph = await loadSubtemaSequenceGraph(subtemaId);
+    const context = buildCreationContextFromGraph(graph, origenId);
+
+    res.json(context);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Error al obtener el contexto de creación de secuencias', error });
+  }
+};
+
 // Listar todas las secuencias de contenido
 exports.getSecuenciasContenido = async (req, res) => {
   try {
+    const subtemaId = parsePositiveInteger(req.query.subtemaId);
+    const where = {};
+
+    if (Number.isNaN(subtemaId)) {
+      return res.status(400).json({ message: 'El subtema indicado no es válido' });
+    }
+
+    if (subtemaId) {
+      const graph = await loadSubtemaSequenceGraph(subtemaId, true);
+
+      if (graph.contenidoIds.length === 0) {
+        return res.json([]);
+      }
+
+      where.contenido_origen_id = { [Op.in]: graph.contenidoIds };
+      where.contenido_destino_id = { [Op.in]: graph.contenidoIds };
+    }
+
     const secuencias = await SecuenciaContenido.findAll({
+      where,
       include: [
         { 
           model: Contenido,

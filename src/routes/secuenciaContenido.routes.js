@@ -13,6 +13,9 @@ router.get('/', autenticacionUsuario, secuenciaContenidoController.getSecuencias
 // Obtener contenidos ordenados por secuencia de un subtema
 router.get('/subtema/:subtemaId/ordenados', autenticacionUsuario, secuenciaContenidoController.getContenidosOrdenadosPorSecuencia);
 
+// Obtener el contexto de creación de secuencias para un subtema
+router.get('/subtema/:subtemaId/contexto-creacion', autenticacionUsuario, secuenciaContenidoController.getSecuenciaContenidoCreationContext);
+
 // Obtener una secuencia de contenido por ID
 router.get('/:id', autenticacionUsuario, secuenciaContenidoController.getSecuenciaContenidoById);
 
