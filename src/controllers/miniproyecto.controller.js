@@ -590,21 +590,6 @@ const normalizeConfigurableMiniproyectoPayload = (value) => {
   };
 };
 
-const validateAreaHasNoActiveMiniproyecto = async (areaId, excludedMiniproyectoId = null) => {
-  const miniproyectos = await Miniproyecto.findAll({
-    where: { area_id: areaId },
-    include: [{ model: Actividad }],
-  });
-
-  const conflicting = miniproyectos.find((item) => (
-    Number(item.id) !== Number(excludedMiniproyectoId) && isMiniproyectoActivo(item)
-  ));
-
-  if (conflicting) {
-    throw new Error('El área seleccionada ya tiene un miniproyecto activo.');
-  }
-};
-
 const validateConfigurableExercises = async (_areaId, exerciseIds) => {
   if (Array.isArray(exerciseIds?.exercises)) {
     if (exerciseIds.exercises.length === 0) {
@@ -809,6 +794,85 @@ const loadConfigurableMiniproyecto = async (id) => {
   return { miniproyecto, payload };
 };
 
+const getPublishedMiniproyectoId = (areaLike) => {
+  const parsed = Number(areaLike?.miniproyecto_publicado_id);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+};
+
+const serializeMiniproyectoSelection = (registro) => {
+  const payload = typeof registro?.toJSON === 'function' ? registro.toJSON() : registro;
+  const publishedId = getPublishedMiniproyectoId(payload?.Area || payload?.area);
+
+  return {
+    ...payload,
+    seleccionadoParaEstudiantes: publishedId !== null && Number(payload?.id) === publishedId,
+  };
+};
+
+const filterStudentVisibleMiniproyectos = (items) => {
+  const publishedByArea = new Map();
+
+  items.forEach((item) => {
+    const payload = typeof item?.toJSON === 'function' ? item.toJSON() : item;
+    const areaId = Number(payload?.Area?.id ?? payload?.area_id);
+    const publishedId = getPublishedMiniproyectoId(payload?.Area || payload?.area);
+
+    if (Number.isInteger(areaId) && areaId > 0 && publishedId !== null) {
+      publishedByArea.set(areaId, publishedId);
+    }
+  });
+
+  return items.filter((item) => {
+    const payload = typeof item?.toJSON === 'function' ? item.toJSON() : item;
+    const areaId = Number(payload?.Area?.id ?? payload?.area_id);
+    const publishedId = publishedByArea.get(areaId);
+
+    return Number.isInteger(Number(publishedId)) && Number(payload?.id) === Number(publishedId);
+  });
+};
+
+const ensureStudentCanAccessPublishedMiniproyecto = async (req, miniproyecto) => {
+  if (canViewInactiveMiniproyectos(req)) {
+    return;
+  }
+
+  const area = miniproyecto?.Area || await Area.findByPk(miniproyecto.area_id, {
+    attributes: ['id', 'miniproyecto_publicado_id'],
+  });
+  const publishedId = getPublishedMiniproyectoId(area);
+
+  if (publishedId === null || Number(miniproyecto.id) !== publishedId) {
+    throw Object.assign(new Error('Miniproyecto no encontrado'), { status: 404 });
+  }
+};
+
+const clearPublishedMiniproyectoIfMatches = async ({ areaId, miniproyectoId, transaction }) => {
+  const area = await Area.findByPk(areaId, {
+    attributes: ['id', 'miniproyecto_publicado_id'],
+    transaction,
+  });
+
+  if (!area) {
+    return;
+  }
+
+  if (getPublishedMiniproyectoId(area) === Number(miniproyectoId)) {
+    await area.update({ miniproyecto_publicado_id: null }, { transaction });
+  }
+};
+
+const syncPublishedMiniproyectoOnAreaChange = async ({ previousAreaId, nextAreaId, miniproyectoId, transaction }) => {
+  if (Number(previousAreaId) === Number(nextAreaId)) {
+    return;
+  }
+
+  await clearPublishedMiniproyectoIfMatches({
+    areaId: previousAreaId,
+    miniproyectoId,
+    transaction,
+  });
+};
+
 const findEmbeddedExercise = (payload, exerciseKey) => {
   const normalizedKey = String(exerciseKey || '').trim();
   const exercise = (payload.exercises || []).find((item, index) => (
@@ -847,8 +911,6 @@ exports.create = async (req, res) => {
     if (req.docenteAreaId && parseInt(req.body.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
       return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
     }
-
-    await validateAreaHasNoActiveMiniproyecto(req.body.area_id);
 
     const configurablePayload = normalizeConfigurableMiniproyectoPayload(req.body.respuesta_miniproyecto);
     if (configurablePayload) {
@@ -932,9 +994,6 @@ exports.update = async (req, res) => {
     }
 
     const targetAreaId = req.body.area_id !== undefined ? Number(req.body.area_id) : Number(miniproyecto.area_id);
-    if (Number(miniproyecto.area_id) !== targetAreaId) {
-      await validateAreaHasNoActiveMiniproyecto(targetAreaId, miniproyecto.id);
-    }
 
     const mergedTitulo = req.body.titulo !== undefined
       ? sanitizePlainText(req.body.titulo)
@@ -1015,6 +1074,13 @@ exports.update = async (req, res) => {
         });
       }
 
+      await syncPublishedMiniproyectoOnAreaChange({
+        previousAreaId: Number(miniproyecto.area_id),
+        nextAreaId: targetAreaId,
+        miniproyectoId: Number(req.params.id),
+        transaction: t,
+      });
+
       await t.commit();
       res.json({ message: 'Actualizado correctamente' });
     } catch (err) {
@@ -1060,7 +1126,12 @@ exports.findAll = async (req, res) => {
         }
       ]
     });
-    res.json(canViewInactiveMiniproyectos(req) ? data : data.filter(isMiniproyectoActivo));
+
+    const visibleRecords = canViewInactiveMiniproyectos(req)
+      ? data
+      : filterStudentVisibleMiniproyectos(data.filter(isMiniproyectoActivo));
+
+    res.json(visibleRecords.map(serializeMiniproyectoSelection));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1091,17 +1162,19 @@ exports.findOne = async (req, res) => {
       return res.status(404).json({ message: 'Miniproyecto no encontrado' });
     }
 
+    await ensureStudentCanAccessPublishedMiniproyecto(req, data);
+
     if (req.docenteAreaId && parseInt(data.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
       return res.status(403).json({ error: "Acceso denegado: área fuera de tu alcance" });
     }
 
     if (req.docenteAreaId) {
-      const payload = data.toJSON();
+      const payload = serializeMiniproyectoSelection(data);
       delete payload.area_id;
       return res.json(payload);
     }
 
-    res.json(data);
+    res.json(serializeMiniproyectoSelection(data));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1125,7 +1198,20 @@ exports.delete = async (req, res) => {
       return res.json({ message: 'Miniproyecto ya estaba inhabilitado' });
     }
 
-    await actividad.update({ estado: false });
+    const t = await sequelize.transaction();
+    try {
+      await actividad.update({ estado: false }, { transaction: t });
+      await clearPublishedMiniproyectoIfMatches({
+        areaId: Number(miniproyecto.area_id),
+        miniproyectoId: Number(miniproyecto.id),
+        transaction: t,
+      });
+      await t.commit();
+    } catch (error) {
+      await t.rollback();
+      throw error;
+    }
+
     res.json({ message: 'Miniproyecto inhabilitado correctamente' });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1145,7 +1231,23 @@ exports.toggleEstado = async (req, res) => {
     if (!actividad) return res.status(404).json({ message: 'Actividad asociada no encontrada' });
 
     const nuevoEstado = actividad.estado === false;
-    await actividad.update({ estado: nuevoEstado });
+    const t = await sequelize.transaction();
+    try {
+      await actividad.update({ estado: nuevoEstado }, { transaction: t });
+
+      if (!nuevoEstado) {
+        await clearPublishedMiniproyectoIfMatches({
+          areaId: Number(miniproyecto.area_id),
+          miniproyectoId: Number(miniproyecto.id),
+          transaction: t,
+        });
+      }
+
+      await t.commit();
+    } catch (error) {
+      await t.rollback();
+      throw error;
+    }
 
     res.json({
       message: `Miniproyecto ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
@@ -1172,6 +1274,8 @@ exports.ejecutarMiniproyectoProgramacion = async (req, res) => {
     if (!miniproyecto || !isMiniproyectoActivo(miniproyecto)) {
       return res.status(404).json({ message: 'Miniproyecto no encontrado' });
     }
+
+    await ensureStudentCanAccessPublishedMiniproyecto(req, miniproyecto);
 
     if (!isProgrammingMiniproyecto(miniproyecto)) {
       return res.status(400).json({ message: 'El miniproyecto no es de programacion' });
@@ -1232,6 +1336,8 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
     if (!isMiniproyectoActivo(miniproyecto)) {
       return res.status(404).json({ message: 'Miniproyecto no encontrado' });
     }
+
+    await ensureStudentCanAccessPublishedMiniproyecto(req, miniproyecto);
 
     if (!isProgrammingMiniproyecto(miniproyecto)) {
       return res.status(400).json({ message: 'El miniproyecto no es de programacion' });
@@ -1368,6 +1474,7 @@ exports.obtenerProgresoConfigurable = async (req, res) => {
   try {
     const estudianteId = resolveConfigurableStudentId(req, req.query?.estudiante_id);
     const { miniproyecto, payload } = await loadConfigurableMiniproyecto(req.params.id);
+    await ensureStudentCanAccessPublishedMiniproyecto(req, miniproyecto);
     const record = await RespuestaEstudianteMiniproyecto.findOne({
       where: {
         estudiante_id: estudianteId,
@@ -1401,7 +1508,8 @@ exports.obtenerProgresoConfigurable = async (req, res) => {
 
 exports.ejecutarEjercicioConfigurable = async (req, res) => {
   try {
-    const { payload } = await loadConfigurableMiniproyecto(req.params.id);
+    const { miniproyecto, payload } = await loadConfigurableMiniproyecto(req.params.id);
+    await ensureStudentCanAccessPublishedMiniproyecto(req, miniproyecto);
     const exercise = findEmbeddedExercise(payload, req.params.exerciseKey);
     const evaluationResult = await evaluateEmbeddedExercise({ exercise, reqBody: req.body });
     return res.status(evaluationResult.status).json(evaluationResult.payload);
@@ -1419,6 +1527,7 @@ exports.enviarEjercicioConfigurable = async (req, res) => {
     }
 
     const { miniproyecto, payload } = await loadConfigurableMiniproyecto(req.params.id);
+    await ensureStudentCanAccessPublishedMiniproyecto(req, miniproyecto);
     const exercise = findEmbeddedExercise(payload, req.params.exerciseKey);
     const lockKey = `${miniproyecto.id}:${exercise.id}:${estudianteId}`;
 
@@ -1456,6 +1565,7 @@ exports.obtenerRetroalimentacionEjercicioConfigurable = async (req, res) => {
   try {
     const estudianteId = resolveConfigurableStudentId(req, req.query?.estudiante_id);
     const { miniproyecto, payload } = await loadConfigurableMiniproyecto(req.params.id);
+    await ensureStudentCanAccessPublishedMiniproyecto(req, miniproyecto);
     const exercise = findEmbeddedExercise(payload, req.params.exerciseKey);
     const record = await RespuestaEstudianteMiniproyecto.findOne({
       where: {
@@ -1479,6 +1589,7 @@ exports.evaluarMiniproyectoConfigurable = async (req, res) => {
   try {
     const estudianteId = resolveConfigurableStudentId(req, req.body?.estudiante_id ?? req.query?.estudiante_id);
     const { miniproyecto, payload } = await loadConfigurableMiniproyecto(req.params.id);
+    await ensureStudentCanAccessPublishedMiniproyecto(req, miniproyecto);
     const respuestas = req.body?.respuestas && typeof req.body.respuestas === 'object' ? req.body.respuestas : {};
     const record = await RespuestaEstudianteMiniproyecto.findOne({
       where: {
@@ -1585,5 +1696,63 @@ exports.evaluarMiniproyectoConfigurable = async (req, res) => {
     });
   } catch (err) {
     return res.status(err.status || 500).json({ message: err.message || 'No fue posible evaluar el miniproyecto configurable.' });
+  }
+};
+
+exports.updateStudentPublication = async (req, res) => {
+  try {
+    const miniproyecto = await Miniproyecto.findByPk(req.params.id, {
+      include: [{ model: Actividad }, { model: Area }],
+    });
+
+    if (!miniproyecto) {
+      return res.status(404).json({ message: 'Miniproyecto no encontrado' });
+    }
+
+    if (req.docenteAreaId && parseInt(miniproyecto.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+      return res.status(403).json({ error: 'Acceso denegado: área fuera de tu alcance' });
+    }
+
+    const shouldPublish = req.body?.visibleParaEstudiantes !== false;
+
+    if (shouldPublish && !isMiniproyectoActivo(miniproyecto)) {
+      return res.status(400).json({ message: 'Solo puedes publicar miniproyectos activos.' });
+    }
+
+    const t = await sequelize.transaction();
+    try {
+      const area = await Area.findByPk(miniproyecto.area_id, {
+        attributes: ['id', 'miniproyecto_publicado_id'],
+        transaction: t,
+      });
+
+      if (!area) {
+        throw new Error('Área no encontrada.');
+      }
+
+      const publishedId = getPublishedMiniproyectoId(area);
+
+      if (shouldPublish) {
+        await area.update({ miniproyecto_publicado_id: miniproyecto.id }, { transaction: t });
+      } else if (publishedId === Number(miniproyecto.id)) {
+        await area.update({ miniproyecto_publicado_id: null }, { transaction: t });
+      }
+
+      await t.commit();
+    } catch (error) {
+      await t.rollback();
+      throw error;
+    }
+
+    return res.json({
+      message: shouldPublish
+        ? 'Miniproyecto asignado al área para estudiantes.'
+        : 'El miniproyecto ya no está asignado como miniproyecto del área.',
+      area_id: Number(miniproyecto.area_id),
+      miniproyecto_id: Number(miniproyecto.id),
+      seleccionadoParaEstudiantes: shouldPublish,
+    });
+  } catch (err) {
+    return res.status(err.status || 500).json({ message: err.message || 'No fue posible actualizar la asignación del miniproyecto del área.' });
   }
 };

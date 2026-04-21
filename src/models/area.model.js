@@ -13,6 +13,11 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
+    miniproyecto_publicado_id: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+      defaultValue: null
+    },
     estado: {
       type: DataTypes.BOOLEAN,
       allowNull: false,

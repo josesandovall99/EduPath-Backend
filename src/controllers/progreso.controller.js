@@ -1211,13 +1211,36 @@ const buildFailuresReportData = async ({ estudianteId, areaIds } = {}) => {
         include: [{ model: Persona, as: 'persona' }]
       })
     : [];
+  const missingPersonaIds = estudiantes
+    .filter((est) => !est.persona && Number.isFinite(Number(est.persona_id)))
+    .map((est) => Number(est.persona_id));
+  const matchedStudentIdSet = new Set(estudiantes.map((est) => String(est.id)));
+  const rawPersonaFallbackIds = estudianteIds
+    .map((id) => Number(id))
+    .filter((id) => Number.isFinite(id) && !matchedStudentIdSet.has(String(id)));
+  const fallbackPersonaIds = Array.from(new Set([...missingPersonaIds, ...rawPersonaFallbackIds]));
+  const fallbackPersonas = fallbackPersonaIds.length
+    ? await Persona.findAll({
+        where: { id: { [Op.in]: fallbackPersonaIds } },
+        attributes: ['id', 'nombre', 'email']
+      })
+    : [];
+  const fallbackPersonaMap = new Map(
+    fallbackPersonas.map((persona) => [
+      String(persona.id),
+      {
+        nombre: persona.nombre,
+        email: persona.email,
+      }
+    ])
+  );
   const estudianteMap = new Map(
     estudiantes.map((est) => [
       String(est.id),
       {
         id: est.id,
-        nombre: est.persona?.nombre || est.nombre || `Estudiante ${est.id}`,
-        email: est.persona?.email || est.email || est.correo || ''
+        nombre: est.persona?.nombre || fallbackPersonaMap.get(String(est.persona_id))?.nombre || est.nombre || `Estudiante ${est.id}`,
+        email: est.persona?.email || fallbackPersonaMap.get(String(est.persona_id))?.email || est.email || est.correo || ''
       }
     ])
   );
@@ -1225,7 +1248,12 @@ const buildFailuresReportData = async ({ estudianteId, areaIds } = {}) => {
   const byStudentMap = new Map();
   items.forEach((item) => {
     const key = String(item.estudiante_id);
-    const info = estudianteMap.get(key) || { id: item.estudiante_id, nombre: `Estudiante ${item.estudiante_id}`, email: '' };
+    const fallbackPersona = fallbackPersonaMap.get(key);
+    const info = estudianteMap.get(key) || {
+      id: item.estudiante_id,
+      nombre: fallbackPersona?.nombre || `Estudiante ${item.estudiante_id}`,
+      email: fallbackPersona?.email || ''
+    };
     const current = byStudentMap.get(key) || {
       estudiante_id: info.id,
       nombre: info.nombre,
