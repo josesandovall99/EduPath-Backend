@@ -1,4 +1,5 @@
 const sequelize = require('../config/database');
+const { Op } = require('sequelize');
 const { Chatbot, ChatbotDocumento, Area, Miniproyecto, Persona } = require('../models');
 const {
   saveDocumentFile,
@@ -15,7 +16,8 @@ const {
   removePersonaSensitiveFields,
 } = require('../utils/inputSecurity');
 
-const VALID_TYPES = new Set(['GENERAL', 'MINIPROYECTO']);
+const VALID_TYPES = new Set(['GENERAL', 'GENERAL_ADMINISTRADOR', 'GENERAL_DOCENTE', 'MINIPROYECTO']);
+const ROLE_SCOPED_GENERAL_TYPES = new Set(['GENERAL_ADMINISTRADOR', 'GENERAL_DOCENTE']);
 
 function isAdmin(req) {
   return req.tipoUsuario === 'ADMINISTRADOR';
@@ -33,6 +35,14 @@ function canManageArea(req, areaId) {
 function normalizeType(rawType) {
   const normalized = String(rawType || 'GENERAL').trim().toUpperCase();
   return VALID_TYPES.has(normalized) ? normalized : null;
+}
+
+function isRoleScopedGeneralType(type) {
+  return ROLE_SCOPED_GENERAL_TYPES.has(type);
+}
+
+function isGeneralType(type) {
+  return type === 'GENERAL' || isRoleScopedGeneralType(type);
 }
 
 function mapChatbotPayload(body) {
@@ -64,18 +74,59 @@ function serializeChatbot(chatbot) {
   return plain;
 }
 
+async function ensureSingleActiveGlobalGeneralChatbot({ type, areaId, estado, currentChatbotId = null }) {
+  if (type !== 'GENERAL' || Number.isFinite(Number(areaId)) || estado === false) {
+    return null;
+  }
+
+  const existingGlobalChatbot = await Chatbot.findOne({
+    where: {
+      tipo: 'GENERAL',
+      area_id: null,
+      estado: true,
+      ...(currentChatbotId ? { id: { [Op.ne]: currentChatbotId } } : {}),
+    },
+  });
+
+  if (!existingGlobalChatbot) {
+    return null;
+  }
+
+  return {
+    status: 409,
+    payload: {
+      mensaje: 'Ya existe un chatbot general global activo para el dashboard estudiantil. Debes desactivarlo antes de activar otro.',
+    },
+  };
+}
+
 async function validateChatbotDependencies(req, payload, currentChatbot = null) {
   const type = normalizeType(payload.tipo ?? currentChatbot?.tipo ?? 'GENERAL');
   if (!type) {
-    return { error: { status: 400, payload: { mensaje: 'tipo debe ser GENERAL o MINIPROYECTO' } } };
+    return { error: { status: 400, payload: { mensaje: 'tipo debe ser GENERAL, GENERAL_ADMINISTRADOR, GENERAL_DOCENTE o MINIPROYECTO' } } };
   }
 
   const areaId = payload.area_id !== undefined && payload.area_id !== null ? Number(payload.area_id) : (currentChatbot?.area_id ?? null);
   const miniproyectoId = payload.miniproyecto_id !== undefined && payload.miniproyecto_id !== null ? Number(payload.miniproyecto_id) : (currentChatbot?.miniproyecto_id ?? null);
 
+  if (isRoleScopedGeneralType(type)) {
+    if (!isAdmin(req)) {
+      return { error: { status: 403, payload: { mensaje: 'Solo un administrador puede crear o modificar chatbots generales por rol' } } };
+    }
+
+    return { type, areaId: null, miniproyectoId: null };
+  }
+
   if (type === 'GENERAL') {
     if (!isAdmin(req) && !Number.isFinite(areaId)) {
-      return { error: { status: 400, payload: { mensaje: 'Como docente debes asignar el chatbot a una de tus áreas' } } };
+      return {
+        error: {
+          status: 400,
+          payload: {
+            mensaje: 'El chatbot general global del dashboard estudiantil solo puede ser gestionado por un administrador. Como docente debes asignar el chatbot general a una de tus áreas.',
+          },
+        },
+      };
     }
 
     if (areaId !== null && Number.isFinite(areaId) && !canManageArea(req, areaId)) {
@@ -174,6 +225,22 @@ async function findResolvedActiveChatbot({ tipo = 'GENERAL', areaId = null, mini
     }
   }
 
+  if (isRoleScopedGeneralType(normalizedType)) {
+    const roleScopedChatbot = await Chatbot.findOne({
+      where: {
+        estado: true,
+        tipo: normalizedType,
+        area_id: null,
+      },
+      include,
+      order: [['updatedAt', 'DESC'], ['id', 'DESC']],
+    });
+
+    if (roleScopedChatbot) {
+      return roleScopedChatbot;
+    }
+  }
+
   if (Number.isFinite(parsedAreaId)) {
     const areaGeneralChatbot = await Chatbot.findOne({
       where: {
@@ -205,7 +272,7 @@ exports.resolveActiveChatbot = async (req, res) => {
   try {
     const tipo = normalizeType(req.query.tipo || 'GENERAL');
     if (!tipo) {
-      return res.status(400).json({ mensaje: 'tipo debe ser GENERAL o MINIPROYECTO' });
+      return res.status(400).json({ mensaje: 'tipo debe ser GENERAL, GENERAL_ADMINISTRADOR, GENERAL_DOCENTE o MINIPROYECTO' });
     }
 
     const areaId = req.query.area_id !== undefined ? Number(req.query.area_id) : null;
@@ -233,7 +300,7 @@ exports.resolveActiveChatbot = async (req, res) => {
       miniproyecto_id: chatbot.miniproyecto_id,
       model_name: chatbot.model_name,
       documentos: (chatbot.documentos || []).length,
-      fallback: chatbot.tipo === 'GENERAL' && tipo === 'MINIPROYECTO',
+      fallback: isGeneralType(chatbot.tipo) && chatbot.tipo !== tipo,
     });
   } catch (error) {
     return res.status(500).json({ mensaje: 'Error al resolver chatbot', error: error.message });
@@ -250,6 +317,15 @@ exports.createChatbot = async (req, res) => {
     const dependency = await validateChatbotDependencies(req, payload);
     if (dependency.error) {
       return res.status(dependency.error.status).json(dependency.error.payload);
+    }
+
+    const uniquenessError = await ensureSingleActiveGlobalGeneralChatbot({
+      type: dependency.type,
+      areaId: dependency.areaId,
+      estado: payload.estado === undefined ? true : Boolean(payload.estado),
+    });
+    if (uniquenessError) {
+      return res.status(uniquenessError.status).json(uniquenessError.payload);
     }
 
     const chatbot = await Chatbot.create({
@@ -331,6 +407,16 @@ exports.updateChatbot = async (req, res) => {
     const dependency = await validateChatbotDependencies(req, payload, chatbot);
     if (dependency.error) {
       return res.status(dependency.error.status).json(dependency.error.payload);
+    }
+
+    const uniquenessError = await ensureSingleActiveGlobalGeneralChatbot({
+      type: dependency.type,
+      areaId: dependency.areaId,
+      estado: payload.estado === undefined ? chatbot.estado !== false : Boolean(payload.estado),
+      currentChatbotId: chatbot.id,
+    });
+    if (uniquenessError) {
+      return res.status(uniquenessError.status).json(uniquenessError.payload);
     }
 
     const updates = {
