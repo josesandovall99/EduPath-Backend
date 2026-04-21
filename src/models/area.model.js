@@ -13,6 +13,21 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true
     },
+    es_area_pilar: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false
+    },
+    tipo_pilar: {
+      type: DataTypes.ENUM('PROGRAMACION', 'ANALISIS', 'ATC'),
+      allowNull: true,
+      defaultValue: null
+    },
+    miniproyecto_plantilla_id: {
+      type: DataTypes.BIGINT,
+      allowNull: true,
+      defaultValue: null
+    },
     miniproyecto_publicado_id: {
       type: DataTypes.BIGINT,
       allowNull: true,
