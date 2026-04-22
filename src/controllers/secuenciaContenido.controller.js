@@ -1,5 +1,13 @@
-const { SecuenciaContenido, Contenido, sequelize } = require('../models');
+const { SecuenciaContenido, Contenido, Subtema, Tema, sequelize } = require('../models');
 const { Op } = require('sequelize');
+const {
+  ensureDocenteAreaAccess,
+  resolveSubtemaArea,
+  resolveContenidoArea,
+  resolveSecuenciaContenidoArea,
+  buildDocenteContenidoSequenceWhere,
+  handleDocenteScopeError
+} = require('../utils/docenteScope');
 
 const parsePositiveInteger = (value) => {
   if (value === undefined || value === null || value === '') {
@@ -394,6 +402,9 @@ exports.createSecuenciaContenido = async (req, res) => {
       });
     }
 
+    const originContext = await resolveContenidoArea(contenido_origen_id);
+    ensureDocenteAreaAccess(req, originContext.areaId);
+
     console.log(`[CREATE] Creando ${contenido_origen_id} → ${contenido_destino_id}`);
 
     // Ejecutar 8 validaciones exhaustivas
@@ -432,10 +443,7 @@ exports.createSecuenciaContenido = async (req, res) => {
     });
   } catch (error) {
     console.error(`[CREATE] Error: ${error.message}`);
-    res.status(500).json({
-      message: "Error al crear secuencia",
-      error: error.message
-    });
+    handleDocenteScopeError(res, error, 'Error al crear secuencia');
   }
 };
 
@@ -443,6 +451,8 @@ exports.createSecuenciaContenido = async (req, res) => {
 exports.getContenidosOrdenadosPorSecuencia = async (req, res) => {
   try {
     const { subtemaId } = req.params;
+    const subtemaContext = await resolveSubtemaArea(subtemaId);
+    ensureDocenteAreaAccess(req, subtemaContext.areaId);
 
     // Obtener todos los contenidos del subtema
     const contenidos = await Contenido.findAll({
@@ -509,7 +519,7 @@ exports.getContenidosOrdenadosPorSecuencia = async (req, res) => {
     res.json(ordenado);
   } catch (error) {
     console.error("Error al obtener contenidos ordenados:", error);
-    res.status(500).json({ message: "Error al obtener contenidos ordenados", error });
+    handleDocenteScopeError(res, error, 'Error al obtener contenidos ordenados');
   }
 };
 
@@ -526,13 +536,16 @@ exports.getSecuenciaContenidoCreationContext = async (req, res) => {
       return res.status(400).json({ message: 'El origen indicado no es válido' });
     }
 
+    const subtemaContext = await resolveSubtemaArea(subtemaId);
+    ensureDocenteAreaAccess(req, subtemaContext.areaId);
+
     const graph = await loadSubtemaSequenceGraph(subtemaId);
     const context = buildCreationContextFromGraph(graph, origenId);
 
     res.json(context);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Error al obtener el contexto de creación de secuencias', error });
+    handleDocenteScopeError(res, error, 'Error al obtener el contexto de creación de secuencias');
   }
 };
 
@@ -540,13 +553,16 @@ exports.getSecuenciaContenidoCreationContext = async (req, res) => {
 exports.getSecuenciasContenido = async (req, res) => {
   try {
     const subtemaId = parsePositiveInteger(req.query.subtemaId);
-    const where = {};
+    const where = await buildDocenteContenidoSequenceWhere(req);
 
     if (Number.isNaN(subtemaId)) {
       return res.status(400).json({ message: 'El subtema indicado no es válido' });
     }
 
     if (subtemaId) {
+      const subtemaContext = await resolveSubtemaArea(subtemaId);
+      ensureDocenteAreaAccess(req, subtemaContext.areaId);
+
       const graph = await loadSubtemaSequenceGraph(subtemaId, true);
 
       if (graph.contenidoIds.length === 0) {
@@ -575,13 +591,16 @@ exports.getSecuenciasContenido = async (req, res) => {
     res.json(secuencias);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Error al obtener las secuencias de contenido", error });
+    handleDocenteScopeError(res, error, 'Error al obtener las secuencias de contenido');
   }
 };
 
 // Obtener una secuencia de contenido por ID
 exports.getSecuenciaContenidoById = async (req, res) => {
   try {
+    const sequenceContext = await resolveSecuenciaContenidoArea(req.params.id);
+    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+
     const secuencia = await SecuenciaContenido.findByPk(req.params.id, {
       include: [
         { 
@@ -604,13 +623,16 @@ exports.getSecuenciaContenidoById = async (req, res) => {
     res.json(secuencia);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Error al obtener la secuencia de contenido", error });
+    handleDocenteScopeError(res, error, 'Error al obtener la secuencia de contenido');
   }
 };
 
 // Habilitar o inhabilitar una secuencia de contenido
 exports.toggleEstadoSecuenciaContenido = async (req, res) => {
   try {
+    const sequenceContext = await resolveSecuenciaContenidoArea(req.params.id);
+    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+
     const secuencia = await SecuenciaContenido.findByPk(req.params.id);
 
     if (!secuencia) {
@@ -638,13 +660,16 @@ exports.toggleEstadoSecuenciaContenido = async (req, res) => {
       secuencia
     });
   } catch (error) {
-    res.status(500).json({ message: "Error al cambiar el estado de la secuencia de contenido", error });
+    handleDocenteScopeError(res, error, 'Error al cambiar el estado de la secuencia de contenido');
   }
 };
 
 // Actualizar una secuencia de contenido
 exports.updateSecuenciaContenido = async (req, res) => {
   try {
+    const sequenceContext = await resolveSecuenciaContenidoArea(req.params.id);
+    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+
     const secuencia = await SecuenciaContenido.findByPk(req.params.id);
 
     if (!secuencia) {
@@ -658,6 +683,9 @@ exports.updateSecuenciaContenido = async (req, res) => {
     // Usar valores actuales si no se envían nuevos
     const nuevoOrigen = contenido_origen_id || secuencia.contenido_origen_id;
     const nuevoDestino = contenido_destino_id || secuencia.contenido_destino_id;
+
+    const newOriginContext = await resolveContenidoArea(nuevoOrigen);
+    ensureDocenteAreaAccess(req, newOriginContext.areaId);
 
     console.log(`[UPDATE] ID ${secuencia.id}: (${secuencia.contenido_origen_id}→${secuencia.contenido_destino_id}) a (${nuevoOrigen}→${nuevoDestino})`);
 
@@ -754,10 +782,7 @@ exports.updateSecuenciaContenido = async (req, res) => {
     });
   } catch (error) {
     console.error(`[UPDATE] Error: ${error.message}`);
-    res.status(500).json({
-      message: "Error al actualizar secuencia",
-      error: error.message
-    });
+    handleDocenteScopeError(res, error, 'Error al actualizar secuencia');
   }
 };
 
@@ -782,6 +807,9 @@ exports.reorderSequences = async (req, res) => {
         message: "El nuevo orden no puede contener contenidos repetidos"
       });
     }
+
+    const firstContentContext = await resolveContenidoArea(contenidos[0]);
+    ensureDocenteAreaAccess(req, firstContentContext.areaId);
 
     // Validar que todos los contenidos existan
     const contenidosValidos = await Contenido.findAll({
@@ -876,10 +904,7 @@ exports.reorderSequences = async (req, res) => {
     });
   } catch (error) {
     console.error("Error al reordenar secuencias:", error);
-    res.status(500).json({ 
-      message: "Error al reordenar las secuencias de contenido", 
-      error: error.message 
-    });
+    handleDocenteScopeError(res, error, 'Error al reordenar las secuencias de contenido');
   }
 };
 
@@ -887,6 +912,9 @@ exports.reorderSequences = async (req, res) => {
 // Acepta opcionalmente secuencias adyacentes para reconectar antes de eliminar
 exports.deleteSecuenciaContenido = async (req, res) => {
   try {
+    const sequenceContext = await resolveSecuenciaContenidoArea(req.params.id);
+    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+
     const secuencia = await SecuenciaContenido.findByPk(req.params.id);
 
     if (!secuencia) {
@@ -921,6 +949,6 @@ exports.deleteSecuenciaContenido = async (req, res) => {
     });
   } catch (error) {
     console.error("Error al eliminar secuencia:", error);
-    res.status(500).json({ message: "Error al eliminar la secuencia de contenido", error });
+    handleDocenteScopeError(res, error, 'Error al eliminar la secuencia de contenido');
   }
 };
