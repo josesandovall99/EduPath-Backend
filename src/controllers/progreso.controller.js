@@ -1314,7 +1314,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo, areaIds } = {
     Contenido.findAll({ where: { estado: true }, attributes: ['id', 'tema_id', 'subtema_id'] }),
     SecuenciaContenido.findAll({ where: { estado: true }, attributes: ['contenido_origen_id', 'contenido_destino_id'] }),
     Estudiante.findAll({
-      attributes: ['id', 'createdAt', 'semestre'],
+      attributes: ['id', 'createdAt', 'semestre', 'codigoEstudiantil'],
       include: [{ model: Persona, as: 'persona', attributes: ['nombre', 'email'] }]
     }),
     Ejercicio.findAll({ attributes: ['id', 'contenido_id'] }),
@@ -1538,6 +1538,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo, areaIds } = {
       email: student.persona?.email || student.email || student.correo || '',
       createdDate: student.createdAt ? new Date(student.createdAt).toISOString().split('T')[0] : '',
       semester: student.semestre ?? '',
+      codigo: student.codigoEstudiantil ?? '',
       subjects
     };
   });

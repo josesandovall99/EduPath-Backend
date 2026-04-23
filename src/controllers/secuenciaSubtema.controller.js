@@ -1,5 +1,13 @@
-const { SecuenciaSubtema, Subtema, sequelize } = require('../models');
+const { SecuenciaSubtema, Subtema, Tema, sequelize } = require('../models');
 const { Op } = require('sequelize');
+const {
+  ensureDocenteAreaAccess,
+  resolveTemaArea,
+  resolveSubtemaArea,
+  resolveSecuenciaSubtemaArea,
+  buildDocenteSubtemaSequenceWhere,
+  handleDocenteScopeError
+} = require('../utils/docenteScope');
 
 /**
  * Función auxiliar para validar la integridad de una secuencia de subtema
@@ -292,6 +300,9 @@ exports.createSecuenciaSubtema = async (req, res) => {
       });
     }
 
+    const originContext = await resolveSubtemaArea(subtema_origen_id);
+    ensureDocenteAreaAccess(req, originContext.areaId);
+
     console.log(`[CREATE] Creando ${subtema_origen_id} → ${subtema_destino_id}`);
 
     // Ejecutar validaciones exhaustivas
@@ -329,10 +340,7 @@ exports.createSecuenciaSubtema = async (req, res) => {
     });
   } catch (error) {
     console.error(`[CREATE] Error: ${error.message}`);
-    res.status(500).json({
-      message: "Error al crear secuencia",
-      error: error.message
-    });
+    handleDocenteScopeError(res, error, 'Error al crear secuencia');
   }
 };
 
@@ -340,6 +348,8 @@ exports.createSecuenciaSubtema = async (req, res) => {
 exports.getSubtemasOrdenadosPorSecuencia = async (req, res) => {
   try {
     const { temaId } = req.params;
+    const temaContext = await resolveTemaArea(temaId);
+    ensureDocenteAreaAccess(req, temaContext.areaId);
 
     // Obtener todos los subtemas del tema
     const subtemas = await Subtema.findAll({
@@ -403,14 +413,31 @@ exports.getSubtemasOrdenadosPorSecuencia = async (req, res) => {
     res.json(ordenado);
   } catch (error) {
     console.error("Error al obtener subtemas ordenados:", error);
-    res.status(500).json({ message: "Error al obtener subtemas ordenados", error });
+    handleDocenteScopeError(res, error, 'Error al obtener subtemas ordenados');
   }
 };
 
 // Listar todas las secuencias de subtema
 exports.getSecuenciasSubtema = async (req, res) => {
   try {
+    const where = await buildDocenteSubtemaSequenceWhere(req);
+
+    const temaId = Number.parseInt(req.query.temaId, 10);
+    if (Number.isFinite(temaId)) {
+      const temaContext = await resolveTemaArea(temaId);
+      ensureDocenteAreaAccess(req, temaContext.areaId);
+
+      const subtemasTema = await Subtema.findAll({
+        where: { tema_id: temaId },
+        attributes: ['id']
+      });
+      const subtemaIds = subtemasTema.map((subtema) => Number(subtema.id));
+      where.subtema_origen_id = { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] };
+      where.subtema_destino_id = { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] };
+    }
+
     const secuencias = await SecuenciaSubtema.findAll({
+      where,
       include: [
         { 
           model: Subtema,
@@ -427,13 +454,16 @@ exports.getSecuenciasSubtema = async (req, res) => {
     res.json(secuencias);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Error al obtener las secuencias de subtema", error });
+    handleDocenteScopeError(res, error, 'Error al obtener las secuencias de subtema');
   }
 };
 
 // Obtener una secuencia de subtema por ID
 exports.getSecuenciaSubtemaById = async (req, res) => {
   try {
+    const sequenceContext = await resolveSecuenciaSubtemaArea(req.params.id);
+    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+
     const secuencia = await SecuenciaSubtema.findByPk(req.params.id, {
       include: [
         { 
@@ -456,13 +486,16 @@ exports.getSecuenciaSubtemaById = async (req, res) => {
     res.json(secuencia);
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: "Error al obtener la secuencia de subtema", error });
+    handleDocenteScopeError(res, error, 'Error al obtener la secuencia de subtema');
   }
 };
 
 // Habilitar o inhabilitar una secuencia de subtema
 exports.toggleEstadoSecuenciaSubtema = async (req, res) => {
   try {
+    const sequenceContext = await resolveSecuenciaSubtemaArea(req.params.id);
+    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+
     const secuencia = await SecuenciaSubtema.findByPk(req.params.id);
 
     if (!secuencia) {
@@ -490,13 +523,16 @@ exports.toggleEstadoSecuenciaSubtema = async (req, res) => {
       secuencia
     });
   } catch (error) {
-    res.status(500).json({ message: "Error al cambiar el estado de la secuencia de subtema", error });
+    handleDocenteScopeError(res, error, 'Error al cambiar el estado de la secuencia de subtema');
   }
 };
 
 // Actualizar una secuencia de subtema
 exports.updateSecuenciaSubtema = async (req, res) => {
   try {
+    const sequenceContext = await resolveSecuenciaSubtemaArea(req.params.id);
+    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+
     const secuencia = await SecuenciaSubtema.findByPk(req.params.id);
 
     if (!secuencia) {
@@ -510,6 +546,9 @@ exports.updateSecuenciaSubtema = async (req, res) => {
     // Usar valores actuales si no se envían nuevos
     const nuevoOrigen = subtema_origen_id || secuencia.subtema_origen_id;
     const nuevoDestino = subtema_destino_id || secuencia.subtema_destino_id;
+
+    const newOriginContext = await resolveSubtemaArea(nuevoOrigen);
+    ensureDocenteAreaAccess(req, newOriginContext.areaId);
 
     console.log(`[UPDATE] ID ${secuencia.id}: (${secuencia.subtema_origen_id}→${secuencia.subtema_destino_id}) a (${nuevoOrigen}→${nuevoDestino})`);
 
@@ -605,10 +644,7 @@ exports.updateSecuenciaSubtema = async (req, res) => {
     });
   } catch (error) {
     console.error(`[UPDATE] Error: ${error.message}`);
-    res.status(500).json({
-      message: "Error al actualizar secuencia",
-      error: error.message
-    });
+    handleDocenteScopeError(res, error, 'Error al actualizar secuencia');
   }
 };
 
@@ -629,6 +665,9 @@ exports.reorderSequences = async (req, res) => {
         message: "El nuevo orden no puede contener subtemas repetidos"
       });
     }
+
+    const firstSubtemaContext = await resolveSubtemaArea(subtemas[0]);
+    ensureDocenteAreaAccess(req, firstSubtemaContext.areaId);
 
     // Validar que todos los subtemas existan
     const subtemasValidos = await Subtema.findAll({
@@ -721,16 +760,16 @@ exports.reorderSequences = async (req, res) => {
     });
   } catch (error) {
     console.error("Error al reordenar secuencias:", error);
-    res.status(500).json({ 
-      message: "Error al reordenar las secuencias de subtema", 
-      error: error.message 
-    });
+    handleDocenteScopeError(res, error, 'Error al reordenar las secuencias de subtema');
   }
 };
 
 // Eliminar una secuencia de subtema con reconexión automática
 exports.deleteSecuenciaSubtema = async (req, res) => {
   try {
+    const sequenceContext = await resolveSecuenciaSubtemaArea(req.params.id);
+    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+
     const secuencia = await SecuenciaSubtema.findByPk(req.params.id);
 
     if (!secuencia) {
@@ -763,6 +802,6 @@ exports.deleteSecuenciaSubtema = async (req, res) => {
     });
   } catch (error) {
     console.error("Error al eliminar secuencia:", error);
-    res.status(500).json({ message: "Error al eliminar la secuencia de subtema", error });
+    handleDocenteScopeError(res, error, 'Error al eliminar la secuencia de subtema');
   }
 };
