@@ -106,12 +106,17 @@ class OllamaHTTPClient {
         try {
             console.log(`Enviando prompt streaming a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | start timeout ms: ${this.streamStartTimeoutMs}`);
             const requestStart = nowMs();
+            // Use an AbortController with a timeout only for the initial request start.
+            // Once the response headers arrive, clear the timeout so streaming isn't aborted mid-response.
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), this.streamStartTimeoutMs);
             const res = await fetch(url, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
-                signal: getTimeoutSignal(this.streamStartTimeoutMs),
+                signal: controller.signal,
             });
+            clearTimeout(timeoutId);
             logTiming(`Ollama ${endpoint} stream start`, requestStart);
 
             if (!res.ok) {
@@ -173,7 +178,12 @@ class OllamaHTTPClient {
             logTiming('Generación LLM stream total', generationStart);
             return answer;
         } catch (error) {
-            if (error?.name === 'TimeoutError' || error?.name === 'AbortError') {
+            if (error?.name === 'AbortError') {
+                logTiming('Generación LLM stream con timeout', generationStart);
+                throw new Error(`Timeout: Ollama tardó más de ${Math.round(this.streamStartTimeoutMs / 1000)} segundos en iniciar la respuesta.`);
+            }
+
+            if (error?.name === 'TimeoutError') {
                 logTiming('Generación LLM stream con timeout', generationStart);
                 throw new Error(`Timeout: Ollama tardó más de ${Math.round(this.streamStartTimeoutMs / 1000)} segundos en iniciar la respuesta.`);
             }

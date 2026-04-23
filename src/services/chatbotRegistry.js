@@ -84,7 +84,16 @@ async function removeChatbotFiles(chatbotId) {
 async function loadDocumentsIntoManager(manager, documents) {
   for (const document of documents) {
     if (document.estado === false) continue;
-    await manager.loadPDFFromPath(document.ruta_archivo);
+    try {
+      if (!document?.ruta_archivo) {
+        console.warn('Documento sin ruta de archivo, se omite:', document && document.id ? document.id : document);
+        continue;
+      }
+      await manager.loadPDFFromPath(document.ruta_archivo);
+    } catch (err) {
+      console.error(`Error cargando documento ${document?.ruta_archivo}:`, err.message || err);
+      // continuar con los demás documentos en lugar de abortar la inicialización
+    }
   }
 }
 
