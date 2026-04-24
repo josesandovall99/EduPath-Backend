@@ -32,6 +32,12 @@ function buildManager(chatbot, provider) {
     systemPrompt: chatbot.prompt_base || undefined,
   };
 
+  // Asegurar que, aunque exista un `prompt_base` personalizado, se incluya
+  // una instrucción clara para que la respuesta del LLM sea en Markdown.
+  if (baseConfig.systemPrompt) {
+    baseConfig.systemPrompt = baseConfig.systemPrompt + '\n\nResponde en formato Markdown: usa listas numeradas o con viñetas cuando enumeres elementos, coloca cada ítem en su propia línea, usa **negritas** para títulos o puntos clave, y NO incluyas HTML ni etiquetas.';
+  }
+
   if (provider === 'ollama') {
     return new RAGManager({
       ...baseConfig,

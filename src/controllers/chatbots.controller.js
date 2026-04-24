@@ -617,7 +617,11 @@ exports.chatWithManagedChatbot = async (req, res) => {
       return res.status(504).json(result);
     }
 
-    return res.json({ chatbotId: chatbot.id, chatbotNombre: chatbot.nombre, ...result });
+    // Ensure response is Markdown; if not, apply a conservative conversion.
+    const rawAnswer = result.answer || '';
+    const finalAnswer = looksLikeMarkdown(rawAnswer) ? rawAnswer : forceMarkdown(rawAnswer);
+
+    return res.json({ chatbotId: chatbot.id, chatbotNombre: chatbot.nombre, success: result.success, answer: finalAnswer });
   } catch (error) {
     return res.status(500).json({ success: false, error: error.message });
   }
@@ -645,8 +649,14 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
     }
 
     const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
+    // Stream tokens immediately to the client so the frontend can render progressively.
     const result = await manager.chatStream(question, chatbot.top_k, async (chunk) => {
-      res.write(chunk);
+      try {
+        const cleaned = transformStreamingChunk(String(chunk || ''));
+        res.write(cleaned);
+      } catch (e) {
+        // ignore write errors while streaming
+      }
     });
 
     if (!result.success) {
@@ -663,3 +673,52 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
     return res.end();
   }
 };
+
+// Helpers to detect and coerce plain text into a reasonable Markdown form.
+function looksLikeMarkdown(text) {
+  if (!text || typeof text !== 'string') return false;
+  if (text.includes('\n')) return true;
+  if (/\d+\.\s+/.test(text)) return true;
+  if (/^[-*+]\s+/m.test(text)) return true;
+  if (/\*\*.+\*\*/.test(text)) return true;
+  return false;
+}
+
+function forceMarkdown(text) {
+  if (!text || typeof text !== 'string') return text;
+  let t = text.trim();
+
+  // Insert newlines before inline numeric list markers
+  t = t.replace(/\s+(?=\d+\.\s+)/g, '\n');
+
+  // Bold common headings
+  t = t.replace(/(^|\n)\s*(Objetivo|Contexto|Prioridades|Prioridad|Resumen|Resultado)\s*:\s*/gi, (m, p1, p2) => `\n**${p2.trim()}**: `);
+
+  // If still single-line, split into sentences and make numbered list
+  if (!t.includes('\n')) {
+    const parts = t.split(/\.\s+/).map(s => s.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      t = parts.map((p, i) => `${i + 1}. ${p}${p.endsWith('.') ? '' : '.'}`).join('\n');
+    }
+  }
+
+  return t;
+}
+
+function transformStreamingChunk(chunk) {
+  if (!chunk || typeof chunk !== 'string') return chunk;
+
+  // Strip common fenced code markers for markdown (```markdown or ```)
+  let c = chunk.replace(/```\s*markdown\s*/gi, '').replace(/```/g, '');
+
+  // Remove leading accidental 'markdown -' or 'markdown:' prefixes
+  c = c.replace(/^\s*markdown\s*[-:\s]+/i, '');
+
+  // If the chunk contains inline numbered items like "1. ... 2. ...", insert newlines
+  c = c.replace(/\s+(?=\d+\.\s+)/g, '\n');
+
+  // Normalize leading list markers that might be joined: ensure a space after dash
+  c = c.replace(/(^|\n)\s*-\s*/g, '\n- ');
+
+  return c;
+}

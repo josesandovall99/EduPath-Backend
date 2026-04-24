@@ -151,8 +151,22 @@ class OllamaHTTPClient {
                             const parsed = JSON.parse(trimmed);
                             const chunk = parsed.response || '';
                             if (chunk) {
-                                answer += chunk;
-                                await onToken(chunk);
+                                // Some LLM streaming endpoints return the entire partial
+                                // answer repeatedly (cumulative). To avoid duplicating
+                                // previously-sent text on the client, compute the delta
+                                // relative to the answer we already have and send only
+                                // the new suffix.
+                                let delta = chunk;
+                                if (chunk.startsWith(answer)) {
+                                    delta = chunk.slice(answer.length);
+                                    answer = chunk;
+                                } else {
+                                    answer += delta;
+                                }
+
+                                if (delta) {
+                                    await onToken(delta);
+                                }
                             }
                         });
                     }
@@ -164,8 +178,17 @@ class OllamaHTTPClient {
                             const parsed = JSON.parse(buffer.trim());
                             const chunk = parsed.response || '';
                             if (chunk) {
-                                answer += chunk;
-                                await onToken(chunk);
+                                let delta = chunk;
+                                if (chunk.startsWith(answer)) {
+                                    delta = chunk.slice(answer.length);
+                                    answer = chunk;
+                                } else {
+                                    answer += delta;
+                                }
+
+                                if (delta) {
+                                    await onToken(delta);
+                                }
                             }
                         }
                         resolve();
@@ -277,7 +300,14 @@ class RAGManager {
         this.defaultTopK = Math.max(1, Number(config.defaultTopK || 1));
         this.maxTopK = Math.max(this.defaultTopK, Number(config.maxTopK || this.defaultTopK));
         this.maxContextChars = Math.max(100, Number(config.maxContextChars || process.env.CHATBOT_MAX_CONTEXT_CHARS || 400));
-        this.systemPrompt = config.systemPrompt || 'Responde solo con base en el contexto. Si la respuesta no está en el contexto, responde: "No tengo esa información en los documentos cargados".';
+        this.systemPrompt = config.systemPrompt || (`Responde solo con base en el contexto. Si la respuesta no está en el contexto, responde: "No tengo esa información en los documentos cargados".
+    Responde en formato Markdown y optimiza la salida para streaming: cuando enumeres elementos usa listas numeradas ("1.") o con viñetas ("- "), coloca cada ítem en su propia línea y no pongas varios ítems en la misma línea. Usa **negritas** para títulos o puntos clave. NO incluyas HTML ni etiquetas.
+
+    Ejemplo de salida esperada:
+    1. **Contexto**: La aplicación debe ser flexible para manejar diferentes tipos de reservas.
+    2. **Objetivo**: Proveer una solución multiplataforma para reservas, pedidos y pagos.
+
+    Si tienes que enumerar más de un punto, empieza cada punto con su propio marcador y termina con un salto de línea.`);
         
         this.vectorStore = new SimpleVectorStore();
         this.textSplitter = new RecursiveCharacterTextSplitter({
