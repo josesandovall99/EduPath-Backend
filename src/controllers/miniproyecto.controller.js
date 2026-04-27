@@ -330,6 +330,38 @@ const summarizeConfigurableMiniproyecto = ({ embeddedExercises, progress, evalua
 
 const evaluateEmbeddedExercise = async ({ exercise, reqBody }) => {
   if (exercise.tipo_ejercicio === 'Compilador') {
+    const cfg = exercise.configuracion || {};
+
+    // MVC path: merge 3 files and run with stdin per test case
+    if (cfg.tipo === 'mvc') {
+      const archivos = reqBody?.archivos;
+      if (!archivos || !archivos.main || !archivos.modelo || !archivos.consolaIO) {
+        return { status: 400, payload: { message: 'Se requieren los archivos main, modelo y consolaIO para este ejercicio.' } };
+      }
+      const { mergeMvcFiles } = require('../utils/javaMultiFileCompiler');
+      const codigoFusionado = mergeMvcFiles(archivos.main, archivos.modelo, archivos.consolaIO);
+      const casosPrueba = Array.isArray(cfg.casos_prueba) && cfg.casos_prueba.length > 0
+        ? cfg.casos_prueba
+        : [{ inputs: '', output: (cfg.esperado || exercise.resultado_ejercicio || '').trim() }];
+
+      const resultadoEvaluacion = await evaluadorCasos.evaluarCasosPruebaMvc(codigoFusionado, casosPrueba);
+      const esCorrecta = resultadoEvaluacion.aprobado;
+
+      return {
+        status: esCorrecta ? 200 : 400,
+        payload: {
+          ejercicioId: exercise.id,
+          esCorrecta,
+          puntosObtenidos: esCorrecta ? exercise.puntos : 0,
+          retroalimentacion: resultadoEvaluacion.resumen,
+          casos: resultadoEvaluacion.resultados || [],
+          stdout: resultadoEvaluacion.resultados?.[0]?.outputObtenido || '',
+          stderr: resultadoEvaluacion.resultados?.find((r) => r.error)?.error || '',
+        }
+      };
+    }
+
+    // Legacy path: single-file method + test cases
     const codigo = reqBody?.codigo || reqBody?.respuesta?.codigo || reqBody?.respuesta?.texto || '';
     const lenguaje_id = reqBody?.lenguaje_id || reqBody?.respuesta?.lenguaje_id || 62;
 
@@ -1261,8 +1293,30 @@ exports.toggleEstado = async (req, res) => {
 exports.ejecutarMiniproyectoProgramacion = async (req, res) => {
   try {
     const { id } = req.params;
-    const codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto || '';
     const lenguaje_id = req.body?.lenguaje_id || req.body?.respuesta?.lenguaje_id || 62;
+
+    const archivos = req.body?.archivos;
+    const stdinManual = req.body?.stdin_manual;
+
+    let codigo;
+    if (archivos && typeof archivos === 'object') {
+      const { mergeMvcFiles } = require('../utils/javaMultiFileCompiler');
+      codigo = mergeMvcFiles(archivos.main, archivos.modelo, archivos.consolaIO);
+
+      // Ejecución libre: el estudiante provee su propio stdin
+      if (typeof stdinManual === 'string') {
+        const evaluadorCasos = require('../services/evaluadorCasosPrueba');
+        const ejecucion = await evaluadorCasos.ejecutarMvcLibre(codigo, stdinManual);
+        return res.status(200).json({
+          modo: 'ejecucion_libre',
+          stdout: ejecucion.stdout || '',
+          stderr: ejecucion.stderr || '',
+          exito: ejecucion.success,
+        });
+      }
+    } else {
+      codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto || '';
+    }
 
     if (!codigo || !lenguaje_id) {
       return res.status(400).json({ message: 'Faltan campos: lenguaje_id, codigo' });
@@ -1314,8 +1368,16 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
   try {
     const { id } = req.params;
     const { estudiante_id } = req.body || {};
-    const codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto || '';
     const lenguaje_id = req.body?.lenguaje_id || req.body?.respuesta?.lenguaje_id;
+
+    const archivos = req.body?.archivos;
+    let codigo;
+    if (archivos && typeof archivos === 'object') {
+      const { mergeMvcFiles } = require('../utils/javaMultiFileCompiler');
+      codigo = mergeMvcFiles(archivos.main, archivos.modelo, archivos.consolaIO);
+    } else {
+      codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto || '';
+    }
 
     if (!estudiante_id || !codigo || !lenguaje_id) {
       return res.status(400).json({ message: 'Faltan campos: estudiante_id, lenguaje_id, codigo' });

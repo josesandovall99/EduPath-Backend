@@ -45,6 +45,73 @@ function obtenerCodigoCompilador(body = {}) {
   return '';
 }
 
+async function guardarIntentoYEvaluacion({ estudiante_id, ejercicio_id, codigo, lenguajeIdNum, resultadoEvaluacion, puntosEjercicio = 100, estadoIntentoOverride = null }) {
+  try {
+    if (!estudiante_id) return null;
+
+    const erroresCount = Array.isArray(resultadoEvaluacion?.resultados)
+      ? resultadoEvaluacion.resultados.filter((r) => r.ejecutado && !r.paso).length
+      : 0;
+
+    const respuestaPayload = {
+      codigo,
+      lenguaje_id: lenguajeIdNum,
+      resultado: resultadoEvaluacion?.resultado || (resultadoEvaluacion?.aprobado ? 'CUMPLE' : 'NO CUMPLE'),
+      esCorrecta: !!resultadoEvaluacion?.aprobado,
+      casosPrueba: resultadoEvaluacion?.resultados || [],
+      resumen: resultadoEvaluacion?.resumen || '',
+      errores: erroresCount
+    };
+
+    const existenteRespuesta = await RespuestaEstudianteEjercicio.findOne({ where: { estudiante_id, ejercicio_id } });
+    if (existenteRespuesta) {
+      const nuevoContador = (existenteRespuesta.contador || 0) + 1;
+      await existenteRespuesta.update({
+        respuesta: respuestaPayload,
+        estado: estadoIntentoOverride || (resultadoEvaluacion?.aprobado ? 'APROBADO' : 'REPROBADO'),
+        contador: nuevoContador
+      });
+    } else {
+      await RespuestaEstudianteEjercicio.create({
+        respuesta: respuestaPayload,
+        estudiante_id,
+        ejercicio_id,
+        estado: estadoIntentoOverride || (resultadoEvaluacion?.aprobado ? 'APROBADO' : 'REPROBADO'),
+        contador: 1
+      });
+    }
+
+    // Registrar/actualizar Evaluacion (guardar calificación y estado)
+    const payloadEval = {
+      calificacion: resultadoEvaluacion?.aprobado ? (puntosEjercicio || 0) : 0,
+      retroalimentacion: resultadoEvaluacion?.resumen || '',
+      estudiante_id,
+      ejercicio_id,
+      estado: resultadoEvaluacion?.aprobado ? 'Aprobado' : 'Reprobado'
+    };
+
+    const existenteEval = await Evaluacion.findOne({ where: { estudiante_id, ejercicio_id } });
+    if (existenteEval) {
+      await existenteEval.update(payloadEval);
+    } else {
+      await Evaluacion.create(payloadEval);
+    }
+
+    return true;
+  } catch (err) {
+    console.error('guardarIntentoYEvaluacion error:', err && err.message);
+    return null;
+  }
+}
+
+function esMvcConfig(cfg) {
+  // Detecta MVC aunque tipo haya sido sobreescrito a 'programacion' por el normalizador legacy
+  return cfg.tipo === 'mvc'
+    || (typeof cfg.templateMain === 'string' && cfg.templateMain.trim().length > 0)
+    || (typeof cfg.nombreModelo === 'string' && cfg.nombreModelo.trim().length > 0
+        && Array.isArray(cfg.casos_prueba) && !cfg.metodo?.nombre);
+}
+
 async function cargarEjercicioCompilador(ejercicio_id) {
   const ejercicio = await Ejercicio.findByPk(ejercicio_id);
   if (!ejercicio) {
@@ -55,8 +122,16 @@ async function cargarEjercicioCompilador(ejercicio_id) {
     return { error: { status: 400, message: 'El ejercicio no es de tipo Compilador' } };
   }
 
+  const rawCfg = ejercicio.configuracion || {};
+
+  // Ejercicios MVC: no usan plantilla de método ni validación legacy
+  // Detectamos por tipo='mvc' O por presencia de templateMain (resiste normalización anterior)
+  if (esMvcConfig(rawCfg)) {
+    return { ejercicio, configuracion: { ...rawCfg, tipo: 'mvc' } };
+  }
+
   const configuracion = normalizarConfiguracionCompilador({
-    configuracion: ejercicio.configuracion || {},
+    configuracion: rawCfg,
     codigoEstructura: ejercicio.codigoEstructura,
     resultadoEjercicio: ejercicio.resultado_ejercicio
   });
@@ -460,7 +535,71 @@ exports.evaluarCompilador = async (req, res) => {
   try {
     const ejercicio_id = req.body.ejercicio_id || req.params.ejercicioId || req.params.id;
     const { estudiante_id, lenguaje_id } = req.body || {};
-    const lenguajeIdNum = parseInt(lenguaje_id, 10);
+    const lenguajeIdNum = parseInt(lenguaje_id, 10) || 62;
+
+    // MVC path: 3 archivos enviados como { archivos: { main, modelo, consolaIO } }
+    if (req.body?.archivos && typeof req.body.archivos === 'object') {
+      const { main, modelo, consolaIO } = req.body.archivos;
+      // Aceptar string vacío o con espacios como código válido (el compilador lo manejará)
+      const mainStr = (main || '').toString();
+      const modeloStr = (modelo || '').toString();
+      const consolaIOStr = (consolaIO || '').toString().trim();
+      if (!consolaIOStr) {
+        return res.status(400).json({ message: 'Se requiere el archivo consolaIO.' });
+      }
+      const { mergeMvcFiles } = require('../utils/javaMultiFileCompiler');
+      const codigoFusionado = mergeMvcFiles(mainStr, modeloStr, consolaIOStr);
+
+      // stdin_manual: ejecución libre donde el estudiante provee su propio stdin
+      const stdinManual = req.body?.stdin_manual;
+      if (typeof stdinManual === 'string') {
+        const { ejecutarCasoPruebaMvc } = require('../services/evaluadorCasosPrueba');
+        // Exportamos la función interna — ver nota en evaluadorCasosPrueba.js
+        const ejecucion = await evaluadorCasos.ejecutarMvcLibre(codigoFusionado, stdinManual);
+        return res.status(200).json({
+          modo: 'ejecucion_libre',
+          stdout: ejecucion.stdout || '',
+          stderr: ejecucion.stderr || '',
+          exito: ejecucion.success,
+        });
+      }
+
+      const cargaCompilador = await cargarEjercicioCompilador(ejercicio_id);
+      if (cargaCompilador.error) {
+        return res.status(cargaCompilador.error.status).json({ message: cargaCompilador.error.message });
+      }
+      const { ejercicio, configuracion } = cargaCompilador;
+      const casosPrueba = Array.isArray(configuracion.casos_prueba) && configuracion.casos_prueba.length > 0
+        ? configuracion.casos_prueba
+        : [{ inputs: '', output: (configuracion.esperado || ejercicio.resultado_ejercicio || '').trim() }];
+
+      const resultadoEvaluacion = await evaluadorCasos.evaluarCasosPruebaMvc(codigoFusionado, casosPrueba);
+      const aprobado = resultadoEvaluacion.aprobado;
+
+      // Guardar intento y registro de evaluacion si viene estudiante_id
+      if (estudiante_id) {
+        await guardarIntentoYEvaluacion({
+          estudiante_id,
+          ejercicio_id,
+          codigo: codigoFusionado,
+          lenguajeIdNum,
+          resultadoEvaluacion,
+          puntosEjercicio: ejercicio.puntos || 100
+        });
+      }
+
+      return res.status(aprobado ? 200 : 400).json({
+        esCorrecta: aprobado,
+        aprobado,
+        casos: resultadoEvaluacion.resultados || [],
+        casosPrueba: resultadoEvaluacion.resultados || [],
+        resumen: resultadoEvaluacion.resumen,
+        stdout: resultadoEvaluacion.resultados?.[0]?.outputObtenido || '',
+        stderr: resultadoEvaluacion.resultados?.find((r) => r.error)?.error || '',
+        puntosObtenidos: aprobado ? (ejercicio.puntos || 100) : 0,
+      });
+    }
+
     const codigoOriginal = obtenerCodigoCompilador(req.body);
 
     if (!ejercicio_id || !lenguaje_id || isNaN(lenguajeIdNum) || !codigoOriginal) {
@@ -477,6 +616,38 @@ exports.evaluarCompilador = async (req, res) => {
     }
 
     const { ejercicio, configuracion } = cargaCompilador;
+
+    // MVC por configuracion.tipo — el codigo ya llegó mergeado desde el frontend
+    if (configuracion.tipo === 'mvc') {
+      const casosPrueba = Array.isArray(configuracion.casos_prueba) && configuracion.casos_prueba.length > 0
+        ? configuracion.casos_prueba
+        : [{ inputs: '', output: (configuracion.esperado || ejercicio.resultado_ejercicio || '').trim() }];
+      const resultadoMvc = await evaluadorCasos.evaluarCasosPruebaMvc(codigoOriginal, casosPrueba);
+      const aprobadoMvc = resultadoMvc.aprobado;
+
+      // Guardar intento y registro de evaluacion si viene estudiante_id
+      if (estudiante_id) {
+        await guardarIntentoYEvaluacion({
+          estudiante_id,
+          ejercicio_id,
+          codigo: codigoOriginal,
+          lenguajeIdNum,
+          resultadoEvaluacion: resultadoMvc,
+          puntosEjercicio: ejercicio.puntos || 100
+        });
+      }
+      return res.status(aprobadoMvc ? 200 : 400).json({
+        esCorrecta: aprobadoMvc,
+        aprobado: aprobadoMvc,
+        casos: resultadoMvc.resultados || [],
+        casosPrueba: resultadoMvc.resultados || [],
+        resumen: resultadoMvc.resumen,
+        stdout: resultadoMvc.resultados?.[0]?.outputObtenido || '',
+        stderr: resultadoMvc.resultados?.find((r) => r.error)?.error || '',
+        puntosObtenidos: aprobadoMvc ? (ejercicio.puntos || 100) : 0,
+      });
+    }
+
     const codigo = normalizarCodigoJavaEstudiante(codigoOriginal, configuracion.metodo);
 
     const registrarIntentoEjercicio = async ({ estadoIntento, meta = {} }) => {
@@ -530,7 +701,7 @@ exports.evaluarCompilador = async (req, res) => {
         }
       });
 
-      return res.status(400).json({
+      const payload = {
         resultado: 'NO CUMPLE',
         esCorrecta: false,
         puntosObtenidos: 0,
@@ -543,7 +714,13 @@ exports.evaluarCompilador = async (req, res) => {
         stderr,
         esperado,
         obtenido
-      });
+      };
+
+      if (req.body?.debug) {
+        payload.debug = { casosPrueba, erroresSintaxis, stdoutRaw: stdout, stderrRaw: stderr };
+      }
+
+      return res.status(400).json(payload);
     };
 
     const responderErrorTecnico = async ({ message, statusCode = 502, detalle }) => {
@@ -556,7 +733,7 @@ exports.evaluarCompilador = async (req, res) => {
         }
       });
 
-      return res.status(statusCode).json({
+      const payload = {
         errorTecnico: true,
         resultado: null,
         esCorrecta: null,
@@ -564,7 +741,13 @@ exports.evaluarCompilador = async (req, res) => {
         message,
         error: message,
         detalle
-      });
+      };
+
+      if (req.body?.debug) {
+        payload.debug = { detalle };
+      }
+
+      return res.status(statusCode).json(payload);
     };
 
     const lenguajesPermitidos = configuracion.lenguajesPermitidos;
@@ -639,6 +822,15 @@ exports.evaluarCompilador = async (req, res) => {
       obtenido: normalizarSalida(casoReferencia.outputObtenido || '')
     };
 
+    if (req.body?.debug) {
+      respuestaComun.debug = {
+        resultadoEvaluacion,
+        casoReferencia,
+        configuracion,
+        ejercicioId: ejercicio_id
+      };
+    }
+
     if (resultadoEvaluacion.aprobado) {
       if (estudiante_id) {
         const evalWhere = { estudiante_id, ejercicio_id };
@@ -673,6 +865,19 @@ exports.ejecutarCompilador = async (req, res) => {
     const codigoOriginal = obtenerCodigoCompilador(req.body);
 
     if (!ejercicio_id || isNaN(lenguajeIdNum) || !codigoOriginal) {
+      if (process.env.NODE_ENV !== 'production') {
+        try {
+          console.log('ejecutarCompilador: payload insuficiente', {
+            ejercicio_id,
+            lenguaje_id_sent: req.body?.lenguaje_id,
+            lenguajeIdNum,
+            codigoOriginalPreview: (typeof codigoOriginal === 'string' && codigoOriginal.length > 0) ? codigoOriginal.slice(0, 200) : codigoOriginal,
+            body: req.body
+          });
+        } catch (logErr) {
+          console.log('ejecutarCompilador: error al imprimir payload', logErr && logErr.message);
+        }
+      }
       return res.status(400).json({ message: 'Faltan campos: ejercicio_id, lenguaje_id, codigo' });
     }
 
@@ -681,7 +886,39 @@ exports.ejecutarCompilador = async (req, res) => {
       return res.status(cargaCompilador.error.status).json({ message: cargaCompilador.error.message });
     }
 
-    const { configuracion } = cargaCompilador;
+    const { ejercicio, configuracion } = cargaCompilador;
+
+    // MVC: el código ya viene mergeado con main() — corre directo contra los casos
+    if (configuracion.tipo === 'mvc' || tieneMainJava(codigoOriginal)) {
+      const casosPrueba = Array.isArray(configuracion.casos_prueba) && configuracion.casos_prueba.length > 0
+        ? configuracion.casos_prueba
+        : [{ inputs: '', output: (configuracion.esperado || ejercicio.resultado_ejercicio || '').trim() }];
+      const resultadoMvc = await evaluadorCasos.evaluarCasosPruebaMvc(codigoOriginal, casosPrueba);
+      const aprobadoMvc = resultadoMvc.aprobado;
+
+      // Guardar intento y registro de evaluacion si viene estudiante_id
+      if (req.body?.estudiante_id) {
+        await guardarIntentoYEvaluacion({
+          estudiante_id: req.body.estudiante_id,
+          ejercicio_id,
+          codigo: codigoOriginal,
+          lenguajeIdNum,
+          resultadoEvaluacion: resultadoMvc,
+          puntosEjercicio: ejercicio.puntos || 100
+        });
+      }
+      return res.status(aprobadoMvc ? 200 : 400).json({
+        esCorrecta: aprobadoMvc,
+        aprobado: aprobadoMvc,
+        casos: resultadoMvc.resultados || [],
+        casosPrueba: resultadoMvc.resultados || [],
+        resumen: resultadoMvc.resumen,
+        stdout: resultadoMvc.resultados?.[0]?.outputObtenido || '',
+        stderr: resultadoMvc.resultados?.find((r) => r.error)?.error || '',
+        puntosObtenidos: aprobadoMvc ? (ejercicio.puntos || 100) : 0,
+      });
+    }
+
     const codigo = normalizarCodigoJavaEstudiante(codigoOriginal, configuracion.metodo);
     const lenguajesPermitidos = configuracion.lenguajesPermitidos;
 

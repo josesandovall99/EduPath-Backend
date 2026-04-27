@@ -6,7 +6,7 @@
  */
 
 const axios = require('axios');
-const { codificar, decodificar, normalizarSalida } = require('../utils/juez');
+const { codificar, decodificar, normalizarSalida, normalizarSalidaMvc } = require('../utils/juez');
 const { wrapJavaCodeForJudge0 } = require('../utils/javaWrapper');
 
 const JAVA_LANGUAGE_ID = 62;
@@ -66,10 +66,118 @@ async function ejecutarCasoPrueba(codigo, inputs, lenguajeId, metodo) {
   }
 
   const codigoParaEnviar = wrapJavaCodeForJudge0(codigo, metodo, inputs);
-  return ejecutarConJudge0(codigoParaEnviar);
+  return ejecutarConJudge0(codigoParaEnviar, inputs);
 }
 
-async function ejecutarConJudge0(codigoParaEnviar) {
+/**
+ * Convierte inputs del docente (comas o espacios) en stdin con saltos de línea
+ * para que sc.nextInt(), sc.nextLine(), etc. lean correctamente en secuencia.
+ * Ejemplo: "5,3"  →  "5\n3"
+ *          "hola mundo" → "hola\nmundo"  (si hay espacios simples sin comas)
+ *          "Hola Mundo,42" → "Hola Mundo\n42"  (líneas completas separadas por coma)
+ */
+function normalizarStdin(inputs) {
+  const raw = (inputs || '').toString().trim();
+  if (!raw) return '';
+  // Si ya tiene saltos de línea, respetarlos
+  if (/\r?\n/.test(raw)) {
+    // Asegurar salto final para evitar NoSuchElementException en Scanner.nextLine()
+    return raw.endsWith('\n') ? raw : raw + '\n';
+  }
+  // Separar por coma → cada token es una línea de stdin
+  const out = raw.split(',').map((t) => t.trim()).filter(Boolean).join('\n');
+  return out ? `${out}\n` : '';
+}
+
+async function ejecutarCasoPruebaMvc(codigoFusionado, inputs) {
+  const judge0Url = process.env.JUDGE0_URL?.trim();
+  const judge0Key = process.env.JUDGE0_KEY?.trim();
+  if (!judge0Url) {
+    throw new Judge0TechnicalError('JUDGE0_URL no esta configurado.', { statusCode: 500 });
+  }
+  const url = `${judge0Url.replace(/\/+$/, '')}/submissions?base64_encoded=true&wait=true`;
+  const headers = { 'Content-Type': 'application/json' };
+  if (judge0Key) headers['X-Auth-Token'] = judge0Key;
+  const payload = {
+    source_code: codificar(codigoFusionado),
+    language_id: JAVA_LANGUAGE_ID,
+    stdin: codificar(normalizarStdin(inputs))
+  };
+  try {
+    const response = await axios.post(url, payload, { headers, timeout: JUDGE0_TIMEOUT_MS });
+    const data = response.data || {};
+    const stdout = decodificar(data.stdout);
+    const stderr = decodificar(data.stderr);
+    const compileOutput = decodificar(data.compile_output);
+    const statusId = typeof data.status?.id === 'number' ? data.status.id : null;
+    const errorSalida = stderr || compileOutput;
+    return { stdout, stderr: errorSalida, code: statusId, statusId, statusDescription: data.status?.description || '', success: statusId === 3 && !errorSalida };
+  } catch (error) {
+    const status = error.response?.status;
+    let mensaje = error.code === 'ECONNABORTED' ? 'Judge0 excedio el tiempo limite.' : (error.message || 'Error desconocido');
+    throw new Judge0TechnicalError(`Error tecnico en Judge0: ${mensaje}`, { statusCode: status >= 400 ? status : 502 });
+  }
+}
+
+async function evaluarCasosPruebaMvc(codigoFusionado, casosPrueba) {
+  const resultados = [];
+  let casoFallido = null;
+  let errorTecnico = false;
+
+  for (let i = 0; i < casosPrueba.length; i++) {
+    const caso = casosPrueba[i];
+    const caseNum = i + 1;
+    try {
+      const ejecucion = await ejecutarCasoPruebaMvc(codigoFusionado, caso.inputs);
+      // Normalizar, pero para ejercicios interactivos MVC solemos mostrar un bloque
+      // de resultados. Extraemos el bloque de "RESULTADOS" si existe para comparar
+      // únicamente la sección relevante y evitar fallos por prompts/eco de inputs.
+      const extractResultsBlock = (texto) => {
+        if (!texto) return '';
+        const match = texto.match(/[-]*\s*RESULTADOS\s*[-]*/i);
+        if (!match) return texto;
+        const idx = texto.toUpperCase().indexOf(match[0].toUpperCase());
+        return idx >= 0 ? texto.slice(idx) : texto;
+      };
+
+      const salidaObtenidaRaw = ejecucion.stdout || '';
+      const salidaEsperadaRaw = caso.output || '';
+
+      const salidaObtenida = normalizarSalidaMvc(extractResultsBlock(salidaObtenidaRaw));
+      const salidaEsperada = normalizarSalidaMvc(extractResultsBlock(salidaEsperadaRaw));
+      const ejecucionExitosa = ejecucion.success && !ejecucion.stderr;
+      const paso = ejecucionExitosa && salidaObtenida === salidaEsperada;
+      resultados.push({
+        caseNum, inputs: caso.inputs, outputEsperado: caso.output,
+        outputObtenido: ejecucion.stdout, paso, code: ejecucion.code,
+        error: ejecucionExitosa ? (salidaObtenida !== salidaEsperada ? 'Salida no coincide.' : null) : (ejecucion.stderr || ejecucion.statusDescription),
+        ejecutado: true, omitido: false
+      });
+      if (!paso) {
+        casoFallido = caseNum;
+        completarCasosOmitidos(resultados, casosPrueba, i + 1, 'Caso omitido porque un caso anterior no cumplió.');
+        break;
+      }
+    } catch (error) {
+      casoFallido = caseNum;
+      errorTecnico = !!error.isTechnicalExecutionError;
+      resultados.push({
+        caseNum, inputs: caso.inputs, outputEsperado: caso.output, outputObtenido: '', paso: false, code: null,
+        error: error.message || 'Error de ejecucion', ejecutado: true, omitido: false
+      });
+      completarCasosOmitidos(resultados, casosPrueba, i + 1, 'Caso omitido por error tecnico.');
+      break;
+    }
+  }
+
+  const aprobado = resultados.length === casosPrueba.length && resultados.every((r) => r.paso);
+  return {
+    aprobado, cumple: aprobado, resultados, casoFallido, errorTecnico, errorConfiguracion: false,
+    resumen: aprobado ? `Todos los casos (${casosPrueba.length}) aprobados.` : `Caso ${casoFallido} fallido de ${casosPrueba.length}.`
+  };
+}
+
+async function ejecutarConJudge0(codigoParaEnviar, stdinRaw) {
   const judge0Url = process.env.JUDGE0_URL?.trim();
   const judge0Key = process.env.JUDGE0_KEY?.trim();
 
@@ -83,7 +191,7 @@ async function ejecutarConJudge0(codigoParaEnviar) {
   const payload = {
     source_code: codificar(codigoParaEnviar),
     language_id: JAVA_LANGUAGE_ID,
-    stdin: codificar('')
+    stdin: codificar(normalizarStdin(stdinRaw))
   };
 
   const headers = { 'Content-Type': 'application/json' };
@@ -260,9 +368,16 @@ async function evaluarCasosPrueba(codigo, lenguajeId, casosPrueba, metodo) {
   };
 }
 
+// Ejecución libre MVC con stdin personalizado (para botón "Ejecutar" del estudiante)
+async function ejecutarMvcLibre(codigoFusionado, stdinRaw) {
+  return ejecutarCasoPruebaMvc(codigoFusionado, stdinRaw);
+}
+
 module.exports = {
   Judge0TechnicalError,
   validarEstructuraCasosPrueba,
   ejecutarCasoPrueba,
-  evaluarCasosPrueba
+  evaluarCasosPrueba,
+  evaluarCasosPruebaMvc,
+  ejecutarMvcLibre
 };

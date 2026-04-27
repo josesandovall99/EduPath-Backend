@@ -2,6 +2,7 @@ const { SecuenciaSubtema, Subtema, Tema, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const {
   ensureDocenteAreaAccess,
+  allowStudentReadAccess,
   resolveTemaArea,
   resolveSubtemaArea,
   resolveSecuenciaSubtemaArea,
@@ -349,7 +350,7 @@ exports.getSubtemasOrdenadosPorSecuencia = async (req, res) => {
   try {
     const { temaId } = req.params;
     const temaContext = await resolveTemaArea(temaId);
-    ensureDocenteAreaAccess(req, temaContext.areaId);
+    allowStudentReadAccess(req, temaContext.areaId); // estudiantes pueden leer
 
     // Obtener todos los subtemas del tema
     const subtemas = await Subtema.findAll({
@@ -425,7 +426,7 @@ exports.getSecuenciasSubtema = async (req, res) => {
     const temaId = Number.parseInt(req.query.temaId, 10);
     if (Number.isFinite(temaId)) {
       const temaContext = await resolveTemaArea(temaId);
-      ensureDocenteAreaAccess(req, temaContext.areaId);
+      allowStudentReadAccess(req, temaContext.areaId); // estudiantes pueden leer
 
       const subtemasTema = await Subtema.findAll({
         where: { tema_id: temaId },

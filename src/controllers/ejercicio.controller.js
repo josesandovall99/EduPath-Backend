@@ -97,22 +97,38 @@ exports.createEjercicio = async (req, res) => {
 
     let codigoEstructura = ejercicio.codigoEstructura || null;
     if (tipo === 'Compilador') {
-      configuracion = normalizarConfiguracionCompilador({
-        configuracion,
-        codigoEstructura,
-        resultadoEjercicio: ejercicio.resultado_ejercicio
-      });
-      codigoEstructura = codigoEstructura || configuracion?.metodo?.plantilla || null;
-
-      const validacionCompilador = validarConfiguracionCompilador({ configuracion, codigoEstructura });
-      if (!validacionCompilador.ok) {
-        await t.rollback();
-        return res.status(400).json({
-          message: 'Configuración inválida para ejercicio de compilador',
-          errores: validacionCompilador.errores
+      // Ejercicios MVC no usan plantilla de método ni los validadores legacy
+      if (configuracion?.tipo === 'mvc') {
+        // Solo normalizar los casos de prueba
+        if (Array.isArray(configuracion.casos_prueba)) {
+          configuracion.casos_prueba = configuracion.casos_prueba.map((c) => ({
+            inputs: (c.inputs || '').toString().trim(),
+            output: (c.output || '').toString().trim()
+          }));
+        }
+        configuracion.lenguajesPermitidos = [62];
+      } else {
+        configuracion = normalizarConfiguracionCompilador({
+          configuracion,
+          codigoEstructura,
+          resultadoEjercicio: ejercicio.resultado_ejercicio
         });
+        codigoEstructura = codigoEstructura || configuracion?.metodo?.plantilla || null;
+
+        const validacionCompilador = validarConfiguracionCompilador({ configuracion, codigoEstructura });
+        if (!validacionCompilador.ok) {
+          await t.rollback();
+          return res.status(400).json({
+            message: 'Configuración inválida para ejercicio de compilador',
+            errores: validacionCompilador.errores
+          });
+        }
       }
     }
+
+    // Para MVC, codigoEstructura es null para evitar que el setter VIRTUAL
+    // sobrescriba templateMain/templateModelo en configuracion JSONB.
+    const codigoEstructuraFinal = configuracion?.tipo === 'mvc' ? null : codigoEstructura;
 
     const nuevoEjercicio = await Ejercicio.create(
       {
@@ -121,7 +137,7 @@ exports.createEjercicio = async (req, res) => {
         tipo_ejercicio: tipo,
         puntos: ejercicio.puntos,
         resultado_ejercicio: ejercicio.resultado_ejercicio,
-        codigoEstructura,
+        codigoEstructura: codigoEstructuraFinal,
         configuracion
       },
       { transaction: t }
@@ -341,26 +357,40 @@ exports.updateEjercicio = async (req, res) => {
       }
 
       if ((data.tipo_ejercicio || ejercicio.tipo_ejercicio) === 'Compilador') {
-        data.configuracion = normalizarConfiguracionCompilador({
-          configuracion: data.configuracion || ejercicio.configuracion || {},
-          codigoEstructura: data.codigoEstructura || ejercicio.codigoEstructura,
-          resultadoEjercicio: data.resultado_ejercicio || ejercicio.resultado_ejercicio
-        });
+        const cfgActual = data.configuracion || ejercicio.configuracion || {};
 
-        const codigoEstructura = data.codigoEstructura || ejercicio.codigoEstructura || data.configuracion?.metodo?.plantilla;
-        data.codigoEstructura = codigoEstructura;
-
-        const validacionCompilador = validarConfiguracionCompilador({
-          configuracion: data.configuracion,
-          codigoEstructura
-        });
-
-        if (!validacionCompilador.ok) {
-          await t.rollback();
-          return res.status(400).json({
-            message: 'Configuración inválida para ejercicio de compilador',
-            errores: validacionCompilador.errores
+        if (cfgActual?.tipo === 'mvc') {
+          // MVC: solo normalizar casos de prueba, sin validar plantilla legacy
+          if (Array.isArray(cfgActual.casos_prueba)) {
+            cfgActual.casos_prueba = cfgActual.casos_prueba.map((c) => ({
+              inputs: (c.inputs || '').toString().trim(),
+              output: (c.output || '').toString().trim()
+            }));
+          }
+          cfgActual.lenguajesPermitidos = [62];
+          data.configuracion = cfgActual;
+        } else {
+          data.configuracion = normalizarConfiguracionCompilador({
+            configuracion: cfgActual,
+            codigoEstructura: data.codigoEstructura || ejercicio.codigoEstructura,
+            resultadoEjercicio: data.resultado_ejercicio || ejercicio.resultado_ejercicio
           });
+
+          const codigoEstructura = data.codigoEstructura || ejercicio.codigoEstructura || data.configuracion?.metodo?.plantilla;
+          data.codigoEstructura = codigoEstructura;
+
+          const validacionCompilador = validarConfiguracionCompilador({
+            configuracion: data.configuracion,
+            codigoEstructura
+          });
+
+          if (!validacionCompilador.ok) {
+            await t.rollback();
+            return res.status(400).json({
+              message: 'Configuración inválida para ejercicio de compilador',
+              errores: validacionCompilador.errores
+            });
+          }
         }
       }
 
@@ -368,6 +398,10 @@ exports.updateEjercicio = async (req, res) => {
         data.configuracion = normalizeUmlConfig(data.configuracion || ejercicio.configuracion || {});
       }
 
+      // MVC: codigoEstructura null para no interferir con templateMain/templateModelo via VIRTUAL setter
+      if (data.configuracion?.tipo === 'mvc') {
+        data.codigoEstructura = null;
+      }
       await ejercicio.update(data, { transaction: t });
     }
 
@@ -700,8 +734,9 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
     if (ejercicio.tipo_ejercicio !== 'Compilador' && respuestaVacia) {
       return res.status(400).json({ message: 'Faltan campos: respuesta' });
     }
-    if (ejercicio.tipo_ejercicio === 'Compilador' && !codigo) {
-      return res.status(400).json({ message: 'Faltan campos: codigo' });
+    const esMvc = req.body?.archivos && typeof req.body.archivos === 'object';
+    if (ejercicio.tipo_ejercicio === 'Compilador' && !codigo && !esMvc) {
+      return res.status(400).json({ message: 'Faltan campos: codigo o archivos MVC' });
     }
 
     const key = `${estudiante_id}:${ejercicioId}`;

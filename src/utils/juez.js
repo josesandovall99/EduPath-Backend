@@ -15,8 +15,23 @@ const normalizarSalida = (texto) =>
     .replace(/[\n\r]/g, '')
     .trim();
 
+/**
+ * Normalización para ejercicios MVC interactivos.
+ * Colapsa whitespace (espacios y saltos de línea) a un único espacio.
+ * Permite comparar "Hola\nMundo" con "Hola Mundo" sin fallar.
+ */
+const normalizarSalidaMvc = (texto) =>
+  (texto || '')
+    .toString()
+    .split('\n')
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .join(' ')
+    .trim();
+
 module.exports = {
   codificar,
   decodificar,
-  normalizarSalida
+  normalizarSalida,
+  normalizarSalidaMvc
 };

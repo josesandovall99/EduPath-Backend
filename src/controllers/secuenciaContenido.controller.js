@@ -2,6 +2,7 @@ const { SecuenciaContenido, Contenido, Subtema, Tema, sequelize } = require('../
 const { Op } = require('sequelize');
 const {
   ensureDocenteAreaAccess,
+  allowStudentReadAccess,
   resolveSubtemaArea,
   resolveContenidoArea,
   resolveSecuenciaContenidoArea,
@@ -452,7 +453,7 @@ exports.getContenidosOrdenadosPorSecuencia = async (req, res) => {
   try {
     const { subtemaId } = req.params;
     const subtemaContext = await resolveSubtemaArea(subtemaId);
-    ensureDocenteAreaAccess(req, subtemaContext.areaId);
+    allowStudentReadAccess(req, subtemaContext.areaId); // estudiantes pueden leer
 
     // Obtener todos los contenidos del subtema
     const contenidos = await Contenido.findAll({

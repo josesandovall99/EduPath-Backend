@@ -1,4 +1,4 @@
-const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio } = require("../models");
+const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio, Evaluacion } = require("../models");
 
 /* ============================================================
    1. CREAR RESPUESTA (POST)

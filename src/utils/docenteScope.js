@@ -206,8 +206,21 @@ const handleDocenteScopeError = (res, error, fallbackMessage) => {
   });
 };
 
+/**
+ * Versión de ensureDocenteAreaAccess que también permite estudiantes (para lectura).
+ * Docentes siguen teniendo la restricción de área; estudiantes pasan sin restricción de área.
+ */
+const allowStudentReadAccess = (req, areaId) => {
+  if (isAdmin(req) || req.tipoUsuario === 'ESTUDIANTE') {
+    return; // estudiantes y admins pasan libremente
+  }
+  // Docentes: validar área
+  ensureDocenteAreaAccess(req, areaId);
+};
+
 module.exports = {
   ensureDocenteAreaAccess,
+  allowStudentReadAccess,
   resolveTemaArea,
   resolveSubtemaArea,
   resolveContenidoArea,
