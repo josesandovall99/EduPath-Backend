@@ -589,6 +589,9 @@ exports.evaluarCompilador = async (req, res) => {
       const mainStr = (main || '').toString();
       const modeloStr = (modelo || '').toString();
       const consolaIOStr = (consolaIO || '').toString().trim();
+      // Restricciones sintácticas: evaluar SOLO el código editable del estudiante (Main + Modelo),
+      // no la clase fija ConsolaIO para evitar falsos positivos.
+      const codigoEditableMvc = [mainStr, modeloStr].filter(Boolean).join('\n\n');
       if (!consolaIOStr) {
         return res.status(400).json({ message: 'Se requiere el archivo consolaIO.' });
       }
@@ -614,6 +617,18 @@ exports.evaluarCompilador = async (req, res) => {
         return res.status(cargaCompilador.error.status).json({ message: cargaCompilador.error.message });
       }
       const { ejercicio, configuracion } = cargaCompilador;
+      const validacionSintaxisMvcArchivos = validarSintaxis(codigoEditableMvc, configuracion, lenguajeIdNum);
+      if (!validacionSintaxisMvcArchivos.ok) {
+        return res.status(400).json({
+          resultado: 'NO CUMPLE',
+          esCorrecta: false,
+          puntosObtenidos: 0,
+          casosPrueba: [],
+          resumen: `NO CUMPLE: no satisface las restricciones o la estructura requerida. ${validacionSintaxisMvcArchivos.errores.join('; ')}`,
+          retroalimentacion: `NO CUMPLE: no satisface las restricciones o la estructura requerida. ${validacionSintaxisMvcArchivos.errores.join('; ')}`,
+          erroresSintaxis: validacionSintaxisMvcArchivos.errores
+        });
+      }
       const casosPrueba = Array.isArray(configuracion.casos_prueba) && configuracion.casos_prueba.length > 0
         ? configuracion.casos_prueba
         : [{ inputs: '', output: (configuracion.esperado || ejercicio.resultado_ejercicio || '').trim() }];
@@ -664,6 +679,18 @@ exports.evaluarCompilador = async (req, res) => {
 
     // MVC por configuracion.tipo — el codigo ya llegó mergeado desde el frontend
     if (configuracion.tipo === 'mvc') {
+      const validacionSintaxisMvc = validarSintaxis(codigoOriginal, configuracion, lenguajeIdNum);
+      if (!validacionSintaxisMvc.ok) {
+        return res.status(400).json({
+          resultado: 'NO CUMPLE',
+          esCorrecta: false,
+          puntosObtenidos: 0,
+          casosPrueba: [],
+          resumen: `NO CUMPLE: no satisface las restricciones o la estructura requerida. ${validacionSintaxisMvc.errores.join('; ')}`,
+          retroalimentacion: `NO CUMPLE: no satisface las restricciones o la estructura requerida. ${validacionSintaxisMvc.errores.join('; ')}`,
+          erroresSintaxis: validacionSintaxisMvc.errores
+        });
+      }
       const casosPrueba = Array.isArray(configuracion.casos_prueba) && configuracion.casos_prueba.length > 0
         ? configuracion.casos_prueba
         : [{ inputs: '', output: (configuracion.esperado || ejercicio.resultado_ejercicio || '').trim() }];

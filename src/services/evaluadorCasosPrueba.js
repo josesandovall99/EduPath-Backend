@@ -89,6 +89,35 @@ function normalizarStdin(inputs) {
   return out ? `${out}\n` : '';
 }
 
+/**
+ * Reconstruye una salida "interactiva" agregando los valores de entrada
+ * detrás de prompts que terminan en ":" para comparar con expected del docente.
+ * Esto evita falsos negativos cuando Judge0 no hace echo del stdin.
+ */
+function interleaveInputsWithOutput(output, inputs) {
+  const textoSalida = (output || '').toString();
+  const textoInputs = (inputs || '').toString();
+  if (!textoSalida || !textoInputs) return textoSalida;
+
+  const inputValues = textoInputs
+    .split(/,|\r?\n/)
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  if (inputValues.length === 0) return textoSalida;
+
+  let index = 0;
+  return textoSalida
+    .split('\n')
+    .map((line) => {
+      if (/:\s*$/.test(line.trimEnd()) && index < inputValues.length) {
+        return line.trimEnd() + inputValues[index++];
+      }
+      return line;
+    })
+    .join('\n');
+}
+
 async function ejecutarCasoPruebaMvc(codigoFusionado, inputs) {
   const judge0Url = process.env.JUDGE0_URL?.trim();
   const judge0Key = process.env.JUDGE0_KEY?.trim();
@@ -142,8 +171,9 @@ async function evaluarCasosPruebaMvc(codigoFusionado, casosPrueba) {
 
       const salidaObtenidaRaw = ejecucion.stdout || '';
       const salidaEsperadaRaw = caso.output || '';
+      const salidaComparable = interleaveInputsWithOutput(salidaObtenidaRaw, caso.inputs);
 
-      const salidaObtenida = normalizarSalidaMvc(extractResultsBlock(salidaObtenidaRaw));
+      const salidaObtenida = normalizarSalidaMvc(extractResultsBlock(salidaComparable));
       const salidaEsperada = normalizarSalidaMvc(extractResultsBlock(salidaEsperadaRaw));
       const ejecucionExitosa = ejecucion.success && !ejecucion.stderr;
       const paso = ejecucionExitosa && salidaObtenida === salidaEsperada;
