@@ -343,21 +343,62 @@ const JAVA_KEYWORD_TO_CST = {
 };
 
 const JAVA_KEYWORD_TO_REGEX = {
-  while: /\bwhile\s*\(/i,
-  'do while': /\bdo\b[\s\S]*\bwhile\s*\(/i,
-  for: /\bfor\s*\(/i,
-  'for each': /\bfor\s*\([^;)]*:[^)]*\)/i,
-  if: /\bif\s*\(/i,
-  switch: /\bswitch\s*\(/i,
-  try: /\btry\b/i,
-  catch: /\bcatch\s*\(/i,
-  throw: /\bthrow\b/i,
-  return: /\breturn\b/i,
-  break: /\bbreak\b/i,
-  continue: /\bcontinue\b/i,
-  class: /\bclass\s+[A-Za-z_][A-Za-z0-9_]*/i,
-  method: /(public|private|protected)?\s*(static\s+)?[A-Za-z_][A-Za-z0-9_<>,\[\]]*\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/i,
+  while:      /\bwhile\s*\(/,
+  'do while': /\bdo\s*\{/,
+  for:        /\bfor\s*\(/,
+  'for each': /\bfor\s*\([^;)]*:[^)]*\)/,
+  if:         /\bif\s*\(/,
+  'else if':  /\belse\s+if\s*\(/,
+  switch:     /\bswitch\s*\(/,
+  ternary:    /\w[\w\s]*\?\s*[^?:]+\s*:/,
+  try:        /\btry\s*\{/,
+  catch:      /\bcatch\s*\(/,
+  throw:      /\bthrow\s+/,
+  return:     /\breturn\b/,
+  break:      /\bbreak\b/,
+  continue:   /\bcontinue\b/,
+  class:      /\bclass\s+[A-Za-z_][A-Za-z0-9_]*/,
+  method:     /(public|private|protected)\s+(static\s+)?[A-Za-z_][A-Za-z0-9_<>,\[\]]*\s+[A-Za-z_][A-Za-z0-9_]*\s*\(/,
 };
+
+/**
+ * Elimina comentarios de línea (//), bloques (/* *\/) y literales de cadena ("...")
+ * del código Java antes de aplicar regex.  Evita falsos positivos como "// for".
+ */
+function stripJavaCommentsAndStrings(code) {
+  let result = '';
+  let i = 0;
+  while (i < code.length) {
+    // Comentario de bloque
+    if (code[i] === '/' && code[i + 1] === '*') {
+      i += 2;
+      while (i < code.length && !(code[i] === '*' && code[i + 1] === '/')) i++;
+      i += 2;
+    // Comentario de línea
+    } else if (code[i] === '/' && code[i + 1] === '/') {
+      while (i < code.length && code[i] !== '\n') i++;
+    // String literal
+    } else if (code[i] === '"') {
+      i++;
+      while (i < code.length && code[i] !== '"') {
+        if (code[i] === '\\') i++; // escape
+        i++;
+      }
+      i++; // closing "
+    // Char literal
+    } else if (code[i] === "'") {
+      i++;
+      while (i < code.length && code[i] !== "'") {
+        if (code[i] === '\\') i++;
+        i++;
+      }
+      i++; // closing '
+    } else {
+      result += code[i++];
+    }
+  }
+  return result;
+}
 
 const recolectarTiposAST = (node, set) => {
   if (!node || typeof node !== 'object') return;
@@ -430,20 +471,24 @@ const validarSintaxisASTJava = (codigo, reglas) => {
     return { ok: false, errores: ['Error de sintaxis Java: simbolos desbalanceados'] };
   }
 
-  const contiene = normalizarLista(reglas.contiene || reglas.required || reglas.requerido || reglas.mustInclude || reglas.incluir);
-  const noContiene = normalizarLista(reglas.noContiene || reglas.forbidden || reglas.mustNotInclude || reglas.prohibido);
+  // Eliminar comentarios y strings ANTES de aplicar regex
+  // para que "// for" o String s = "while" no cuenten como uso real.
+  const codigoLimpio = stripJavaCommentsAndStrings(codigo || '');
+
+  const contiene   = normalizarLista(reglas.contiene   || reglas.required    || reglas.requerido   || reglas.mustInclude || reglas.incluir);
+  const noContiene = normalizarLista(reglas.noContiene || reglas.forbidden   || reglas.mustNotInclude || reglas.prohibido);
 
   const verificar = (item, mustInclude) => {
     const key = (item || '').toString().toLowerCase();
     if (!key) return;
     const pattern = JAVA_KEYWORD_TO_REGEX[key];
-    if (!pattern) return; // si no mapea, se validará por texto
-    const existe = pattern.test(codigo || '');
-    if (mustInclude && !existe) errores.push(`Debe incluir estructura: ${item}`);
-    if (!mustInclude && existe) errores.push(`No debe incluir estructura: ${item}`);
+    if (!pattern) return;
+    const existe = pattern.test(codigoLimpio);
+    if (mustInclude  && !existe) errores.push(`Debe incluir estructura: ${item}`);
+    if (!mustInclude && existe)  errores.push(`No debe incluir estructura: ${item}`);
   };
 
-  contiene.forEach((item) => verificar(item, true));
+  contiene.forEach((item)   => verificar(item, true));
   noContiene.forEach((item) => verificar(item, false));
 
   return { ok: errores.length === 0, errores };
