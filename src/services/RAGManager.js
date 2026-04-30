@@ -352,19 +352,39 @@ class RAGManager {
         const safeTopK = normalizeTopK(topK, this.maxTopK, this.defaultTopK);
         const maxContextChars = this.maxContextChars;
         const retrievalStart = nowMs();
-        const relevantDocs = await this.vectorStore.similaritySearch(question, safeTopK);
+        const scoredDocs = await this.vectorStore.similaritySearchWithScores(question, safeTopK);
         logTiming('Recuperación RAG', retrievalStart);
 
+        // Evita pasar ruido al LLM: si la similitud es muy baja, no hay base confiable.
+        const minScore = Number(process.env.RAG_MIN_SCORE || 0.02);
+        const relevantDocs = scoredDocs.filter(({ score }) => Number(score) >= minScore);
+        if (relevantDocs.length === 0) {
+            return {
+                success: false,
+                answer: 'No tengo esa información en los documentos cargados.',
+            };
+        }
+
         let accumulated = '';
-        for (const doc of relevantDocs) {
+        for (const { doc, score } of relevantDocs) {
             const normalized = (doc.pageContent || '').replace(/\s+/g, ' ').trim();
             if (!normalized) continue;
             const remaining = maxContextChars - accumulated.length;
             if (remaining <= 0) break;
-            const piece = normalized.slice(0, remaining);
-            accumulated += (accumulated ? '\n' : '') + piece;
+            const source = doc?.metadata?.source_pdf || doc?.metadata?.source || 'documento.pdf';
+            const header = `Fuente: ${source} | score: ${Number(score).toFixed(4)}\n`;
+            const budget = Math.max(0, remaining - header.length);
+            if (budget <= 0) break;
+            const piece = normalized.slice(0, budget);
+            accumulated += `${accumulated ? '\n\n' : ''}${header}${piece}`;
         }
         const context = accumulated.slice(0, maxContextChars);
+        if (!context.trim()) {
+            return {
+                success: false,
+                answer: 'No tengo esa información en los documentos cargados.',
+            };
+        }
         const promptStart = nowMs();
         const finalPrompt = this.promptTemplate.template
             .replace('{context}', context)
