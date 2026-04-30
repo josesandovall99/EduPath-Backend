@@ -287,6 +287,11 @@ class SimpleVectorStore {
         const sims = this.documents.map(doc => ({ doc, score: this.cosineSimilarity(query, doc) }));
         return sims.sort((a, b) => b.score - a.score).slice(0, k).map(s => s.doc);
     }
+
+    async similaritySearchWithScores(query, k = 3) {
+        const sims = this.documents.map((doc) => ({ doc, score: this.cosineSimilarity(query, doc) }));
+        return sims.sort((a, b) => b.score - a.score).slice(0, k);
+    }
 }
 
 /**
@@ -350,10 +355,16 @@ class RAGManager {
         const relevantDocs = await this.vectorStore.similaritySearch(question, safeTopK);
         logTiming('Recuperación RAG', retrievalStart);
 
-        const context = relevantDocs
-            .map((doc) => (doc.pageContent || '').replace(/\s+/g, ' ').trim().slice(0, maxContextChars))
-            .join('\n')
-            .slice(0, maxContextChars);
+        let accumulated = '';
+        for (const doc of relevantDocs) {
+            const normalized = (doc.pageContent || '').replace(/\s+/g, ' ').trim();
+            if (!normalized) continue;
+            const remaining = maxContextChars - accumulated.length;
+            if (remaining <= 0) break;
+            const piece = normalized.slice(0, remaining);
+            accumulated += (accumulated ? '\n' : '') + piece;
+        }
+        const context = accumulated.slice(0, maxContextChars);
         const promptStart = nowMs();
         const finalPrompt = this.promptTemplate.template
             .replace('{context}', context)
@@ -362,6 +373,33 @@ class RAGManager {
         console.log(`Contexto chars: ${context.length} | Prompt chars: ${finalPrompt.length} | topK: ${safeTopK}`);
 
         return { success: true, finalPrompt, safeTopK };
+    }
+
+    async debugRetrieval(question, topK = this.defaultTopK) {
+        if (this.vectorStore.documents.length === 0) {
+            return {
+                success: false,
+                error: 'No hay documentos cargados para responder.',
+                topK: 0,
+                matches: [],
+            };
+        }
+
+        const safeTopK = normalizeTopK(topK, this.maxTopK, this.defaultTopK);
+        const retrieval = await this.vectorStore.similaritySearchWithScores(question, safeTopK);
+        const matches = retrieval.map(({ doc, score }, index) => ({
+            rank: index + 1,
+            score: Number(score.toFixed(6)),
+            snippet: String(doc.pageContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+            metadata: doc.metadata || {},
+        }));
+
+        return {
+            success: true,
+            topK: safeTopK,
+            chunksLoaded: this.vectorStore.documents.length,
+            matches,
+        };
     }
 
     // Método para cargar PDFs desde memoria (Subidas desde Web/React)

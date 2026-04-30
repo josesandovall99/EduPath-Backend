@@ -19,14 +19,22 @@ function getPreferredProviders(chatbot) {
 }
 
 function buildManager(chatbot, provider) {
+  const configuredTopK = Number(chatbot.top_k);
+  const safeDefaultTopK = Number.isFinite(configuredTopK) && configuredTopK > 0 ? configuredTopK : 3;
+  const safeMaxTopK = Math.max(safeDefaultTopK, Number(process.env.CHATBOT_MAX_TOP_K || 6));
+  const configuredContextChars = Number(chatbot.max_context_chars);
+  const safeMaxContextChars = Number.isFinite(configuredContextChars) && configuredContextChars >= 800
+    ? configuredContextChars
+    : Number(process.env.CHATBOT_MAX_CONTEXT_CHARS || 2400);
+
   const baseConfig = {
     provider,
     modelName: chatbot.model_name || process.env.OLLAMA_MODEL || process.env.GROQ_MODEL || 'qwen2.5:0.5b',
     temperature: Number(chatbot.temperature ?? process.env.OLLAMA_TEMPERATURE ?? process.env.GROQ_TEMPERATURE ?? 0.2),
     maxTokens: Number(chatbot.max_tokens ?? process.env.OLLAMA_MAX_TOKENS ?? process.env.GROQ_MAX_TOKENS ?? 256),
-    defaultTopK: Number(chatbot.top_k ?? 1),
-    maxTopK: Number(chatbot.top_k ?? 1),
-    maxContextChars: Number(chatbot.max_context_chars ?? process.env.CHATBOT_MAX_CONTEXT_CHARS ?? 600),
+    defaultTopK: safeDefaultTopK,
+    maxTopK: safeMaxTopK,
+    maxContextChars: safeMaxContextChars,
     chunkSize: parseInt(process.env.OLLAMA_CHUNK_SIZE || '1000', 10),
     chunkOverlap: parseInt(process.env.OLLAMA_CHUNK_OVERLAP || '200', 10),
     systemPrompt: chatbot.prompt_base || undefined,
@@ -88,25 +96,54 @@ async function removeChatbotFiles(chatbotId) {
 }
 
 async function loadDocumentsIntoManager(manager, documents) {
+  const toPdfBuffer = (value) => {
+    if (!value) return null;
+    if (Buffer.isBuffer(value)) return value;
+    if (value instanceof Uint8Array) return Buffer.from(value);
+    if (Array.isArray(value)) return Buffer.from(value);
+    if (typeof value === 'object' && value.type === 'Buffer' && Array.isArray(value.data)) {
+      return Buffer.from(value.data);
+    }
+    if (typeof value === 'string') {
+      try {
+        return Buffer.from(value, 'base64');
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  };
+
+  const loaded = [];
+  const failed = [];
+
   for (const document of documents) {
     if (document.estado === false) continue;
     try {
       if (document.contenido_pdf) {
         // Usar el contenido almacenado en BD (persiste aunque el filesystem sea efímero)
-        const buffer = Buffer.isBuffer(document.contenido_pdf)
-          ? document.contenido_pdf
-          : Buffer.from(document.contenido_pdf);
+        const buffer = toPdfBuffer(document.contenido_pdf);
+        if (!buffer || buffer.length === 0) {
+          throw new Error('contenido_pdf inválido o vacío');
+        }
         await manager.loadPDFFromBuffer(buffer, document.nombre_original || 'documento.pdf');
+        loaded.push(document.id);
       } else if (document.ruta_archivo) {
         // Fallback para documentos anteriores sin contenido en BD
         await manager.loadPDFFromPath(document.ruta_archivo);
+        loaded.push(document.id);
       } else {
-        console.warn('Documento sin contenido ni ruta, se omite:', document?.id);
+        const reason = 'Documento sin contenido ni ruta';
+        console.warn(`${reason}, se omite:`, document?.id);
+        failed.push({ id: document?.id, reason });
       }
     } catch (err) {
       console.error(`Error cargando documento ${document?.id}:`, err.message || err);
+      failed.push({ id: document?.id, reason: err?.message || 'Error desconocido' });
     }
   }
+
+  return { loaded, failed };
 }
 
 async function ensureChatbotManager(chatbot, documents = []) {
@@ -115,7 +152,12 @@ async function ensureChatbotManager(chatbot, documents = []) {
   }
 
   const manager = await createChatbotManager(chatbot);
-  await loadDocumentsIntoManager(manager, documents);
+  const loadSummary = await loadDocumentsIntoManager(manager, documents);
+  const activeDocuments = documents.filter((doc) => doc.estado !== false);
+  if (activeDocuments.length > 0 && loadSummary.loaded.length === 0) {
+    const firstFailure = loadSummary.failed[0]?.reason || 'No fue posible procesar ningún documento.';
+    throw new Error(`No se pudo indexar ningún PDF del chatbot ${chatbot.id}. ${firstFailure}`);
+  }
   managers.set(chatbot.id, manager);
   return manager;
 }

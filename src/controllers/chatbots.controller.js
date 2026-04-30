@@ -2,7 +2,6 @@ const sequelize = require('../config/database');
 const { Op } = require('sequelize');
 const { Chatbot, ChatbotDocumento, Area, Miniproyecto, Persona } = require('../models');
 const {
-  saveDocumentFile,
   deleteDocumentFile,
   removeChatbotFiles,
   ensureChatbotManager,
@@ -198,7 +197,7 @@ async function findManagedChatbot(req, chatbotId) {
   return { chatbot };
 }
 
-async function findResolvedActiveChatbot({ tipo = 'GENERAL', areaId = null, miniproyectoId = null }) {
+async function findResolvedActiveChatbot({ tipo = 'GENERAL', areaId = null, miniproyectoId = null, allowFallback = true }) {
   const normalizedType = normalizeType(tipo) || 'GENERAL';
   const parsedAreaId = Number.isFinite(Number(areaId)) ? Number(areaId) : null;
   const parsedMiniproyectoId = Number.isFinite(Number(miniproyectoId)) ? Number(miniproyectoId) : null;
@@ -223,6 +222,10 @@ async function findResolvedActiveChatbot({ tipo = 'GENERAL', areaId = null, mini
     if (miniproyectoChatbot) {
       return miniproyectoChatbot;
     }
+
+    if (!allowFallback) {
+      return null;
+    }
   }
 
   if (isRoleScopedGeneralType(normalizedType)) {
@@ -239,6 +242,10 @@ async function findResolvedActiveChatbot({ tipo = 'GENERAL', areaId = null, mini
     if (roleScopedChatbot) {
       return roleScopedChatbot;
     }
+
+    if (!allowFallback) {
+      return null;
+    }
   }
 
   if (Number.isFinite(parsedAreaId)) {
@@ -254,6 +261,10 @@ async function findResolvedActiveChatbot({ tipo = 'GENERAL', areaId = null, mini
 
     if (areaGeneralChatbot) {
       return areaGeneralChatbot;
+    }
+
+    if (!allowFallback && normalizedType === 'GENERAL') {
+      return null;
     }
   }
 
@@ -277,6 +288,7 @@ exports.resolveActiveChatbot = async (req, res) => {
 
     const areaId = req.query.area_id !== undefined ? Number(req.query.area_id) : null;
     const miniproyectoId = req.query.miniproyecto_id !== undefined ? Number(req.query.miniproyecto_id) : null;
+    const allowFallback = String(req.query.allow_fallback ?? 'true').toLowerCase() !== 'false';
 
     if (tipo === 'MINIPROYECTO' && !Number.isFinite(miniproyectoId)) {
       return res.status(400).json({ mensaje: 'miniproyecto_id es obligatorio para resolver un chatbot de miniproyecto' });
@@ -286,6 +298,7 @@ exports.resolveActiveChatbot = async (req, res) => {
       tipo,
       areaId,
       miniproyectoId,
+      allowFallback,
     });
 
     if (!chatbot) {
@@ -301,11 +314,20 @@ exports.resolveActiveChatbot = async (req, res) => {
       model_name: chatbot.model_name,
       documentos: (chatbot.documentos || []).length,
       fallback: isGeneralType(chatbot.tipo) && chatbot.tipo !== tipo,
+      strict_mode: !allowFallback,
     });
   } catch (error) {
     return res.status(500).json({ mensaje: 'Error al resolver chatbot', error: error.message });
   }
 };
+
+function chatbotMatchesContext(chatbot, expectedType, expectedAreaId, expectedMiniproyectoId) {
+  if (!chatbot) return false;
+  if (expectedType && String(chatbot.tipo) !== String(expectedType)) return false;
+  if (Number.isFinite(expectedAreaId) && Number(chatbot.area_id) !== Number(expectedAreaId)) return false;
+  if (expectedType === 'MINIPROYECTO' && Number.isFinite(expectedMiniproyectoId) && Number(chatbot.miniproyecto_id) !== Number(expectedMiniproyectoId)) return false;
+  return true;
+}
 
 exports.createChatbot = async (req, res) => {
   try {
@@ -338,8 +360,8 @@ exports.createChatbot = async (req, res) => {
       creado_por_persona_id: req.personaId,
       provider: isNonEmptyString(payload.provider) ? sanitizePlainText(payload.provider).toLowerCase() : (process.env.LLM_PROVIDER || (process.env.OLLAMA_BASE_URL ? 'ollama' : 'groq')),
       model_name: isNonEmptyString(payload.model_name) ? sanitizePlainText(payload.model_name) : (process.env.OLLAMA_MODEL || 'qwen2.5:0.5b'),
-      top_k: Number.isFinite(Number(payload.top_k)) ? Math.max(1, Number(payload.top_k)) : 1,
-      max_context_chars: Number.isFinite(Number(payload.max_context_chars)) ? Math.max(200, Number(payload.max_context_chars)) : 600,
+      top_k: Number.isFinite(Number(payload.top_k)) ? Math.max(1, Number(payload.top_k)) : 3,
+      max_context_chars: Number.isFinite(Number(payload.max_context_chars)) ? Math.max(200, Number(payload.max_context_chars)) : 2400,
       max_tokens: Number.isFinite(Number(payload.max_tokens)) ? Math.max(64, Number(payload.max_tokens)) : 256,
       temperature: Number.isFinite(Number(payload.temperature)) ? Number(payload.temperature) : 0.2,
       estado: payload.estado === undefined ? true : Boolean(payload.estado),
@@ -513,12 +535,12 @@ exports.uploadChatbotDocument = async (req, res) => {
       return res.status(400).json({ mensaje: 'Debe adjuntar un archivo PDF' });
     }
 
-    const stored = await saveDocumentFile(chatbot.id, req.file);
     const documento = await ChatbotDocumento.create({
       chatbot_id: chatbot.id,
-      nombre_archivo: stored.filename,
+      nombre_archivo: `${Date.now()}_${String(req.file.originalname || 'documento.pdf').replace(/[^a-zA-Z0-9._-]/g, '_')}`,
       nombre_original: req.file.originalname,
-      ruta_archivo: stored.filePath,
+      // DB-first: no dependemos del filesystem local para reconstruir contexto en producción.
+      ruta_archivo: null,
       mime_type: req.file.mimetype,
       tamano_bytes: req.file.size,
       contenido_pdf: req.file.buffer,
@@ -600,6 +622,43 @@ exports.getChatbotStats = async (req, res) => {
   }
 };
 
+exports.getChatbotRetrievalPreview = async (req, res) => {
+  try {
+    const { chatbot, error } = await findManagedChatbot(req, req.params.id);
+    if (error) {
+      return res.status(error.status).json(error.payload);
+    }
+
+    const question = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+    if (!question) {
+      return res.status(400).json({ mensaje: 'Debe enviar la consulta en el parámetro q' });
+    }
+
+    const topK = Number.isFinite(Number(req.query.topK)) ? Number(req.query.topK) : chatbot.top_k;
+    const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
+    const preview = await manager.debugRetrieval(question, topK);
+
+    return res.json({
+      success: true,
+      chatbotId: chatbot.id,
+      chatbotNombre: chatbot.nombre,
+      tipo: chatbot.tipo,
+      area_id: chatbot.area_id,
+      miniproyecto_id: chatbot.miniproyecto_id,
+      documentos: (chatbot.documentos || []).map((doc) => ({
+        id: doc.id,
+        nombre_original: doc.nombre_original,
+        tamano_bytes: doc.tamano_bytes,
+        estado: doc.estado,
+      })),
+      query: question,
+      retrieval: preview,
+    });
+  } catch (error) {
+    return res.status(500).json({ mensaje: 'Error al previsualizar recuperación RAG', error: error.message });
+  }
+};
+
 exports.chatWithManagedChatbot = async (req, res) => {
   try {
     const chatbot = await Chatbot.findByPk(req.params.id, { include: [{ model: ChatbotDocumento, as: 'documentos' }] });
@@ -610,6 +669,18 @@ exports.chatWithManagedChatbot = async (req, res) => {
     const question = typeof req.body.question === 'string' ? req.body.question.trim() : '';
     if (!question) {
       return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
+    }
+
+    const requestedType = normalizeType(req.body?.tipo || req.query?.tipo || chatbot.tipo);
+    const requestedAreaId = req.body?.area_id !== undefined ? Number(req.body.area_id) : (req.query?.area_id !== undefined ? Number(req.query.area_id) : null);
+    const requestedMiniproyectoId = req.body?.miniproyecto_id !== undefined
+      ? Number(req.body.miniproyecto_id)
+      : (req.query?.miniproyecto_id !== undefined ? Number(req.query.miniproyecto_id) : null);
+    if (!chatbotMatchesContext(chatbot, requestedType, requestedAreaId, requestedMiniproyectoId)) {
+      return res.status(409).json({
+        success: false,
+        error: 'El chatbot seleccionado no coincide con el contexto solicitado.',
+      });
     }
 
     const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
@@ -638,6 +709,18 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
     const question = typeof req.body.question === 'string' ? req.body.question.trim() : '';
     if (!question) {
       return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
+    }
+
+    const requestedType = normalizeType(req.body?.tipo || req.query?.tipo || chatbot.tipo);
+    const requestedAreaId = req.body?.area_id !== undefined ? Number(req.body.area_id) : (req.query?.area_id !== undefined ? Number(req.query.area_id) : null);
+    const requestedMiniproyectoId = req.body?.miniproyecto_id !== undefined
+      ? Number(req.body.miniproyecto_id)
+      : (req.query?.miniproyecto_id !== undefined ? Number(req.query.miniproyecto_id) : null);
+    if (!chatbotMatchesContext(chatbot, requestedType, requestedAreaId, requestedMiniproyectoId)) {
+      return res.status(409).json({
+        success: false,
+        error: 'El chatbot seleccionado no coincide con el contexto solicitado.',
+      });
     }
 
     res.status(200);

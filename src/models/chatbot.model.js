@@ -43,12 +43,12 @@ module.exports = (sequelize, DataTypes) => {
     top_k: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      defaultValue: 1,
+      defaultValue: 3,
     },
     max_context_chars: {
       type: DataTypes.INTEGER,
       allowNull: false,
-      defaultValue: 600,
+      defaultValue: 2400,
     },
     max_tokens: {
       type: DataTypes.INTEGER,

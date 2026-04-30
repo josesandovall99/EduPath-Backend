@@ -32,6 +32,7 @@ router.post('/:id/documents', autenticacionUsuario, requiereAdminODocente, uploa
 router.delete('/:id/documents/:documentId', autenticacionUsuario, requiereAdminODocente, chatbotController.deleteChatbotDocument);
 router.post('/:id/reload', autenticacionUsuario, requiereAdminODocente, chatbotController.reloadChatbotDocuments);
 router.get('/:id/stats', autenticacionUsuario, requiereAdminODocente, chatbotController.getChatbotStats);
+router.get('/:id/retrieval-preview', autenticacionUsuario, requiereAdminODocente, chatbotController.getChatbotRetrievalPreview);
 
 router.post('/:id/chat', autenticacionUsuario, chatbotController.chatWithManagedChatbot);
 router.post('/:id/chat/stream', autenticacionUsuario, chatbotController.chatWithManagedChatbotStream);

@@ -4,7 +4,6 @@ const cors = require('cors');
 const app = express();
 const sequelize = require('./config/database');
 const db = require('./models');
-const { initializeRAG } = require('./controllers/chatbot.controller');
 
 // --- CONFIGURACIÓN DE MIDDLEWARES ---
 app.set('strict routing', false); 
@@ -112,8 +111,7 @@ app.use('/respuestasEstudianteMiniproyecto', require('./routes/respuestasEstudia
 // 4. Diagramas (Añadido desde la versión remota)
 app.use('/diagrams', require('./routes/diagram.routes'));
 
-// 5. Chatbot RAG con Groq
-app.use('/chatbot', require('./routes/chatbot.routes'));
+// 5. Chatbot RAG gestionado por chatbotId (único flujo permitido)
 app.use('/chatbots', require('./routes/chatbots.routes'));
 
 // --- RUTA DE MONITOREO ---
@@ -133,8 +131,7 @@ db.sequelize.sync({ alter: true })
     .then(async () => {
         console.log('Base de datos sincronizada con exito');
         
-        // Inicializar Chatbot RAG
-        await initializeRAG();
+        console.log('RAG legacy global deshabilitado. Se usa únicamente /chatbots/:id');
         
         app.listen(PORT, () => {
             console.log(`Servidor corriendo en http://localhost:${PORT}`);

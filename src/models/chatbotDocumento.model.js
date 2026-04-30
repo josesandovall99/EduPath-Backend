@@ -19,7 +19,7 @@ module.exports = (sequelize, DataTypes) => {
     },
     ruta_archivo: {
       type: DataTypes.TEXT,
-      allowNull: false,
+      allowNull: true,
     },
     mime_type: {
       type: DataTypes.STRING(100),
@@ -37,7 +37,7 @@ module.exports = (sequelize, DataTypes) => {
       defaultValue: true,
     },
     contenido_pdf: {
-      type: DataTypes.BLOB,
+      type: DataTypes.BLOB('long'),
       allowNull: true,
     },
   }, {
