@@ -694,13 +694,13 @@ exports.chatWithManagedChatbot = async (req, res) => {
     } else {
       console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
     }
+    // Reutilizar el mismo manager ya construido, sin re-indexar.
     const result = await manager.chat(question, effectiveTopK);
     if (!result.success && typeof result.error === 'string' && result.error.toLowerCase().includes('timeout')) {
       return res.status(504).json(result);
     }
 
-    // Ensure response is Markdown; if not, apply a conservative conversion.
-    const rawAnswer = result.answer || '';
+    const rawAnswer = resolveAnswerWithContextFallback(result.answer || '', retrievalDebug);
     const finalAnswer = looksLikeMarkdown(rawAnswer) ? rawAnswer : forceMarkdown(rawAnswer);
 
     return res.json({ chatbotId: chatbot.id, chatbotNombre: chatbot.nombre, success: result.success, answer: finalAnswer });
@@ -747,20 +747,13 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
     } else {
       console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
     }
-    // Stream tokens immediately to the client so the frontend can render progressively.
-    const result = await manager.chatStream(question, effectiveTopK, async (chunk) => {
-      try {
-        const cleaned = transformStreamingChunk(String(chunk || ''));
-        res.write(cleaned);
-      } catch (e) {
-        // ignore write errors while streaming
-      }
-    });
-
-    if (!result.success) {
-      res.write(result.answer || result.error || 'No tengo esa información en los documentos cargados.');
-    }
-
+    // Reutilizar el mismo manager ya construido, sin re-indexar.
+    const result = await manager.chat(question, effectiveTopK);
+    const resolvedAnswer = resolveAnswerWithContextFallback(
+      result.answer || result.error || 'No tengo esa información en los documentos cargados.',
+      retrievalDebug,
+    );
+    res.write(transformStreamingChunk(String(resolvedAnswer || 'No tengo esa información en los documentos cargados.')));
     return res.end();
   } catch (error) {
     if (!res.headersSent) {
@@ -819,4 +812,30 @@ function transformStreamingChunk(chunk) {
   c = c.replace(/(^|\n)\s*-\s*/g, '\n- ');
 
   return c;
+}
+
+function resolveAnswerWithContextFallback(answer, retrievalDebug) {
+  const fallbackText = 'No tengo esa información en los documentos cargados.';
+  const normalized = String(answer || '').trim();
+  const looksLikeNoInfo = normalized.toLowerCase().includes(fallbackText.toLowerCase());
+  if (!looksLikeNoInfo) {
+    return normalized || fallbackText;
+  }
+
+  const matches = Array.isArray(retrievalDebug?.matches) ? retrievalDebug.matches : [];
+  const meaningfulMatches = matches.filter((match) => Number(match?.score || 0) >= 0.005);
+  if (meaningfulMatches.length === 0) {
+    return fallbackText;
+  }
+
+  const bullets = meaningfulMatches.slice(0, 2).map((match) => {
+    const snippet = String(match?.snippet || '').replace(/\s+/g, ' ').trim().slice(0, 220);
+    return `- ${snippet}${snippet.endsWith('.') ? '' : '.'}`;
+  });
+  const source = meaningfulMatches[0]?.metadata?.source_pdf || 'documento cargado';
+
+  return [
+    `En los documentos cargados encontré información relacionada en **${source}**:`,
+    ...bullets,
+  ].join('\n');
 }

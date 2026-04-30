@@ -304,7 +304,7 @@ class RAGManager {
         this.provider = config.provider || (config.ollamaBaseUrl ? 'ollama' : 'groq');
         this.defaultTopK = Math.max(1, Number(config.defaultTopK || 1));
         this.maxTopK = Math.max(this.defaultTopK, Number(config.maxTopK || this.defaultTopK));
-        this.maxContextChars = Math.max(100, Number(config.maxContextChars || process.env.CHATBOT_MAX_CONTEXT_CHARS || 400));
+        this.maxContextChars = Math.max(1200, Number(config.maxContextChars || process.env.CHATBOT_MAX_CONTEXT_CHARS || 2400));
         this.systemPrompt = config.systemPrompt || (`Responde únicamente con información presente en el CONTEXTO.
 Si la respuesta no está claramente en el contexto, responde exactamente: "No tengo esa información en los documentos cargados".
 No inventes datos, no uses conocimiento externo ni ejemplos de otros dominios.
