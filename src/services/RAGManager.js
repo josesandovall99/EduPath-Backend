@@ -305,14 +305,10 @@ class RAGManager {
         this.defaultTopK = Math.max(1, Number(config.defaultTopK || 1));
         this.maxTopK = Math.max(this.defaultTopK, Number(config.maxTopK || this.defaultTopK));
         this.maxContextChars = Math.max(100, Number(config.maxContextChars || process.env.CHATBOT_MAX_CONTEXT_CHARS || 400));
-        this.systemPrompt = config.systemPrompt || (`Responde solo con base en el contexto. Si la respuesta no está en el contexto, responde: "No tengo esa información en los documentos cargados".
-    Responde en formato Markdown y optimiza la salida para streaming: cuando enumeres elementos usa listas numeradas ("1.") o con viñetas ("- "), coloca cada ítem en su propia línea y no pongas varios ítems en la misma línea. Usa **negritas** para títulos o puntos clave. NO incluyas HTML ni etiquetas.
-
-    Ejemplo de salida esperada:
-    1. **Contexto**: La aplicación debe ser flexible para manejar diferentes tipos de reservas.
-    2. **Objetivo**: Proveer una solución multiplataforma para reservas, pedidos y pagos.
-
-    Si tienes que enumerar más de un punto, empieza cada punto con su propio marcador y termina con un salto de línea.`);
+        this.systemPrompt = config.systemPrompt || (`Responde únicamente con información presente en el CONTEXTO.
+Si la respuesta no está claramente en el contexto, responde exactamente: "No tengo esa información en los documentos cargados".
+No inventes datos, no uses conocimiento externo ni ejemplos de otros dominios.
+Responde en Markdown, con frases claras y directas.`);
         
         this.vectorStore = new SimpleVectorStore();
         this.textSplitter = new RecursiveCharacterTextSplitter({
@@ -391,6 +387,8 @@ class RAGManager {
             .replace('{question}', question);
         logTiming('Construcción de prompt', promptStart);
         console.log(`Contexto chars: ${context.length} | Prompt chars: ${finalPrompt.length} | topK: ${safeTopK}`);
+        const contextPreview = context.slice(0, 240).replace(/\s+/g, ' ');
+        console.log(`[RAG CONTEXT PREVIEW] ${contextPreview}`);
 
         return { success: true, finalPrompt, safeTopK };
     }
@@ -424,7 +422,8 @@ class RAGManager {
 
     // Método para cargar PDFs desde memoria (Subidas desde Web/React)
     async loadPDFFromBuffer(pdfBuffer, filename = 'documento.pdf', extraMetadata = {}) {
-        const tempPath = path.join(__dirname, `temp_${Date.now()}.pdf`);
+        const uniqueToken = `${Date.now()}_${process.pid}_${Math.random().toString(36).slice(2, 10)}`;
+        const tempPath = path.join(__dirname, `temp_${uniqueToken}.pdf`);
         await fs.writeFile(tempPath, pdfBuffer);
         try {
             const loader = new PDFLoader(tempPath);
