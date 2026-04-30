@@ -36,6 +36,10 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false,
       defaultValue: true,
     },
+    contenido_pdf: {
+      type: DataTypes.BLOB,
+      allowNull: true,
+    },
   }, {
     tableName: 'chatbot_documentos',
     timestamps: true,

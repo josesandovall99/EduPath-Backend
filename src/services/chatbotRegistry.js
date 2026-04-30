@@ -91,14 +91,20 @@ async function loadDocumentsIntoManager(manager, documents) {
   for (const document of documents) {
     if (document.estado === false) continue;
     try {
-      if (!document?.ruta_archivo) {
-        console.warn('Documento sin ruta de archivo, se omite:', document && document.id ? document.id : document);
-        continue;
+      if (document.contenido_pdf) {
+        // Usar el contenido almacenado en BD (persiste aunque el filesystem sea efímero)
+        const buffer = Buffer.isBuffer(document.contenido_pdf)
+          ? document.contenido_pdf
+          : Buffer.from(document.contenido_pdf);
+        await manager.loadPDFFromBuffer(buffer, document.nombre_original || 'documento.pdf');
+      } else if (document.ruta_archivo) {
+        // Fallback para documentos anteriores sin contenido en BD
+        await manager.loadPDFFromPath(document.ruta_archivo);
+      } else {
+        console.warn('Documento sin contenido ni ruta, se omite:', document?.id);
       }
-      await manager.loadPDFFromPath(document.ruta_archivo);
     } catch (err) {
-      console.error(`Error cargando documento ${document?.ruta_archivo}:`, err.message || err);
-      // continuar con los demás documentos en lugar de abortar la inicialización
+      console.error(`Error cargando documento ${document?.id}:`, err.message || err);
     }
   }
 }

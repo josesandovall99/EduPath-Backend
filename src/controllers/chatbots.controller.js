@@ -521,6 +521,7 @@ exports.uploadChatbotDocument = async (req, res) => {
       ruta_archivo: stored.filePath,
       mime_type: req.file.mimetype,
       tamano_bytes: req.file.size,
+      contenido_pdf: req.file.buffer,
       estado: true,
     }, { transaction });
     await transaction.commit();
