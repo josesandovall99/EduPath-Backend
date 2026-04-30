@@ -4,6 +4,33 @@ const RAGManager = require('./RAGManager');
 
 const managers = new Map();
 
+function buildFingerprint(chatbot, documents = []) {
+  const chatbotPart = [
+    chatbot?.id ?? '',
+    chatbot?.updatedAt ? new Date(chatbot.updatedAt).toISOString() : '',
+    chatbot?.provider ?? '',
+    chatbot?.model_name ?? '',
+    chatbot?.top_k ?? '',
+    chatbot?.max_context_chars ?? '',
+    chatbot?.max_tokens ?? '',
+    chatbot?.temperature ?? '',
+    chatbot?.prompt_base ?? '',
+  ].join('|');
+
+  const docsPart = (documents || [])
+    .filter((doc) => doc?.estado !== false)
+    .map((doc) => [
+      doc?.id ?? '',
+      doc?.updatedAt ? new Date(doc.updatedAt).toISOString() : '',
+      doc?.tamano_bytes ?? '',
+      doc?.nombre_original ?? '',
+    ].join(':'))
+    .sort()
+    .join(',');
+
+  return `${chatbotPart}::${docsPart}`;
+}
+
 function getPreferredProviders(chatbot) {
   const preferred = String(chatbot.provider || process.env.LLM_PROVIDER || '').trim().toLowerCase();
   const hasOllama = !!process.env.OLLAMA_BASE_URL;
@@ -147,8 +174,10 @@ async function loadDocumentsIntoManager(manager, documents) {
 }
 
 async function ensureChatbotManager(chatbot, documents = []) {
-  if (managers.has(chatbot.id)) {
-    return managers.get(chatbot.id);
+  const fingerprint = buildFingerprint(chatbot, documents);
+  const cached = managers.get(chatbot.id);
+  if (cached && cached.fingerprint === fingerprint) {
+    return cached.manager;
   }
 
   const manager = await createChatbotManager(chatbot);
@@ -158,7 +187,7 @@ async function ensureChatbotManager(chatbot, documents = []) {
     const firstFailure = loadSummary.failed[0]?.reason || 'No fue posible procesar ningún documento.';
     throw new Error(`No se pudo indexar ningún PDF del chatbot ${chatbot.id}. ${firstFailure}`);
   }
-  managers.set(chatbot.id, manager);
+  managers.set(chatbot.id, { manager, fingerprint });
   return manager;
 }
 

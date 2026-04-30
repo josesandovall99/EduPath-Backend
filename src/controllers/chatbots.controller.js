@@ -675,17 +675,8 @@ exports.chatWithManagedChatbot = async (req, res) => {
       return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
     }
 
-    const requestedType = normalizeType(req.body?.tipo || req.query?.tipo || chatbot.tipo);
-    const requestedAreaId = req.body?.area_id !== undefined ? Number(req.body.area_id) : (req.query?.area_id !== undefined ? Number(req.query.area_id) : null);
-    const requestedMiniproyectoId = req.body?.miniproyecto_id !== undefined
-      ? Number(req.body.miniproyecto_id)
-      : (req.query?.miniproyecto_id !== undefined ? Number(req.query.miniproyecto_id) : null);
-    if (!chatbotMatchesContext(chatbot, requestedType, requestedAreaId, requestedMiniproyectoId)) {
-      return res.status(409).json({
-        success: false,
-        error: 'El chatbot seleccionado no coincide con el contexto solicitado.',
-      });
-    }
+    // El chatbot objetivo lo define el :id de la URL. No bloqueamos por metadatos
+    // de contexto enviados por el cliente para evitar conflictos falsos (409).
 
     const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
     const result = await manager.chat(question, chatbot.top_k);
@@ -715,17 +706,8 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
       return res.status(400).json({ success: false, error: 'La pregunta no puede estar vacía' });
     }
 
-    const requestedType = normalizeType(req.body?.tipo || req.query?.tipo || chatbot.tipo);
-    const requestedAreaId = req.body?.area_id !== undefined ? Number(req.body.area_id) : (req.query?.area_id !== undefined ? Number(req.query.area_id) : null);
-    const requestedMiniproyectoId = req.body?.miniproyecto_id !== undefined
-      ? Number(req.body.miniproyecto_id)
-      : (req.query?.miniproyecto_id !== undefined ? Number(req.query.miniproyecto_id) : null);
-    if (!chatbotMatchesContext(chatbot, requestedType, requestedAreaId, requestedMiniproyectoId)) {
-      return res.status(409).json({
-        success: false,
-        error: 'El chatbot seleccionado no coincide con el contexto solicitado.',
-      });
-    }
+    // El chatbot objetivo lo define el :id de la URL. No bloqueamos por metadatos
+    // de contexto enviados por el cliente para evitar conflictos falsos (409).
 
     res.status(200);
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
