@@ -324,6 +324,10 @@ exports.resolveActiveChatbot = async (req, res) => {
 function chatbotMatchesContext(chatbot, expectedType, expectedAreaId, expectedMiniproyectoId) {
   if (!chatbot) return false;
   if (expectedType && String(chatbot.tipo) !== String(expectedType)) return false;
+  if (expectedType === 'GENERAL_DOCENTE' || expectedType === 'GENERAL_ADMINISTRADOR') {
+    // Chatbots generales por rol son globales por diseño (sin área/miniproyecto asociado).
+    return true;
+  }
   if (Number.isFinite(expectedAreaId) && Number(chatbot.area_id) !== Number(expectedAreaId)) return false;
   if (expectedType === 'MINIPROYECTO' && Number.isFinite(expectedMiniproyectoId) && Number(chatbot.miniproyecto_id) !== Number(expectedMiniproyectoId)) return false;
   return true;
