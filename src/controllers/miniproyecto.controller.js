@@ -86,6 +86,25 @@ const normalizeEmbeddedConfig = (exercise) => {
   const resultado = exercise.resultado_ejercicio || '';
 
   if (tipo === 'Compilador') {
+    if (configuracion?.tipo === 'mvc') {
+      const casos_prueba = Array.isArray(configuracion.casos_prueba)
+        ? configuracion.casos_prueba.map((c) => ({
+            inputs: (c.inputs || '').toString().trim(),
+            output: (c.output || '').toString().trim(),
+          }))
+        : [];
+      return {
+        configuracion: {
+          ...configuracion,
+          tipo: 'mvc',
+          lenguajesPermitidos: [62],
+          casos_prueba,
+        },
+        resultado_ejercicio: resultado || '',
+        codigoEstructura: null,
+      };
+    }
+
     const normalizedCompilerConfig = normalizarConfiguracionCompilador({
       configuracion,
       codigoEstructura: exercise.codigoEstructura,
@@ -200,9 +219,16 @@ const validateEmbeddedExercise = (exercise, index) => {
   }
 
   if (exercise.tipo_ejercicio === 'Compilador') {
+    const cfg = exercise.configuracion || {};
+
+    if (cfg.tipo === 'mvc') {
+      return;
+    }
+
+    const codigoEstructura = exercise.codigoEstructura || null;
     const validation = validarConfiguracionCompilador({
       configuracion: exercise.configuracion,
-      codigoEstructura: exercise.codigoEstructura,
+      codigoEstructura,
     });
 
     if (!validation.ok) {
@@ -339,6 +365,7 @@ const evaluateEmbeddedExercise = async ({ exercise, reqBody }) => {
         return { status: 400, payload: { message: 'Se requieren los archivos main, modelo y consolaIO para este ejercicio.' } };
       }
       const { mergeMvcFiles } = require('../utils/javaMultiFileCompiler');
+      const evaluadorCasos = require('../services/evaluadorCasosPrueba');
       const codigoFusionado = mergeMvcFiles(archivos.main, archivos.modelo, archivos.consolaIO);
       const casosPrueba = Array.isArray(cfg.casos_prueba) && cfg.casos_prueba.length > 0
         ? cfg.casos_prueba
@@ -1337,6 +1364,27 @@ exports.ejecutarMiniproyectoProgramacion = async (req, res) => {
 
     const { configuracion } = loadProgrammingMiniproyectoConfig(miniproyecto);
 
+    // Ruta MVC: el código ya tiene main (programa completo fusionado).
+    // Usar evaluarCasosPruebaMvc en lugar del path de extracción de métodos.
+    const isMvcCode = /public\s+static\s+void\s+main\s*\(/.test(codigo);
+    const casosPruebaConfigured = (configuracion?.casos_prueba || []).filter(c => c.output?.trim());
+
+    if (isMvcCode && casosPruebaConfigured.length > 0) {
+      const evaluadorCasos = require('../services/evaluadorCasosPrueba');
+      const resultado = await evaluadorCasos.evaluarCasosPruebaMvc(codigo, casosPruebaConfigured);
+      if (resultado.errorTecnico) {
+        return res.status(502).json({ message: resultado.resumen || 'Error técnico al ejecutar.' });
+      }
+      return res.status(200).json({
+        modo: 'ejecucion',
+        message: 'Ejecución completada.',
+        resumen: resultado.resumen,
+        casos: resultado.resultados || [],
+        stdout: '',
+        stderr: ''
+      });
+    }
+
     const evaluacion = await evaluacionController.evaluateCompilerSubmission({
       codigo,
       lenguaje_id,
@@ -1413,6 +1461,63 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
     }
 
     const { esperado, configuracion } = loadProgrammingMiniproyectoConfig(miniproyecto);
+
+    // Ruta MVC: el código ya tiene main (programa completo fusionado).
+    // Usar evaluarCasosPruebaMvc en lugar del path de extracción de métodos.
+    const isMvcCodeEnviar = /public\s+static\s+void\s+main\s*\(/.test(codigo);
+    const casosPruebaEnviar = (configuracion?.casos_prueba || []).filter(c => c.output?.trim());
+
+    if (isMvcCodeEnviar && casosPruebaEnviar.length > 0) {
+      const evaluadorCasos = require('../services/evaluadorCasosPrueba');
+      const resultado = await evaluadorCasos.evaluarCasosPruebaMvc(codigo, casosPruebaEnviar);
+
+      if (resultado.errorTecnico) {
+        return res.status(502).json({ message: resultado.resumen || 'Error técnico al ejecutar.' });
+      }
+
+      const aprobado = resultado.aprobado;
+      const respuestaPayload = JSON.stringify({ codigo, lenguaje_id, casosPrueba: resultado.resultados });
+
+      const existenteRespuesta = await RespuestaEstudianteMiniproyecto.findOne({
+        where: { estudiante_id, miniproyecto_id: parseInt(id, 10) }
+      });
+      if (existenteRespuesta) {
+        await existenteRespuesta.update({
+          respuesta: respuestaPayload,
+          estado: aprobado ? 'COMPLETADO' : 'REPROBADO',
+          contador: (Number.isFinite(existenteRespuesta.contador) ? existenteRespuesta.contador : 0) + 1
+        });
+      } else {
+        await RespuestaEstudianteMiniproyecto.create({
+          respuesta: respuestaPayload,
+          estudiante_id,
+          miniproyecto_id: parseInt(id, 10),
+          estado: aprobado ? 'COMPLETADO' : 'REPROBADO',
+          contador: 1
+        });
+      }
+
+      const evalPayload = {
+        calificacion: aprobado ? 100 : 0,
+        retroalimentacion: resultado.resumen,
+        estudiante_id,
+        miniproyecto_id: parseInt(id, 10),
+        estado: aprobado ? 'APROBADO' : 'REPROBADO'
+      };
+      const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10) } });
+      if (evalPrev) {
+        await evalPrev.update(evalPayload);
+      } else {
+        await Evaluacion.create(evalPayload);
+      }
+
+      return res.status(aprobado ? 200 : 400).json({
+        esCorrecta: aprobado,
+        puntosObtenidos: aprobado ? 100 : 0,
+        casos: resultado.resultados || [],
+        resumen: resultado.resumen
+      });
+    }
 
     const evaluacion = await evaluacionController.evaluateCompilerSubmission({
       codigo,
