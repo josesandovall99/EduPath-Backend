@@ -403,13 +403,22 @@ class RAGManager {
     }
 
     // Método para cargar PDFs desde memoria (Subidas desde Web/React)
-    async loadPDFFromBuffer(pdfBuffer, filename = 'documento.pdf') {
+    async loadPDFFromBuffer(pdfBuffer, filename = 'documento.pdf', extraMetadata = {}) {
         const tempPath = path.join(__dirname, `temp_${Date.now()}.pdf`);
         await fs.writeFile(tempPath, pdfBuffer);
         try {
             const loader = new PDFLoader(tempPath);
             const docs = await loader.load();
-            const splitDocs = await this.textSplitter.splitDocuments(docs);
+            const splitDocsRaw = await this.textSplitter.splitDocuments(docs);
+            const splitDocs = splitDocsRaw.map((doc, index) => ({
+                ...doc,
+                metadata: {
+                    ...(doc.metadata || {}),
+                    source_pdf: filename,
+                    chunk_index: index,
+                    ...extraMetadata,
+                },
+            }));
             await this.vectorStore.addDocuments(splitDocs);
             return { success: true, message: 'PDF cargado', chunks: splitDocs.length };
         } catch (error) {

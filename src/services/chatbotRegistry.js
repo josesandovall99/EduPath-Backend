@@ -153,7 +153,15 @@ async function loadDocumentsIntoManager(manager, documents) {
         if (!buffer || buffer.length === 0) {
           throw new Error('contenido_pdf inválido o vacío');
         }
-        await manager.loadPDFFromBuffer(buffer, document.nombre_original || 'documento.pdf');
+        await manager.loadPDFFromBuffer(
+          buffer,
+          document.nombre_original || 'documento.pdf',
+          {
+            chatbot_id: document.chatbot_id,
+            chatbot_documento_id: document.id,
+            nombre_original: document.nombre_original,
+          },
+        );
         loaded.push(document.id);
       } else if (document.ruta_archivo) {
         // Fallback para documentos anteriores sin contenido en BD

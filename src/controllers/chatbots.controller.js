@@ -680,8 +680,21 @@ exports.chatWithManagedChatbot = async (req, res) => {
     // El chatbot objetivo lo define el :id de la URL. No bloqueamos por metadatos
     // de contexto enviados por el cliente para evitar conflictos falsos (409).
 
-    const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
-    const result = await manager.chat(question, chatbot.top_k);
+    const manager = await reloadChatbotManager(chatbot, chatbot.documentos || []);
+    const effectiveTopK = Math.max(3, Number(chatbot.top_k || 3));
+    const retrievalDebug = await manager.debugRetrieval(question, effectiveTopK);
+    if (retrievalDebug?.success) {
+      const brief = retrievalDebug.matches.slice(0, 3).map((m) => ({
+        rank: m.rank,
+        score: m.score,
+        source_pdf: m.metadata?.source_pdf || m.metadata?.source || 'desconocido',
+        chatbot_documento_id: m.metadata?.chatbot_documento_id ?? null,
+      }));
+      console.log(`[RAG DEBUG] chatbot=${chatbot.id} question="${question.slice(0, 80)}" topK=${effectiveTopK} chunks=${retrievalDebug.chunksLoaded} matches=${JSON.stringify(brief)}`);
+    } else {
+      console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
+    }
+    const result = await manager.chat(question, effectiveTopK);
     if (!result.success && typeof result.error === 'string' && result.error.toLowerCase().includes('timeout')) {
       return res.status(504).json(result);
     }
@@ -720,9 +733,22 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
       res.flushHeaders();
     }
 
-    const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
+    const manager = await reloadChatbotManager(chatbot, chatbot.documentos || []);
+    const effectiveTopK = Math.max(3, Number(chatbot.top_k || 3));
+    const retrievalDebug = await manager.debugRetrieval(question, effectiveTopK);
+    if (retrievalDebug?.success) {
+      const brief = retrievalDebug.matches.slice(0, 3).map((m) => ({
+        rank: m.rank,
+        score: m.score,
+        source_pdf: m.metadata?.source_pdf || m.metadata?.source || 'desconocido',
+        chatbot_documento_id: m.metadata?.chatbot_documento_id ?? null,
+      }));
+      console.log(`[RAG DEBUG] chatbot=${chatbot.id} question="${question.slice(0, 80)}" topK=${effectiveTopK} chunks=${retrievalDebug.chunksLoaded} matches=${JSON.stringify(brief)}`);
+    } else {
+      console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
+    }
     // Stream tokens immediately to the client so the frontend can render progressively.
-    const result = await manager.chatStream(question, chatbot.top_k, async (chunk) => {
+    const result = await manager.chatStream(question, effectiveTopK, async (chunk) => {
       try {
         const cleaned = transformStreamingChunk(String(chunk || ''));
         res.write(cleaned);
