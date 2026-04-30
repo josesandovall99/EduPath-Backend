@@ -758,7 +758,7 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
     });
 
     if (!result.success) {
-      res.write(result.error || 'No se pudo generar la respuesta.');
+      res.write(result.answer || result.error || 'No tengo esa información en los documentos cargados.');
     }
 
     return res.end();

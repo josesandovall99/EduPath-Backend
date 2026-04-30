@@ -352,7 +352,7 @@ Responde en Markdown, con frases claras y directas.`);
         logTiming('Recuperación RAG', retrievalStart);
 
         // Evita pasar ruido al LLM: si la similitud es muy baja, no hay base confiable.
-        const minScore = Number(process.env.RAG_MIN_SCORE || 0.02);
+        const minScore = Number(process.env.RAG_MIN_SCORE || 0.005);
         const relevantDocs = scoredDocs.filter(({ score }) => Number(score) >= minScore);
         if (relevantDocs.length === 0) {
             return {
@@ -465,7 +465,11 @@ Responde en Markdown, con frases claras y directas.`);
         try {
             const promptData = await this.buildPrompt(question, topK);
             if (!promptData.success) {
-                return promptData;
+                return {
+                    success: false,
+                    answer: promptData.answer || 'No tengo esa información en los documentos cargados.',
+                    error: promptData.error || null,
+                };
             }
 
             let answer;
@@ -493,7 +497,11 @@ Responde en Markdown, con frases claras y directas.`);
         try {
             const promptData = await this.buildPrompt(question, topK);
             if (!promptData.success) {
-                return promptData;
+                return {
+                    success: false,
+                    answer: promptData.answer || 'No tengo esa información en los documentos cargados.',
+                    error: promptData.error || null,
+                };
             }
 
             let answer = '';
