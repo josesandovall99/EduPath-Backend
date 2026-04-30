@@ -611,7 +611,8 @@ exports.getChatbotStats = async (req, res) => {
       return res.status(error.status).json(error.payload);
     }
 
-    const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
+    // Forzar recarga desde BD en cada pregunta para evitar cualquier mezcla por cache en memoria.
+    const manager = await reloadChatbotManager(chatbot, chatbot.documentos || []);
     return res.json({
       success: true,
       chatbotId: chatbot.id,
@@ -639,7 +640,8 @@ exports.getChatbotRetrievalPreview = async (req, res) => {
     }
 
     const topK = Number.isFinite(Number(req.query.topK)) ? Number(req.query.topK) : chatbot.top_k;
-    const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
+    // Forzar recarga desde BD en cada pregunta para evitar cualquier mezcla por cache en memoria.
+    const manager = await reloadChatbotManager(chatbot, chatbot.documentos || []);
     const preview = await manager.debugRetrieval(question, topK);
 
     return res.json({
