@@ -748,12 +748,30 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
       console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
     }
     // Reutilizar el mismo manager ya construido, sin re-indexar.
-    const result = await manager.chat(question, effectiveTopK);
-    const resolvedAnswer = resolveAnswerWithContextFallback(
-      result.answer || result.error || 'No tengo esa información en los documentos cargados.',
-      retrievalDebug,
-    );
-    res.write(transformStreamingChunk(String(resolvedAnswer || 'No tengo esa información en los documentos cargados.')));
+    // Streaming real: emite tokens progresivamente al cliente.
+    let fullAnswer = '';
+    const result = await manager.chatStream(question, effectiveTopK, async (chunk) => {
+      try {
+        const cleaned = transformStreamingChunk(String(chunk || ''));
+        if (cleaned) {
+          fullAnswer += cleaned;
+          res.write(cleaned);
+        }
+      } catch (_) {
+        // ignorar errores de escritura durante stream
+      }
+    });
+
+    // Si el modelo devolvió fallback o no generó nada, aplicar guardrail extractivo.
+    if (!fullAnswer.trim() || !result.success) {
+      const resolvedAnswer = resolveAnswerWithContextFallback(
+        result.answer || result.error || 'No tengo esa información en los documentos cargados.',
+        retrievalDebug,
+      );
+      const cleaned = transformStreamingChunk(String(resolvedAnswer || 'No tengo esa información en los documentos cargados.'));
+      res.write(cleaned);
+    }
+
     return res.end();
   } catch (error) {
     if (!res.headersSent) {
