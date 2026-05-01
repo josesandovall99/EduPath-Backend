@@ -1942,7 +1942,8 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
     // Obtener solo temas activos (estado = true) para aplicar filtro en cascada
     const temas = await Tema.findAll({
       where: { area_id: aId, estado: true },
-      attributes: ['id']
+      attributes: ['id', 'nombre', 'orden'],
+      order: [['orden', 'ASC'], ['id', 'ASC']]
     });
     const temaIds = temas.map(t => t.id);
 
@@ -2075,6 +2076,97 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
       };
     }
 
+    // ==========================================
+    // 5. INFO POR TEMA (para tarjetas del dashboard)
+    //    Un tema está COMPLETO solo si:
+    //      • todos sus contenidos en secuencia activa están visualizados, Y
+    //      • todos sus ejercicios están aprobados.
+    // ==========================================
+    const contenidosPorTema = await Contenido.findAll({
+      where: {
+        tema_id: { [Op.in]: temaIds.length > 0 ? temaIds : [0] },
+        id: { [Op.in]: contenidoIds.length > 0 ? contenidoIds : [0] },
+        estado: true
+      },
+      attributes: ['id', 'tema_id']
+    });
+
+    // Mapa tema_id → [contenido_ids] y contenido_id → tema_id
+    const contenidosPorTemaMap = new Map();
+    const contenidoToTema = new Map();
+    for (const c of contenidosPorTema) {
+      const tId = Number(c.tema_id);
+      const cId = Number(c.id);
+      if (!contenidosPorTemaMap.has(tId)) contenidosPorTemaMap.set(tId, []);
+      contenidosPorTemaMap.get(tId).push(cId);
+      contenidoToTema.set(cId, tId);
+    }
+
+    // Contenidos visualizados por el estudiante
+    const visualizadosRows = await Progreso.findAll({
+      where: {
+        estudiante_id: esId,
+        contenido_id: { [Op.in]: contenidoIds.length > 0 ? contenidoIds : [0] },
+        completado: true,
+        estado: 'Visualizado'
+      },
+      attributes: ['contenido_id']
+    });
+    const visualizadosSet = new Set(visualizadosRows.map(r => Number(r.contenido_id)));
+
+    // Ejercicios por tema (vía contenido_id → tema_id)
+    const ejerciciosConContenido = await Ejercicio.findAll({
+      where: { id: { [Op.in]: ejercicioIds.length > 0 ? ejercicioIds : [0] } },
+      attributes: ['id', 'contenido_id']
+    });
+    const ejerciciosPorTemaMap = new Map();
+    for (const ej of ejerciciosConContenido) {
+      const tId = contenidoToTema.get(Number(ej.contenido_id));
+      if (!tId) continue;
+      if (!ejerciciosPorTemaMap.has(tId)) ejerciciosPorTemaMap.set(tId, []);
+      ejerciciosPorTemaMap.get(tId).push(Number(ej.id));
+    }
+
+    // Ejercicios estrictamente APROBADOS (no basta con ENVIADO)
+    const ejerciciosAprobadosRows = await RespuestaEstudianteEjercicio.findAll({
+      where: {
+        estudiante_id: esId,
+        ejercicio_id: { [Op.in]: ejercicioIds.length > 0 ? ejercicioIds : [0] },
+        estado: 'APROBADO'
+      },
+      attributes: ['ejercicio_id']
+    });
+    const ejerciciosAprobadosSet = new Set(ejerciciosAprobadosRows.map(r => Number(r.ejercicio_id)));
+
+    let temasCompletados = 0;
+    let siguienteTemaNombre = null;
+    const temasDetalle = temas.map(t => {
+      const cIds = contenidosPorTemaMap.get(Number(t.id)) || [];
+      const eIds = ejerciciosPorTemaMap.get(Number(t.id)) || [];
+      const totalC = cIds.length;
+      const totalE = eIds.length;
+      const vistos = cIds.filter(id => visualizadosSet.has(id)).length;
+      const aprobados = eIds.filter(id => ejerciciosAprobadosSet.has(id)).length;
+
+      // Tema completo: tiene items Y todos están terminados
+      const totalTotal = totalC + totalE;
+      const hechosTotal = vistos + aprobados;
+      const completado = totalTotal > 0 && hechosTotal === totalTotal;
+
+      if (completado) temasCompletados += 1;
+      else if (!siguienteTemaNombre) siguienteTemaNombre = t.nombre;
+
+      return {
+        id: t.id,
+        nombre: t.nombre,
+        totalContenidos: totalC,
+        contenidosVistos: vistos,
+        totalEjercicios: totalE,
+        ejerciciosAprobados: aprobados,
+        completado
+      };
+    });
+
     res.json({
       area: {
         id: area.id,
@@ -2086,6 +2178,13 @@ exports.obtenerProgresoEstudiantePorArea = async (req, res) => {
         total: totalMiniproyectos,
         aprobados: miniproyectosAprobados,
         desaprobados: miniproyectosDesaprobados
+      },
+      temas: {
+        total: temas.length,
+        completados: temasCompletados,
+        pendientes: temas.length - temasCompletados,
+        siguiente: siguienteTemaNombre || (temas.length > 0 ? 'Todos los temas completados' : 'Sin temas registrados'),
+        detalle: temasDetalle
       },
       resumen: {
         totalItems,
