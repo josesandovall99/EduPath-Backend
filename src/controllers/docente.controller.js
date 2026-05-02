@@ -11,6 +11,21 @@ const {
   removePersonaSensitiveFields,
 } = require('../utils/inputSecurity');
 
+async function generarCodigoDocente(transaction) {
+  const personas = await Persona.findAll({
+    where: { tipoUsuario: 'DOCENTE' },
+    attributes: ['codigoAcceso'],
+    transaction,
+  });
+  let max = 0;
+  const re = /^DOC(\d+)$/;
+  for (const p of personas) {
+    const m = p.codigoAcceso?.match(re);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `DOC${String(max + 1).padStart(3, '0')}`;
+}
+
 /* =========================
    CREAR DOCENTE
 ========================= */
@@ -18,9 +33,9 @@ const crearDocente = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const { nombre, email, codigoAcceso, especialidad, areaId } = req.body;
+    const { nombre, email, especialidad, areaId } = req.body;
 
-    if (!isNonEmptyString(nombre) || !isValidEmail(email) || !isNonEmptyString(codigoAcceso)) {
+    if (!isNonEmptyString(nombre) || !isValidEmail(email)) {
       await transaction.rollback();
       return res.status(400).json({
         mensaje: "Datos invalidos para crear docente",
@@ -49,6 +64,7 @@ const crearDocente = async (req, res) => {
       });
     }
 
+    const codigoAcceso = await generarCodigoDocente(transaction);
     const passwordPlano = generarPassword();
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(passwordPlano, salt);
@@ -57,7 +73,7 @@ const crearDocente = async (req, res) => {
       {
         nombre: sanitizePlainText(nombre),
         email: email.trim().toLowerCase(),
-        codigoAcceso: sanitizePlainText(codigoAcceso),
+        codigoAcceso,
         contraseña: passwordHash,
         tipoUsuario: "DOCENTE",
       },
