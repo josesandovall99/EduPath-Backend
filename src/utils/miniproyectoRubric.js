@@ -286,7 +286,7 @@ const enrichMiniproyectoResponse = (value, context = {}) => {
     return typeof value === 'string' ? value : JSON.stringify(value);
   }
 
-  if (parsed.tipo && normalizeText(parsed.tipo) === 'programacion') {
+  if (parsed.tipo && ['programacion', 'mvc'].includes(normalizeText(parsed.tipo))) {
     return JSON.stringify(parsed);
   }
 

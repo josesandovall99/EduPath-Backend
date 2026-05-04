@@ -3243,7 +3243,8 @@ exports.generarPdfReporte = async (req, res) => {
     await browser.close();
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="reporte_${type}.pdf"`);
+    const nombreES = { student: 'estudiante', date: 'fecha', activity: 'actividad', failures: 'fallos' };
+    res.setHeader('Content-Disposition', `attachment; filename="reporte_${nombreES[type] ?? type}.pdf"`);
     res.end(pdfBuffer);
   } catch (error) {
     console.error('❌ Error en generarPdfReporte:', error);

@@ -21,6 +21,21 @@ const buildSequelizeValidationMessage = (error) => {
     .join(', ');
 };
 
+async function generarCodigoAdmin(transaction) {
+  const personas = await Persona.findAll({
+    where: { tipoUsuario: 'ADMINISTRADOR' },
+    attributes: ['codigoAcceso'],
+    transaction,
+  });
+  let max = 0;
+  const re = /^ADM(\d+)$/;
+  for (const p of personas) {
+    const m = p.codigoAcceso?.match(re);
+    if (m) max = Math.max(max, parseInt(m[1], 10));
+  }
+  return `ADM${String(max + 1).padStart(3, '0')}`;
+}
+
 /* =========================
    CREAR ADMINISTRADOR
 ========================= */
@@ -28,15 +43,16 @@ const crearAdministrador = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const { nombre, email, codigoAcceso } = req.body;
+    const { nombre, email } = req.body;
 
-    if (!isNonEmptyString(nombre) || !isValidEmail(email) || !isNonEmptyString(codigoAcceso)) {
+    if (!isNonEmptyString(nombre) || !isValidEmail(email)) {
       await transaction.rollback();
       return res.status(400).json({
         mensaje: "Datos invalidos para crear administrador",
       });
     }
 
+    const codigoAcceso = await generarCodigoAdmin(transaction);
     const passwordPlano = generarPassword();
 
     // Encriptar contraseña antes de crear persona
@@ -48,7 +64,7 @@ const crearAdministrador = async (req, res) => {
       {
         nombre: sanitizePlainText(nombre),
         email: email.trim().toLowerCase(),
-        codigoAcceso: sanitizePlainText(codigoAcceso),
+        codigoAcceso,
         contraseña: passwordHash,
         tipoUsuario: "ADMINISTRADOR",
       },
