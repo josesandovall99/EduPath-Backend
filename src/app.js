@@ -17,6 +17,7 @@ const configuredOrigins = (process.env.CORS_ORIGINS || '')
 
 const allowedOrigins = new Set([
     'https://edupath-frontend-dwcf.onrender.com',
+    'http://edupath-app.me',
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:3002',
