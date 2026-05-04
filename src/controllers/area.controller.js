@@ -176,15 +176,16 @@ const ensurePillarTemplate = async ({ area, tipoPilar, transaction }) => {
   if (Number.isInteger(currentTemplateId) && currentTemplateId > 0) {
     const existingTemplate = await Miniproyecto.findByPk(currentTemplateId, { transaction });
     if (!existingTemplate) {
-      throw Object.assign(new Error('La plantilla asociada al area no existe.'), { status: 400 });
+      await area.update({ miniproyecto_plantilla_id: null }, { transaction });
+    } else {
+      if (Number(existingTemplate.area_id) !== Number(area.id)) {
+        throw Object.assign(new Error('La plantilla asociada no pertenece al area seleccionada.'), { status: 400 });
+      }
+      if (isConfigurableMiniproyecto(existingTemplate)) {
+        throw Object.assign(new Error('La plantilla del area no puede ser un miniproyecto configurable.'), { status: 400 });
+      }
+      return existingTemplate.id;
     }
-    if (Number(existingTemplate.area_id) !== Number(area.id)) {
-      throw Object.assign(new Error('La plantilla asociada no pertenece al area seleccionada.'), { status: 400 });
-    }
-    if (isConfigurableMiniproyecto(existingTemplate)) {
-      throw Object.assign(new Error('La plantilla del area no puede ser un miniproyecto configurable.'), { status: 400 });
-    }
-    return existingTemplate.id;
   }
 
   const publishedLegacy = await findPublishedLegacyMiniproyecto({ area, transaction });
