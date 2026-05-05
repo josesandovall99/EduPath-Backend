@@ -9,8 +9,8 @@ const CONTENIDO_TYPE_MAP = {
   pdf: 'document',
   activity: 'activity',
   actividad: 'activity',
-  explicacion: 'activity',
-  'explicación': 'activity'
+  explicacion: 'explicacion',
+  'explicación': 'explicacion'
 };
 
 const parsePositiveInteger = (value) => {
