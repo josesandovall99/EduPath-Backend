@@ -40,6 +40,7 @@ class OllamaHTTPClient {
         this.model = model;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
+        this.keepAlive = process.env.OLLAMA_KEEP_ALIVE || '-1';
         this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || 120000);
         this.streamStartTimeoutMs = Number(process.env.OLLAMA_STREAM_START_TIMEOUT_MS || 120000);
     }
@@ -52,6 +53,7 @@ class OllamaHTTPClient {
             model: options.model || this.model,
             prompt,
             stream: false,
+            keep_alive: options.keepAlive || this.keepAlive,
             options: {
                 temperature: options.temperature ?? this.temperature,
                 num_predict: options.maxTokens || this.maxTokens,
@@ -97,6 +99,7 @@ class OllamaHTTPClient {
             model: options.model || this.model,
             prompt,
             stream: true,
+            keep_alive: options.keepAlive || this.keepAlive,
             options: {
                 temperature: options.temperature ?? this.temperature,
                 num_predict: options.maxTokens || this.maxTokens,
@@ -305,6 +308,7 @@ class RAGManager {
         this.defaultTopK = Math.max(1, Number(config.defaultTopK || 1));
         this.maxTopK = Math.max(this.defaultTopK, Number(config.maxTopK || this.defaultTopK));
         this.maxContextChars = Math.max(1200, Number(config.maxContextChars || process.env.CHATBOT_MAX_CONTEXT_CHARS || 2400));
+        this.maxTokens = Math.max(64, Number(config.maxTokens || process.env.OLLAMA_MAX_TOKENS || process.env.GROQ_MAX_TOKENS || 256));
         this.systemPrompt = config.systemPrompt || (`Responde únicamente con información presente en el CONTEXTO.
 Si la respuesta no está claramente en el contexto, responde exactamente: "No tengo esa información en los documentos cargados".
 No inventes datos, no uses conocimiento externo ni ejemplos de otros dominios.
@@ -320,12 +324,14 @@ Responde en Markdown, con frases claras y directas.`);
             this.llm = new OllamaHTTPClient({
                 baseUrl: config.ollamaBaseUrl,
                 model: config.modelName || 'llama3.2',
-                temperature: config.temperature || 0.2
+                temperature: config.temperature || 0.2,
+                maxTokens: this.maxTokens
             });
         } else {
             this.llm = new ChatGroq({
                 apiKey: config.groqApiKey,
-                model: config.modelName || 'llama-3.3-70b-versatile'
+                model: config.modelName || 'llama-3.3-70b-versatile',
+                maxTokens: this.maxTokens
             });
         }
 
@@ -340,16 +346,44 @@ Responde en Markdown, con frases claras y directas.`);
         console.log(`Destino LLM: ${this.provider === 'ollama' ? config.ollamaBaseUrl : 'Groq Cloud'}`);
     }
 
-    async buildPrompt(question, topK = this.defaultTopK) {
+    async retrieve(question, topK = this.defaultTopK) {
         if (this.vectorStore.documents.length === 0) {
             return { success: false, answer: 'No hay documentos cargados para responder.' };
         }
 
         const safeTopK = normalizeTopK(topK, this.maxTopK, this.defaultTopK);
-        const maxContextChars = this.maxContextChars;
         const retrievalStart = nowMs();
         const scoredDocs = await this.vectorStore.similaritySearchWithScores(question, safeTopK);
         logTiming('Recuperación RAG', retrievalStart);
+
+        return { success: true, safeTopK, scoredDocs };
+    }
+
+    formatRetrievalDebug(scoredDocs = [], safeTopK = this.defaultTopK) {
+        const matches = scoredDocs.map(({ doc, score }, index) => ({
+            rank: index + 1,
+            score: Number(score.toFixed(6)),
+            snippet: String(doc.pageContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
+            metadata: doc.metadata || {},
+        }));
+
+        return {
+            success: true,
+            topK: safeTopK,
+            chunksLoaded: this.vectorStore.documents.length,
+            matches,
+        };
+    }
+
+    async buildPrompt(question, topK = this.defaultTopK) {
+        const retrieval = await this.retrieve(question, topK);
+        if (!retrieval.success) {
+            return retrieval;
+        }
+
+        const { safeTopK, scoredDocs } = retrieval;
+        const retrievalDebug = this.formatRetrievalDebug(scoredDocs, safeTopK);
+        const maxContextChars = this.maxContextChars;
 
         // Evita pasar ruido al LLM: si la similitud es muy baja, no hay base confiable.
         const minScore = Number(process.env.RAG_MIN_SCORE || 0.005);
@@ -358,6 +392,7 @@ Responde en Markdown, con frases claras y directas.`);
             return {
                 success: false,
                 answer: 'No tengo esa información en los documentos cargados.',
+                retrievalDebug,
             };
         }
 
@@ -379,6 +414,7 @@ Responde en Markdown, con frases claras y directas.`);
             return {
                 success: false,
                 answer: 'No tengo esa información en los documentos cargados.',
+                retrievalDebug,
             };
         }
         const promptStart = nowMs();
@@ -390,34 +426,21 @@ Responde en Markdown, con frases claras y directas.`);
         const contextPreview = context.slice(0, 240).replace(/\s+/g, ' ');
         console.log(`[RAG CONTEXT PREVIEW] ${contextPreview}`);
 
-        return { success: true, finalPrompt, safeTopK };
+        return { success: true, finalPrompt, safeTopK, retrievalDebug };
     }
 
     async debugRetrieval(question, topK = this.defaultTopK) {
-        if (this.vectorStore.documents.length === 0) {
+        const retrieval = await this.retrieve(question, topK);
+        if (!retrieval.success) {
             return {
                 success: false,
-                error: 'No hay documentos cargados para responder.',
+                error: retrieval.answer || 'No hay documentos cargados para responder.',
                 topK: 0,
                 matches: [],
             };
         }
 
-        const safeTopK = normalizeTopK(topK, this.maxTopK, this.defaultTopK);
-        const retrieval = await this.vectorStore.similaritySearchWithScores(question, safeTopK);
-        const matches = retrieval.map(({ doc, score }, index) => ({
-            rank: index + 1,
-            score: Number(score.toFixed(6)),
-            snippet: String(doc.pageContent || '').replace(/\s+/g, ' ').trim().slice(0, 500),
-            metadata: doc.metadata || {},
-        }));
-
-        return {
-            success: true,
-            topK: safeTopK,
-            chunksLoaded: this.vectorStore.documents.length,
-            matches,
-        };
+        return this.formatRetrievalDebug(retrieval.scoredDocs, retrieval.safeTopK);
     }
 
     // Método para cargar PDFs desde memoria (Subidas desde Web/React)
@@ -469,6 +492,7 @@ Responde en Markdown, con frases claras y directas.`);
                     success: false,
                     answer: promptData.answer || 'No tengo esa información en los documentos cargados.',
                     error: promptData.error || null,
+                    retrievalDebug: promptData.retrievalDebug,
                 };
             }
 
@@ -484,7 +508,7 @@ Responde en Markdown, con frases claras y directas.`);
 
             logTiming('Chat total', totalStart);
 
-            return { success: true, answer };
+            return { success: true, answer, retrievalDebug: promptData.retrievalDebug };
         } catch (error) {
             logTiming('Chat total con error', totalStart);
             console.error('Error en chat RAG:', error.message);
@@ -501,6 +525,7 @@ Responde en Markdown, con frases claras y directas.`);
                     success: false,
                     answer: promptData.answer || 'No tengo esa información en los documentos cargados.',
                     error: promptData.error || null,
+                    retrievalDebug: promptData.retrievalDebug,
                 };
             }
 
@@ -511,18 +536,17 @@ Responde en Markdown, con frases claras y directas.`);
                     await onToken(chunk);
                 });
             } else {
-                const fallback = await this.chat(question, topK);
-                if (!fallback.success) {
-                    return fallback;
-                }
-                answer = fallback.answer || '';
+                const generationStart = nowMs();
+                const chain = RunnableSequence.from([this.llm, new StringOutputParser()]);
+                answer = await chain.invoke(promptData.finalPrompt);
+                logTiming('Generación LLM total', generationStart);
                 if (answer) {
                     await onToken(answer);
                 }
             }
 
             logTiming('Chat stream total', totalStart);
-            return { success: true, answer };
+            return { success: true, answer, retrievalDebug: promptData.retrievalDebug };
         } catch (error) {
             logTiming('Chat stream total con error', totalStart);
             console.error('Error en chat RAG streaming:', error.message);

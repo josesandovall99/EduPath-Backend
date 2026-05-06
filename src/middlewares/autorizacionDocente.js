@@ -43,7 +43,9 @@ const createAutorizacionDocente = (allowMissingDocente = false) => async (req, r
       req.body.area_id ||
       req.params.areaId ||
       req.query.areaId ||
-      req.body.actividad?.area_id;
+      req.body.actividad?.area_id ||
+      req.headers["x-area-id"] ||
+      req.docenteAreaId;
 
     // Si no hay area_id en la request, opcional (algunos endpoints no lo requieren)
     if (!areaIdAGestionar) {

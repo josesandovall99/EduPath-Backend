@@ -680,9 +680,10 @@ exports.chatWithManagedChatbot = async (req, res) => {
     // El chatbot objetivo lo define el :id de la URL. No bloqueamos por metadatos
     // de contexto enviados por el cliente para evitar conflictos falsos (409).
 
-    const manager = await reloadChatbotManager(chatbot, chatbot.documentos || []);
+    const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
     const effectiveTopK = Math.max(3, Number(chatbot.top_k || 3));
-    const retrievalDebug = await manager.debugRetrieval(question, effectiveTopK);
+    const result = await manager.chat(question, effectiveTopK);
+    const retrievalDebug = result.retrievalDebug;
     if (retrievalDebug?.success) {
       const brief = retrievalDebug.matches.slice(0, 3).map((m) => ({
         rank: m.rank,
@@ -694,8 +695,6 @@ exports.chatWithManagedChatbot = async (req, res) => {
     } else {
       console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
     }
-    // Reutilizar el mismo manager ya construido, sin re-indexar.
-    const result = await manager.chat(question, effectiveTopK);
     if (!result.success && typeof result.error === 'string' && result.error.toLowerCase().includes('timeout')) {
       return res.status(504).json(result);
     }
@@ -733,20 +732,8 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
       res.flushHeaders();
     }
 
-    const manager = await reloadChatbotManager(chatbot, chatbot.documentos || []);
+    const manager = await ensureChatbotManager(chatbot, chatbot.documentos || []);
     const effectiveTopK = Math.max(3, Number(chatbot.top_k || 3));
-    const retrievalDebug = await manager.debugRetrieval(question, effectiveTopK);
-    if (retrievalDebug?.success) {
-      const brief = retrievalDebug.matches.slice(0, 3).map((m) => ({
-        rank: m.rank,
-        score: m.score,
-        source_pdf: m.metadata?.source_pdf || m.metadata?.source || 'desconocido',
-        chatbot_documento_id: m.metadata?.chatbot_documento_id ?? null,
-      }));
-      console.log(`[RAG DEBUG] chatbot=${chatbot.id} question="${question.slice(0, 80)}" topK=${effectiveTopK} chunks=${retrievalDebug.chunksLoaded} matches=${JSON.stringify(brief)}`);
-    } else {
-      console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
-    }
     // Reutilizar el mismo manager ya construido, sin re-indexar.
     // Streaming real: emite tokens progresivamente al cliente.
     let fullAnswer = '';
@@ -761,6 +748,18 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
         // ignorar errores de escritura durante stream
       }
     });
+    const retrievalDebug = result.retrievalDebug;
+    if (retrievalDebug?.success) {
+      const brief = retrievalDebug.matches.slice(0, 3).map((m) => ({
+        rank: m.rank,
+        score: m.score,
+        source_pdf: m.metadata?.source_pdf || m.metadata?.source || 'desconocido',
+        chatbot_documento_id: m.metadata?.chatbot_documento_id ?? null,
+      }));
+      console.log(`[RAG DEBUG] chatbot=${chatbot.id} question="${question.slice(0, 80)}" topK=${effectiveTopK} chunks=${retrievalDebug.chunksLoaded} matches=${JSON.stringify(brief)}`);
+    } else {
+      console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
+    }
 
     // Si el modelo devolvió fallback o no generó nada, aplicar guardrail extractivo.
     if (!fullAnswer.trim() || !result.success) {
