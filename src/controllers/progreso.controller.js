@@ -32,7 +32,7 @@ const formatPercentValue = (value) => {
 const getStudentProgressStatus = (average) => {
   if (average >= 70) return 'Al día';
   if (average >= 50) return 'Regular';
-  return 'Rezagado';
+  return 'Atrasado';
 };
 
 const getStudentAverageProgress = (student) => {
@@ -601,34 +601,29 @@ const buildReportHtml = ({ type, data }) => {
       }
       .report-table-student th:nth-child(1),
       .report-table-student td:nth-child(1) {
-        width: 15%;
+        width: 20%;
       }
       .report-table-student th:nth-child(2),
       .report-table-student td:nth-child(2) {
-        width: 24%;
+        width: 32%;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 0;
       }
       .report-table-student th:nth-child(3),
       .report-table-student td:nth-child(3) {
-        width: 9%;
+        width: 10%;
         white-space: nowrap;
       }
       .report-table-student th:nth-child(4),
       .report-table-student td:nth-child(4) {
-        width: 11%;
+        width: 10%;
         white-space: nowrap;
       }
       .report-table-student th:nth-child(5),
       .report-table-student td:nth-child(5) {
-        width: 23%;
-      }
-      .report-table-student th:nth-child(6),
-      .report-table-student td:nth-child(6) {
-        width: 10%;
-      }
-      .report-table-student th:nth-child(7),
-      .report-table-student td:nth-child(7) {
-        width: 8%;
-        white-space: nowrap;
+        width: 28%;
       }
       .report-table-cohort {
         table-layout: fixed;
@@ -2523,15 +2518,7 @@ exports.generarPdfReporte = async (req, res) => {
         const areaValues = areaSummaries.map((area) => area.avgProgress);
 
         const tableRows = displayedStudentSummaries.map((student) => {
-          const statusClass = student.status === 'Al día'
-            ? 'status-ok'
-            : student.status === 'Regular'
-              ? 'status-warn'
-              : 'status-bad';
           const progress = Math.round(student.avg);
-          const totalContent = student.subjects.reduce((sum, subj) => sum + (subj.contentViewed || 0), 0);
-          const totalExercise = student.subjects.reduce((sum, subj) => sum + (subj.exercisesCompleted || 0), 0);
-          const totalMini = student.subjects.reduce((sum, subj) => sum + (subj.miniprojectsSubmitted || 0), 0);
           return `
             <tr>
               <td>${escapeHtml(student.name)}</td>
@@ -2543,14 +2530,6 @@ exports.generarPdfReporte = async (req, res) => {
                   <div class="progress-fill" style="width:${progress}%"></div>
                 </div>
               </td>
-              <td>
-                <div class="activity-summary">
-                  <span class="activity-chip">C ${totalContent}</span>
-                  <span class="activity-chip">E ${totalExercise}</span>
-                  <span class="activity-chip">M ${totalMini}</span>
-                </div>
-              </td>
-              <td><span class="status-pill ${statusClass}">${escapeHtml(student.status)}</span></td>
             </tr>
           `;
         }).join('');
@@ -2575,12 +2554,10 @@ exports.generarPdfReporte = async (req, res) => {
                 <th>Semestre</th>
                 <th>Promedio</th>
                 <th>Progreso</th>
-                <th>Actividad</th>
-                <th>Estado</th>
               </tr>
             </thead>
             <tbody>
-              ${tableRows || '<tr><td colspan="7">Sin datos</td></tr>'}
+              ${tableRows || '<tr><td colspan="5">Sin datos</td></tr>'}
             </tbody>
           </table>
         `;
@@ -2610,7 +2587,7 @@ exports.generarPdfReporte = async (req, res) => {
             { label: 'Mostrados en detalle', value: displayedStudentSummaries.length, sub: 'Top 15 por progreso' },
             { label: 'Promedio general', value: `${formatPercentValue(avgProgress)}%`, sub: 'Porcentaje promedio en todas las áreas' },
             { label: 'Al día', value: statusCounts.ok, sub: '≥ 70% de progreso' },
-            { label: 'Rezagados', value: statusCounts.bad, sub: '< 50% de progreso' }
+            { label: 'Atrasados', value: statusCounts.bad, sub: '< 50% de progreso' }
           ],
           sections: [
             {
@@ -2629,7 +2606,7 @@ exports.generarPdfReporte = async (req, res) => {
             },
             {
               title: 'Resumen por Estudiante',
-              subtitle: 'Top 15 estudiantes con mayor progreso general, actividad acumulada y estado actual',
+              subtitle: 'Top 15 estudiantes con mayor progreso general y estado actual',
               body: tableHtml
             },
             {
@@ -2663,7 +2640,7 @@ exports.generarPdfReporte = async (req, res) => {
               type: 'doughnut',
               title: 'Distribución de Estudiantes',
               subtitle: 'Estado general del grupo según el promedio acumulado.',
-              labels: ['Al día', 'Regular', 'Rezagado'],
+              labels: ['Al día', 'Regular', 'Atrasado'],
               data: [statusCounts.ok, statusCounts.warn, statusCounts.bad],
               colors: ['#7ED6A7', '#FBBF24', '#F5A97F'],
               showLegend: true,
