@@ -10,7 +10,7 @@ module.exports = (sequelize, DataTypes) => {
             type: DataTypes.BIGINT,
             allowNull: false
         },
-        area_id: {
+        asignatura_id: {
             type: DataTypes.BIGINT,
             allowNull: false
         },
@@ -25,10 +25,10 @@ module.exports = (sequelize, DataTypes) => {
         timestamps: false
     });
 
-    // Añadimos la asociación con Area
+    // Añadimos la asociación con Asignatura
     Miniproyecto.associate = (models) => {
-        Miniproyecto.belongsTo(models.Area, {
-            foreignKey: 'area_id'
+        Miniproyecto.belongsTo(models.Asignatura, {
+            foreignKey: 'asignatura_id'
         });
 
         if (models.Chatbot) {

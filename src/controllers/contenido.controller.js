@@ -1,5 +1,5 @@
 const { Op } = require('sequelize');
-const { Contenido, Tema, Subtema, Area, Estudiante, SecuenciaContenido, Progreso } = require('../models');
+const { Contenido, Tema, Subtema, Asignatura: AsignaturaModel, Estudiante, SecuenciaContenido, Progreso } = require('../models');
 
 const canViewInactiveContenidos = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
 const CONTENIDO_TYPE_MAP = {
@@ -80,11 +80,11 @@ async function validateContenidoPayload(req, rawPayload) {
     };
   }
 
-  if (req.docenteAreaId && parseInt(temaExistente.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
+  if (req.docenteAsignaturaId && parseInt(temaExistente.asignatura_id, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
     return {
       error: {
         status: 403,
-        message: 'Acceso denegado: área fuera de tu alcance'
+        message: 'Acceso denegado: asignatura fuera de tu alcance'
       }
     };
   }
@@ -130,33 +130,33 @@ async function validateContenidoPayload(req, rawPayload) {
 }
 
 async function resolveContenidoScope(req) {
-  let areaId = parsePositiveInteger(req.query.areaId);
+  let asignaturaId = parsePositiveInteger(req.query.asignaturaId);
   let temaId = parsePositiveInteger(req.query.temaId);
   let subtemaId = parsePositiveInteger(req.query.subtemaId);
 
-  if ([areaId, temaId, subtemaId].some((value) => Number.isNaN(value))) {
+  if ([asignaturaId, temaId, subtemaId].some((value) => Number.isNaN(value))) {
     return {
       error: {
         status: 400,
-        message: 'Los filtros de área, tema y subtema deben ser identificadores válidos.'
+        message: 'Los filtros de asignatura, tema y subtema deben ser identificadores válidos.'
       }
     };
   }
 
-  const docenteAreaId = req.docenteAreaId ? parseInt(req.docenteAreaId, 10) : null;
+  const docenteAsignaturaId = req.docenteAsignaturaId ? parseInt(req.docenteAsignaturaId, 10) : null;
   let tema = null;
 
-  if (docenteAreaId) {
-    if (areaId && areaId !== docenteAreaId) {
+  if (docenteAsignaturaId) {
+    if (asignaturaId && asignaturaId !== docenteAsignaturaId) {
       return {
         error: {
           status: 403,
-          message: 'Acceso denegado: área fuera de tu alcance'
+          message: 'Acceso denegado: asignatura fuera de tu alcance'
         }
       };
     }
 
-    areaId = docenteAreaId;
+    asignaturaId = docenteAsignaturaId;
   }
 
   if (temaId) {
@@ -179,26 +179,26 @@ async function resolveContenidoScope(req) {
       };
     }
 
-    const temaAreaId = parseInt(tema.area_id, 10);
-    if (docenteAreaId && temaAreaId !== docenteAreaId) {
+    const temaasignaturaId = parseInt(tema.asignatura_id, 10);
+    if (docenteAsignaturaId && temaasignaturaId !== docenteAsignaturaId) {
       return {
         error: {
           status: 403,
-          message: 'Acceso denegado: área fuera de tu alcance'
+          message: 'Acceso denegado: asignatura fuera de tu alcance'
         }
       };
     }
 
-    if (areaId && temaAreaId !== areaId) {
+    if (asignaturaId && temaasignaturaId !== asignaturaId) {
       return {
         error: {
           status: 400,
-          message: 'El tema no pertenece al área seleccionada'
+          message: 'El tema no pertenece al asignatura seleccionada'
         }
       };
     }
 
-    areaId = temaAreaId;
+    asignaturaId = temaasignaturaId;
   }
 
   if (subtemaId) {
@@ -243,30 +243,30 @@ async function resolveContenidoScope(req) {
       }
     }
 
-    const temaAreaId = parseInt(tema.area_id, 10);
-    if (docenteAreaId && temaAreaId !== docenteAreaId) {
+    const temaasignaturaId = parseInt(tema.asignatura_id, 10);
+    if (docenteAsignaturaId && temaasignaturaId !== docenteAsignaturaId) {
       return {
         error: {
           status: 403,
-          message: 'Acceso denegado: área fuera de tu alcance'
+          message: 'Acceso denegado: asignatura fuera de tu alcance'
         }
       };
     }
 
-    if (areaId && temaAreaId !== areaId) {
+    if (asignaturaId && temaasignaturaId !== asignaturaId) {
       return {
         error: {
           status: 400,
-          message: 'El subtema no pertenece al área seleccionada'
+          message: 'El subtema no pertenece al asignatura seleccionada'
         }
       };
     }
 
     temaId = subtemaTemaId;
-    areaId = temaAreaId;
+    asignaturaId = temaasignaturaId;
   }
 
-  return { areaId, temaId, subtemaId };
+  return { asignaturaId, temaId, subtemaId };
 }
 
 /**
@@ -407,10 +407,10 @@ exports.getContenidos = async (req, res) => {
       where.subtema_id = scope.subtemaId;
     } else if (scope.temaId) {
       where.tema_id = scope.temaId;
-    } else if (scope.areaId) {
+    } else if (scope.asignaturaId) {
       const temas = await Tema.findAll({
         where: {
-          area_id: scope.areaId,
+          asignatura_id: scope.asignaturaId,
           ...(canViewInactiveContenidos(req) ? {} : { estado: true })
         },
         attributes: ['id']
@@ -442,10 +442,10 @@ exports.getContenidoById = async (req, res) => {
       return res.status(404).json({ message: 'Contenido no encontrado' });
     }
 
-    if (req.docenteAreaId) {
+    if (req.docenteAsignaturaId) {
       const temaActual = await Tema.findByPk(contenido.tema_id);
-      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
-        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      if (!temaActual || parseInt(temaActual.asignatura_id, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
       }
     }
 
@@ -461,10 +461,10 @@ exports.updateContenido = async (req, res) => {
     const contenido = await Contenido.findByPk(req.params.id);
     if (!contenido) return res.status(404).json({ message: "Contenido no encontrado" });
 
-    if (req.docenteAreaId) {
+    if (req.docenteAsignaturaId) {
       const temaActual = await Tema.findByPk(contenido.tema_id);
-      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
-        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      if (!temaActual || parseInt(temaActual.asignatura_id, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
       }
     }
 
@@ -495,10 +495,10 @@ exports.deleteContenido = async (req, res) => {
     const contenido = await Contenido.findByPk(req.params.id);
     if (!contenido) return res.status(404).json({ message: "Contenido no encontrado" });
 
-    if (req.docenteAreaId) {
+    if (req.docenteAsignaturaId) {
       const temaActual = await Tema.findByPk(contenido.tema_id);
-      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
-        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      if (!temaActual || parseInt(temaActual.asignatura_id, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
       }
     }
 
@@ -539,10 +539,10 @@ exports.getContenidosPorSubtema = async (req, res) => {
       return res.status(404).json({ message: 'Subtema no encontrado' });
     }
 
-    if (req.docenteAreaId) {
+    if (req.docenteAsignaturaId) {
       const temaActual = await Tema.findByPk(subtema.tema_id);
-      if (!temaActual || parseInt(temaActual.area_id, 10) !== parseInt(req.docenteAreaId, 10)) {
-        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+      if (!temaActual || parseInt(temaActual.asignatura_id, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+        return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
       }
     }
 
@@ -603,9 +603,9 @@ exports.getContenidosPorCategoria = async (req, res) => {
 
     const where = { tipo: categoria };
 
-    if (req.docenteAreaId) {
+    if (req.docenteAsignaturaId) {
       const temas = await Tema.findAll({
-        where: { area_id: req.docenteAreaId },
+        where: { asignatura_id: req.docenteAsignaturaId },
         attributes: ['id']
       });
       const temaIds = temas.map((tema) => tema.id);
@@ -633,28 +633,28 @@ exports.getContenidosPorCategoria = async (req, res) => {
   }
 };
 
-// Obtener contenidos por nombre del área (ej. "ATC", "Fundamentos de programación")
-exports.getContenidosPorAreaNombre = async (req, res) => {
+// Obtener contenidos por nombre del asignatura (ej. "ATC", "Fundamentos de programación")
+exports.getContenidosPorasignaturaNombre = async (req, res) => {
   try {
-    const { nombreArea } = req.params;
+    const { nombreAsignatura } = req.params;
 
-    // Buscar el área por nombre
-    const area = await Area.findOne({
+    // Buscar el asignatura por nombre
+    const asignatura = await AsignaturaModel.findOne({
       where: {
-        nombre: nombreArea,
+        nombre: nombreAsignatura,
         ...(canViewInactiveContenidos(req) ? {} : { estado: true })
       }
     });
-    if (!area) {
-      return res.status(404).json({ message: "Área no encontrada" });
+    if (!asignatura) {
+      return res.status(404).json({ message: "Asignatura no encontrada" });
     }
 
-    if (req.docenteAreaId && parseInt(area.id, 10) !== parseInt(req.docenteAreaId, 10)) {
-      return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
+    if (req.docenteAsignaturaId && parseInt(asignatura.id, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+      return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
     }
 
-    // Buscar temas de esa área
-    const temas = await Tema.findAll({ where: { area_id: area.id, estado: true } });
+    // Buscar temas de esa asignatura
+    const temas = await Tema.findAll({ where: { asignatura_id: asignatura.id, estado: true } });
     const temaIds = temas.map(t => t.id);
 
     // Buscar contenidos relacionados a esos temas
@@ -671,7 +671,7 @@ exports.getContenidosPorAreaNombre = async (req, res) => {
 
     res.json(contenidos);
   } catch (error) {
-    res.status(500).json({ message: "Error al obtener contenidos por área", error });
+    res.status(500).json({ message: "Error al obtener contenidos por asignatura", error });
   }
 };
 
@@ -688,55 +688,55 @@ exports.adaptarContenidoPorPerfil = async (req, res) => {
 
     const semestre = estudiante.semestre;
 
-    // Determinar áreas base permitidas según el semestre.
-    // Cualquier área nueva activa queda disponible para todos los estudiantes.
-    let nombresAreasBase = [];
+    // Determinar asignaturas base permitidas según el semestre.
+    // Cualquier asignatura nueva activa queda disponible para todos los estudiantes.
+    let nombresasignaturasBase = [];
 
     if (semestre >= 1 && semestre <= 4) {
-      nombresAreasBase = ["Fundamentos de programación"];
+      nombresasignaturasBase = ["Fundamentos de programación"];
     } else if (semestre >= 5 && semestre <= 6) {
-      nombresAreasBase = ["Fundamentos de programación", "Análisis de sistemas"];
+      nombresasignaturasBase = ["Fundamentos de programación", "Análisis de sistemas"];
     } else if (semestre >= 7 && semestre <= 10) {
-      nombresAreasBase = ["Fundamentos de programación", "Análisis de sistemas", "ATC"];
+      nombresasignaturasBase = ["Fundamentos de programación", "Análisis de sistemas", "ATC"];
     } else {
       return res.status(400).json({ message: "Semestre fuera de rango válido (1-10)" });
     }
 
-    const areasActivas = await Area.findAll({
+    const asignaturasActivas = await AsignaturaModel.findAll({
       where: { estado: true }
     });
 
-    const nombresAreasBaseNormalizados = new Set(
-      nombresAreasBase.map((nombre) => nombre.trim().toLowerCase())
+    const nombresasignaturasBaseNormalizados = new Set(
+      nombresasignaturasBase.map((nombre) => nombre.trim().toLowerCase())
     );
 
-    const areasBaseRestringidas = new Set([
+    const asignaturasBaseRestringidas = new Set([
       "fundamentos de programación",
       "análisis de sistemas",
       "atc"
     ].map((nombre) => nombre.trim().toLowerCase()));
 
-    const areas = areasActivas.filter((area) => {
-      const nombreArea = String(area.nombre || '').trim();
-      const nombreNormalizado = nombreArea.toLowerCase();
+    const asignaturas = asignaturasActivas.filter((asignatura) => {
+      const nombreAsignatura = String(asignatura.nombre || '').trim();
+      const nombreNormalizado = nombreAsignatura.toLowerCase();
 
-      if (!nombreArea) {
+      if (!nombreAsignatura) {
         return false;
       }
 
-      if (!areasBaseRestringidas.has(nombreNormalizado)) {
+      if (!asignaturasBaseRestringidas.has(nombreNormalizado)) {
         return true;
       }
 
-      return nombresAreasBaseNormalizados.has(nombreNormalizado);
+      return nombresasignaturasBaseNormalizados.has(nombreNormalizado);
     });
 
-    const areaIds = areas.map(area => area.id);
-    const nombresAreas = areas.map(area => area.nombre);
+    const asignaturaIds = asignaturas.map((asignatura) => asignatura.id);
+    const nombresasignaturas = asignaturas.map((asignatura) => asignatura.nombre);
 
-    // Buscar los temas de esas áreas
+    // Buscar los temas de esas asignaturas
     const temas = await Tema.findAll({
-      where: { area_id: areaIds, estado: true }
+      where: { asignatura_id: asignaturaIds, estado: true }
     });
 
     const temaIds = temas.map(tema => tema.id);
@@ -753,7 +753,7 @@ exports.adaptarContenidoPorPerfil = async (req, res) => {
     res.json({
       estudianteId,
       semestre,
-      areas: nombresAreas,
+      asignaturas: nombresasignaturas,
       totalContenidos: contenidos.length,
       contenidos
     });

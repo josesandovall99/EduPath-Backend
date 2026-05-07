@@ -1,6 +1,6 @@
 const sequelize = require("../config/database");
 const bcrypt = require("bcryptjs");
-const { Persona, Docente, Area } = require("../models");
+const { Persona, Docente, Asignatura: AsignaturaModel } = require("../models");
 const { generarPassword } = require("../utils/generarCredenciales");
 const enviarCorreoBienvenidaDocente = require("../utils/enviarCorreoBienvenidaDocente");
 const {
@@ -33,7 +33,7 @@ const crearDocente = async (req, res) => {
   const transaction = await sequelize.transaction();
 
   try {
-    const { nombre, email, especialidad, areaId } = req.body;
+    const { nombre, email, especialidad, asignaturaId } = req.body;
 
     if (!isNonEmptyString(nombre) || !isValidEmail(email)) {
       await transaction.rollback();
@@ -42,25 +42,25 @@ const crearDocente = async (req, res) => {
       });
     }
 
-    if (!areaId) {
+    if (!asignaturaId) {
       await transaction.rollback();
       return res.status(400).json({
-        mensaje: "areaId es obligatorio",
+        mensaje: "asignaturaId es obligatorio",
       });
     }
 
-    const area = await Area.findByPk(areaId, { transaction });
-    if (!area) {
+    const asignatura = await AsignaturaModel.findByPk(asignaturaId, { transaction });
+    if (!asignatura) {
       await transaction.rollback();
       return res.status(404).json({
-        mensaje: "Area no encontrada",
+        mensaje: "Asignatura no encontrada",
       });
     }
 
-    if (area.estado === false) {
+    if (asignatura.estado === false) {
       await transaction.rollback();
       return res.status(400).json({
-        mensaje: 'No se puede asignar un docente a un area inactiva',
+        mensaje: 'No se puede asignar un docente a un Asignatura inactiva',
       });
     }
 
@@ -83,7 +83,7 @@ const crearDocente = async (req, res) => {
     const docente = await Docente.create(
       {
         persona_id: persona.id,
-        area_id: areaId,
+        asignatura_id: asignaturaId,
         especialidad,
       },
       { transaction }
@@ -106,8 +106,8 @@ const crearDocente = async (req, res) => {
           attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
         },
         {
-          model: Area,
-          as: "area",
+          model: AsignaturaModel,
+          as: "Asignatura",
         },
       ],
     });
@@ -140,8 +140,8 @@ const obtenerDocentes = async (req, res) => {
           attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
         },
         {
-          model: Area,
-          as: "area",
+          model: AsignaturaModel,
+          as: "Asignatura",
         },
       ],
     });
@@ -170,8 +170,8 @@ const obtenerDocentePorId = async (req, res) => {
           attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
         },
         {
-          model: Area,
-          as: "area",
+          model: AsignaturaModel,
+          as: "Asignatura",
         },
       ],
     });
@@ -213,7 +213,7 @@ const actualizarDocente = async (req, res) => {
       });
     }
 
-    const { nombre, email, codigoAcceso, contraseña, especialidad, areaId } = req.body;
+    const { nombre, email, codigoAcceso, contraseña, especialidad, asignaturaId } = req.body;
 
     if (email !== undefined && !isValidEmail(email)) {
       await transaction.rollback();
@@ -225,25 +225,25 @@ const actualizarDocente = async (req, res) => {
       return res.status(400).json({ mensaje: 'Contraseña insegura' });
     }
 
-    if (!areaId) {
+    if (!asignaturaId) {
       await transaction.rollback();
       return res.status(400).json({
-        mensaje: "areaId es obligatorio",
+        mensaje: "asignaturaId es obligatorio",
       });
     }
 
-    const area = await Area.findByPk(areaId, { transaction });
-    if (!area) {
+    const asignatura = await AsignaturaModel.findByPk(asignaturaId, { transaction });
+    if (!asignatura) {
       await transaction.rollback();
       return res.status(404).json({
-        mensaje: "Area no encontrada",
+        mensaje: "Asignatura no encontrada",
       });
     }
 
-    if (area.estado === false) {
+    if (asignatura.estado === false) {
       await transaction.rollback();
       return res.status(400).json({
-        mensaje: 'No se puede asignar un docente a un area inactiva',
+        mensaje: 'No se puede asignar un docente a un Asignatura inactiva',
       });
     }
 
@@ -259,7 +259,7 @@ const actualizarDocente = async (req, res) => {
 
     await docente.persona.update(personaUpdate, { transaction });
 
-    const docenteUpdate = { especialidad, area_id: areaId };
+    const docenteUpdate = { especialidad, asignatura_id: asignaturaId };
 
     await docente.update(docenteUpdate, { transaction });
 
@@ -273,8 +273,8 @@ const actualizarDocente = async (req, res) => {
           attributes: { exclude: ['contraseña', 'resetPasswordTokenHash', 'resetPasswordExpiresAt'] },
         },
         {
-          model: Area,
-          as: "area",
+          model: AsignaturaModel,
+          as: "Asignatura",
         },
       ],
     });

@@ -1,11 +1,11 @@
 const { SecuenciaContenido, Contenido, Subtema, Tema, sequelize } = require('../models');
 const { Op } = require('sequelize');
 const {
-  ensureDocenteAreaAccess,
+  ensureDocenteAsignaturaAccess,
   allowStudentReadAccess,
-  resolveSubtemaArea,
-  resolveContenidoArea,
-  resolveSecuenciaContenidoArea,
+  resolveSubtemaAsignatura,
+  resolveContenidoAsignatura,
+  resolveSecuenciaContenidoAsignatura,
   buildDocenteContenidoSequenceWhere,
   handleDocenteScopeError
 } = require('../utils/docenteScope');
@@ -403,8 +403,8 @@ exports.createSecuenciaContenido = async (req, res) => {
       });
     }
 
-    const originContext = await resolveContenidoArea(contenido_origen_id);
-    ensureDocenteAreaAccess(req, originContext.areaId);
+    const originContext = await resolveContenidoAsignatura(contenido_origen_id);
+    ensureDocenteAsignaturaAccess(req, originContext.asignaturaId);
 
     console.log(`[CREATE] Creando ${contenido_origen_id} → ${contenido_destino_id}`);
 
@@ -452,8 +452,8 @@ exports.createSecuenciaContenido = async (req, res) => {
 exports.getContenidosOrdenadosPorSecuencia = async (req, res) => {
   try {
     const { subtemaId } = req.params;
-    const subtemaContext = await resolveSubtemaArea(subtemaId);
-    allowStudentReadAccess(req, subtemaContext.areaId); // estudiantes pueden leer
+    const subtemaContext = await resolveSubtemaAsignatura(subtemaId);
+    allowStudentReadAccess(req, subtemaContext.asignaturaId); // estudiantes pueden leer
 
     // Obtener todos los contenidos del subtema
     const contenidos = await Contenido.findAll({
@@ -537,8 +537,8 @@ exports.getSecuenciaContenidoCreationContext = async (req, res) => {
       return res.status(400).json({ message: 'El origen indicado no es válido' });
     }
 
-    const subtemaContext = await resolveSubtemaArea(subtemaId);
-    ensureDocenteAreaAccess(req, subtemaContext.areaId);
+    const subtemaContext = await resolveSubtemaAsignatura(subtemaId);
+    ensureDocenteAsignaturaAccess(req, subtemaContext.asignaturaId);
 
     const graph = await loadSubtemaSequenceGraph(subtemaId);
     const context = buildCreationContextFromGraph(graph, origenId);
@@ -561,8 +561,8 @@ exports.getSecuenciasContenido = async (req, res) => {
     }
 
     if (subtemaId) {
-      const subtemaContext = await resolveSubtemaArea(subtemaId);
-      ensureDocenteAreaAccess(req, subtemaContext.areaId);
+      const subtemaContext = await resolveSubtemaAsignatura(subtemaId);
+      ensureDocenteAsignaturaAccess(req, subtemaContext.asignaturaId);
 
       const graph = await loadSubtemaSequenceGraph(subtemaId, true);
 
@@ -599,8 +599,8 @@ exports.getSecuenciasContenido = async (req, res) => {
 // Obtener una secuencia de contenido por ID
 exports.getSecuenciaContenidoById = async (req, res) => {
   try {
-    const sequenceContext = await resolveSecuenciaContenidoArea(req.params.id);
-    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+    const sequenceContext = await resolveSecuenciaContenidoAsignatura(req.params.id);
+    ensureDocenteAsignaturaAccess(req, sequenceContext.asignaturaId);
 
     const secuencia = await SecuenciaContenido.findByPk(req.params.id, {
       include: [
@@ -631,8 +631,8 @@ exports.getSecuenciaContenidoById = async (req, res) => {
 // Habilitar o inhabilitar una secuencia de contenido
 exports.toggleEstadoSecuenciaContenido = async (req, res) => {
   try {
-    const sequenceContext = await resolveSecuenciaContenidoArea(req.params.id);
-    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+    const sequenceContext = await resolveSecuenciaContenidoAsignatura(req.params.id);
+    ensureDocenteAsignaturaAccess(req, sequenceContext.asignaturaId);
 
     const secuencia = await SecuenciaContenido.findByPk(req.params.id);
 
@@ -668,8 +668,8 @@ exports.toggleEstadoSecuenciaContenido = async (req, res) => {
 // Actualizar una secuencia de contenido
 exports.updateSecuenciaContenido = async (req, res) => {
   try {
-    const sequenceContext = await resolveSecuenciaContenidoArea(req.params.id);
-    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+    const sequenceContext = await resolveSecuenciaContenidoAsignatura(req.params.id);
+    ensureDocenteAsignaturaAccess(req, sequenceContext.asignaturaId);
 
     const secuencia = await SecuenciaContenido.findByPk(req.params.id);
 
@@ -685,8 +685,8 @@ exports.updateSecuenciaContenido = async (req, res) => {
     const nuevoOrigen = contenido_origen_id || secuencia.contenido_origen_id;
     const nuevoDestino = contenido_destino_id || secuencia.contenido_destino_id;
 
-    const newOriginContext = await resolveContenidoArea(nuevoOrigen);
-    ensureDocenteAreaAccess(req, newOriginContext.areaId);
+    const newOriginContext = await resolveContenidoAsignatura(nuevoOrigen);
+    ensureDocenteAsignaturaAccess(req, newOriginContext.asignaturaId);
 
     console.log(`[UPDATE] ID ${secuencia.id}: (${secuencia.contenido_origen_id}→${secuencia.contenido_destino_id}) a (${nuevoOrigen}→${nuevoDestino})`);
 
@@ -809,8 +809,8 @@ exports.reorderSequences = async (req, res) => {
       });
     }
 
-    const firstContentContext = await resolveContenidoArea(contenidos[0]);
-    ensureDocenteAreaAccess(req, firstContentContext.areaId);
+    const firstContentContext = await resolveContenidoAsignatura(contenidos[0]);
+    ensureDocenteAsignaturaAccess(req, firstContentContext.asignaturaId);
 
     // Validar que todos los contenidos existan
     const contenidosValidos = await Contenido.findAll({
@@ -913,8 +913,8 @@ exports.reorderSequences = async (req, res) => {
 // Acepta opcionalmente secuencias adyacentes para reconectar antes de eliminar
 exports.deleteSecuenciaContenido = async (req, res) => {
   try {
-    const sequenceContext = await resolveSecuenciaContenidoArea(req.params.id);
-    ensureDocenteAreaAccess(req, sequenceContext.areaId);
+    const sequenceContext = await resolveSecuenciaContenidoAsignatura(req.params.id);
+    ensureDocenteAsignaturaAccess(req, sequenceContext.asignaturaId);
 
     const secuencia = await SecuenciaContenido.findByPk(req.params.id);
 

@@ -1,6 +1,6 @@
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-const { Estudiante, Persona, Administrador, Docente, Area } = require('../models');
+const { Estudiante, Persona, Administrador, Docente, Asignatura } = require('../models');
 const enviarCorreoResetPassword = require('../utils/enviarCorreoResetPassword');
 const { signAccessToken } = require('../utils/jwt');
 const { isNonEmptyString, isStrongPassword, isValidEmail } = require('../utils/inputSecurity');
@@ -163,8 +163,8 @@ const loginDocente = async (req, res) => {
         model: Docente,
         as: 'docente',
         include: {
-          model: Area,
-          as: 'area',
+          model: Asignatura,
+          as: 'Asignatura',
         },
       },
     });
@@ -186,7 +186,7 @@ const loginDocente = async (req, res) => {
         nombre: persona.nombre,
         email: persona.email,
         especialidad: persona.docente.especialidad,
-        area: persona.docente.area || null,
+        Asignatura: persona.docente.Asignatura || null,
       }
     });
   } catch (error) {

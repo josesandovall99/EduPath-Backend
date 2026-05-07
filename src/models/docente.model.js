@@ -13,7 +13,7 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
       },
 
-      area_id: {
+      asignatura_id: {
         type: DataTypes.BIGINT,
         allowNull: false,
       },

@@ -22,7 +22,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.TEXT,
       allowNull: true,
     },
-    area_id: {
+    asignatura_id: {
       type: DataTypes.BIGINT,
       allowNull: true,
     },
@@ -76,9 +76,9 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Chatbot.associate = (models) => {
-    Chatbot.belongsTo(models.Area, {
-      foreignKey: 'area_id',
-      as: 'area',
+    Chatbot.belongsTo(models.Asignatura, {
+      foreignKey: 'asignatura_id',
+      as: 'Asignatura',
     });
 
     Chatbot.belongsTo(models.Miniproyecto, {

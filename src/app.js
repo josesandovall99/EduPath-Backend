@@ -44,7 +44,7 @@ const corsOptions = {
         return callback(new Error(`CORS bloqueado para origin: ${origin}`));
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'x-docente-id', 'x-tipo-usuario', 'x-area-id', 'x-persona-id', 'x-admin-id' , 'x-administrador-id'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-docente-id', 'x-tipo-usuario', 'x-asignatura-id', 'x-persona-id', 'x-admin-id' , 'x-administrador-id'],
     credentials: true,
 };
 
@@ -86,7 +86,7 @@ app.use('/respuestasEstudianteEjercicio', respuestasEjercicioRouter);
 console.log('Ruta /respuestasEstudianteEjercicio registrada');
 
 // 2. Rutas Académicas y Usuarios
-app.use('/areas', require('./routes/area.routes'));
+app.use('/asignaturas', require('./routes/asignatura.routes'));
 app.use('/temas', require('./routes/tema.routes'));
 app.use('/subtemas', require('./routes/subtema.routes'));
 app.use('/contenidos', require('./routes/contenido.routes'));

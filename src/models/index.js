@@ -16,7 +16,7 @@ const models = {
   Docente: require('./docente.model')(sequelize, DataTypes),
   RespuestaEstudianteMiniproyecto: require('./respuestasEstudianteMiniproyecto.model')(sequelize, DataTypes),
   RespuestaEstudianteEjercicio: require('./respuestasEstudianteEjercicio.model')(sequelize, DataTypes),
-  Area: require('./area.model')(sequelize, DataTypes),
+  Asignatura: require('./asignatura.model')(sequelize, DataTypes),
   Tema: require('./tema.models')(sequelize, DataTypes),
   Subtema: require('./subtema.models')(sequelize, DataTypes),
   Contenido: require('./contenido.models')(sequelize, DataTypes),
@@ -54,11 +54,10 @@ models.Administrador.belongsTo(models.Persona, { foreignKey: "persona_id", as: "
 models.Persona.hasOne(models.Docente, { foreignKey: "persona_id", as: "docente" });
 models.Docente.belongsTo(models.Persona, { foreignKey: "persona_id", as: "persona" });
 
-// --- DOCENTE <-> AREA (1:N) ---
-models.Docente.belongsTo(models.Area, { foreignKey: "area_id", as: "area" });
+// --- DOCENTE <-> Asignatura (1:N) ---
+models.Docente.belongsTo(models.Asignatura, { foreignKey: "asignatura_id", as: "Asignatura" });
 
 // --- ESTRUCTURA ACADÉMICA ---
-models.Tema.belongsTo(models.Area, { foreignKey: 'area_id', as: 'area' });
 models.Subtema.belongsTo(models.Tema, { foreignKey: 'tema_id', as: 'tema' });
 models.Ejercicio.belongsTo(models.Contenido, { foreignKey: 'contenido_id', as: 'contenido' });
 

@@ -17,7 +17,7 @@ module.exports = (sequelize, DataTypes) => {
       type: DataTypes.BOOLEAN,
       defaultValue: true
     },
-    area_id: {
+    asignatura_id: {
       type: DataTypes.BIGINT,
       allowNull: false
     },
@@ -32,7 +32,7 @@ module.exports = (sequelize, DataTypes) => {
   });
 
   Tema.associate = models => {
-    Tema.belongsTo(models.Area, { foreignKey: 'area_id' });
+    Tema.belongsTo(models.Asignatura, { foreignKey: 'asignatura_id' });
     Tema.hasMany(models.Subtema, { foreignKey: 'tema_id' });
     Tema.hasMany(models.Contenido, { foreignKey: 'tema_id' });
   };

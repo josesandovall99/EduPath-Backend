@@ -5,7 +5,7 @@ jest.mock('../src/models', () => ({
   Persona: { findByPk: jest.fn() },
   Administrador: {},
   Docente: {},
-  Area: {},
+  Asignatura: {},
 }));
 
 jest.mock('../src/utils/jwt', () => ({ signAccessToken: jest.fn(() => 'tokentest') }));

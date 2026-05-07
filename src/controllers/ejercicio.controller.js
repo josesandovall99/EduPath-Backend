@@ -1,952 +1,952 @@
-const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion, Tema } = require('../models');
-const evaluacionController = require('./evaluacion.controller');
-const { normalizarConfiguracionCompilador, validarConfiguracionCompilador } = require('../utils/compilerExercise');
-// Bloqueos en memoria por envío en curso (clave: estudianteId:ejercicioId)
-const submissionLocks = new Map();
-const umlValidator = require('../services/umlValidator');
-
-const createDefaultUmlOptions = () => ({
-  minClasses: 2,
-  requireRelationships: false,
-  requireMultiplicities: false,
-});
-
-const normalizeUmlConfig = (configuracion = {}) => ({
-  ...configuracion,
-  opciones: {
-    ...createDefaultUmlOptions(),
-    ...(configuracion?.opciones || {}),
-  },
-});
-
-const canViewInactiveEjercicios = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
-const isEjercicioActivo = (ejercicio) => ejercicio?.actividad?.estado !== false && ejercicio?.contenido?.estado !== false;
-
-// Crear ejercicio con su actividad base (herencia con transacción)
-exports.createEjercicio = async (req, res) => {
-  const t = await sequelize.transaction();
-  try {
-    const { actividad, ejercicio } = req.body;
-
-    // Validar contenido
-    const contenidoExistente = await Contenido.findByPk(ejercicio.contenido_id, {
-      include: [{ model: Tema, attributes: ['area_id'] }]
-    });
-    if (!contenidoExistente) {
-      await t.rollback();
-      return res.status(400).json({ message: "El contenido especificado no existe" });
-    }
-
-    if (contenidoExistente.estado === false) {
-      await t.rollback();
-      return res.status(400).json({ message: 'El contenido especificado está inactivo' });
-    }
-
-    if (req.docenteAreaId) {
-      const areaId = contenidoExistente.Tema?.area_id;
-      if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
-        await t.rollback();
-        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
-      }
-    }
-
-    // Validar tipo_actividad_id
-    if (!actividad || !actividad.tipo_actividad_id) {
-      await t.rollback();
-      return res.status(400).json({ message: "tipo_actividad_id es requerido en actividad" });
-    }
-    const tipoActividad = await TipoActividad.findByPk(actividad.tipo_actividad_id);
-    if (!tipoActividad) {
-      await t.rollback();
-      return res.status(400).json({ message: "El tipo_actividad_id especificado no existe" });
-    }
-
-    // Crear la actividad primero
-    const nuevaActividad = await Actividad.create(actividad, { transaction: t });
-
-    // Crear el ejercicio usando el mismo id de la actividad
-    // Validar tipo_ejercicio
-    const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'];
-    const tipo = ejercicio.tipo_ejercicio || 'Compilador';
-    if (!TIPOS_PERMITIDOS.includes(tipo)) {
-      await t.rollback();
-      return res.status(400).json({ message: `tipo_ejercicio inválido. Use uno de: ${TIPOS_PERMITIDOS.join(', ')}` });
-    }
-
-    // Definir configuración por defecto si no viene
-    let configuracion = ejercicio.configuracion || null;
-    if (!configuracion) {
-      if (tipo === 'Compilador') {
-        configuracion = { tipo: 'programacion', esperado: ejercicio.resultado_ejercicio || '', casos_prueba: [] };
-      } else if (tipo === 'Diagramas UML') {
-        configuracion = normalizeUmlConfig();
-      } else if (tipo === 'Opción única') {
-        configuracion = { tipo: 'opcion-unica', enunciado: '', opciones: [], respuestaCorrecta: '' };
-      } else if (tipo === 'Ordenar') {
-        configuracion = { tipo: 'ordenar', enunciado: '', items: [] };
-      } else if (tipo === 'Relacionar') {
-        configuracion = { tipo: 'relacionar', enunciado: '', pares: [] };
-      } else {
-        configuracion = { tipo: 'cuestionario', preguntas: [] };
-      }
-    }
-
-    if (tipo === 'Diagramas UML') {
-      configuracion = normalizeUmlConfig(configuracion);
-    }
-
-    let codigoEstructura = ejercicio.codigoEstructura || null;
-    if (tipo === 'Compilador') {
-      // Ejercicios MVC no usan plantilla de método ni los validadores legacy
-      if (configuracion?.tipo === 'mvc') {
-        // Solo normalizar los casos de prueba
-        if (Array.isArray(configuracion.casos_prueba)) {
-          configuracion.casos_prueba = configuracion.casos_prueba.map((c) => ({
-            inputs: (c.inputs || '').toString().trim(),
-            output: (c.output || '').toString().trim()
-          }));
-        }
-        configuracion.lenguajesPermitidos = [62];
-      } else {
-        configuracion = normalizarConfiguracionCompilador({
-          configuracion,
-          codigoEstructura,
-          resultadoEjercicio: ejercicio.resultado_ejercicio
-        });
-        codigoEstructura = codigoEstructura || configuracion?.metodo?.plantilla || null;
-
-        const validacionCompilador = validarConfiguracionCompilador({ configuracion, codigoEstructura });
-        if (!validacionCompilador.ok) {
-          await t.rollback();
-          return res.status(400).json({
-            message: 'Configuración inválida para ejercicio de compilador',
-            errores: validacionCompilador.errores
-          });
-        }
-      }
-    }
-
-    // Para MVC, codigoEstructura es null para evitar que el setter VIRTUAL
-    // sobrescriba templateMain/templateModelo en configuracion JSONB.
-    const codigoEstructuraFinal = configuracion?.tipo === 'mvc' ? null : codigoEstructura;
-
-    const nuevoEjercicio = await Ejercicio.create(
-      {
-        id: nuevaActividad.id, // herencia: mismo PK que Actividad
-        contenido_id: ejercicio.contenido_id,
-        tipo_ejercicio: tipo,
-        puntos: ejercicio.puntos,
-        resultado_ejercicio: ejercicio.resultado_ejercicio,
-        codigoEstructura: codigoEstructuraFinal,
-        configuracion
-      },
-      { transaction: t }
-    );
-
-    // Confirmar transacción
-    await t.commit();
-
-    res.status(201).json({
-      actividad: nuevaActividad,
-      ejercicio: nuevoEjercicio
-    });
-  } catch (error) {
-    await t.rollback();
-    res.status(500).json({ message: "Error al crear el ejercicio", error: error.message || error });
-  }
-};
-
-// Listar ejercicios con su actividad y contenido
-exports.getEjercicios = async (req, res) => {
-  try {
-    let ejercicios = [];
-    const contenidoId = req.query.contenido_id ? parseInt(req.query.contenido_id, 10) : null;
-    const areaId = req.query.area_id ? parseInt(req.query.area_id, 10) : null;
-
-    if (req.docenteAreaId) {
-      const temas = await Tema.findAll({
-        where: { area_id: req.docenteAreaId },
-        attributes: ['id']
-      });
-      const temaIds = temas.map((tema) => tema.id);
-
-      if (temaIds.length === 0) {
-        return res.json([]);
-      }
-
-      const contenidos = await Contenido.findAll({
-        where: { tema_id: temaIds },
-        attributes: ['id']
-      });
-      const contenidoIds = contenidos.map((contenido) => contenido.id);
-
-      if (contenidoIds.length === 0) {
-        return res.json([]);
-      }
-
-      const where = { contenido_id: contenidoIds };
-      if (contenidoId) {
-        where.contenido_id = contenidoIds.filter((id) => parseInt(id, 10) === contenidoId);
-      }
-
-      if (areaId && parseInt(req.docenteAreaId, 10) !== areaId) {
-        return res.status(403).json({ message: 'Acceso denegado: área fuera de tu alcance' });
-      }
-
-      ejercicios = await Ejercicio.findAll({
-        where,
-        include: [
-          { model: Actividad, as: 'actividad' },
-          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['area_id'] }] }
-        ]
-      });
-    } else {
-      let where = contenidoId ? { contenido_id: contenidoId } : undefined;
-
-      if (areaId) {
-        const temas = await Tema.findAll({
-          where: { area_id: areaId, estado: true },
-          attributes: ['id']
-        });
-        const temaIds = temas.map((tema) => tema.id);
-
-        if (temaIds.length === 0) {
-          return res.json([]);
-        }
-
-        const contenidos = await Contenido.findAll({
-          where: { tema_id: temaIds, estado: true },
-          attributes: ['id']
-        });
-        const contenidoIds = contenidos.map((contenido) => contenido.id);
-
-        if (contenidoIds.length === 0) {
-          return res.json([]);
-        }
-
-        where = { ...(where || {}), contenido_id: contenidoId ? contenidoId : contenidoIds };
-      }
-
-      ejercicios = await Ejercicio.findAll({
-        where,
-        include: [
-          { model: Actividad, as: 'actividad' },
-          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['area_id'] }] }
-        ]
-      });
-    }
-
-    if (!canViewInactiveEjercicios(req)) {
-      ejercicios = ejercicios.filter(isEjercicioActivo);
-    }
-
-    res.json(ejercicios);
-  } catch (error) {
-    res.status(500).json({ message: "Error al obtener los ejercicios", error: error.message || error });
-  }
-};
-
-// Obtener un ejercicio por ID
-exports.getEjercicioById = async (req, res) => {
-  try {
-    let ejercicio = null;
-
-    if (req.docenteAreaId) {
-      ejercicio = await Ejercicio.findByPk(req.params.id, {
-        include: [
-          { model: Actividad, as: 'actividad' },
-          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['area_id'] }] }
-        ]
-      });
-      if (ejercicio?.contenido?.Tema) {
-        const areaId = ejercicio.contenido.Tema.area_id;
-        if (parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
-          return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
-        }
-      }
-    } else {
-      ejercicio = await Ejercicio.findByPk(req.params.id, {
-        include: [
-          { model: Actividad, as: 'actividad' },
-          { model: Contenido, as: 'contenido' }
-        ]
-      });
-    }
-
-    if (!ejercicio) return res.status(404).json({ message: "Ejercicio no encontrado" });
-    if (!canViewInactiveEjercicios(req) && !isEjercicioActivo(ejercicio)) {
-      return res.status(404).json({ message: 'Ejercicio no encontrado' });
-    }
-    res.json(ejercicio);
-  } catch (error) {
-    res.status(500).json({ message: "Error al obtener el ejercicio", error: error.message || error });
-  }
-};
-
-// Actualizar ejercicio y su actividad (transacción)
-exports.updateEjercicio = async (req, res) => {
-  const t = await sequelize.transaction();
-  try {
-    const ejercicio = await Ejercicio.findByPk(req.params.id);
-    if (!ejercicio) {
-      await t.rollback();
-      return res.status(404).json({ message: "Ejercicio no encontrado" });
-    }
-
-    if (req.docenteAreaId) {
-      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
-        include: [{ model: Tema, attributes: ['area_id'] }]
-      });
-      const areaId = contenidoActual?.Tema?.area_id;
-      if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
-        await t.rollback();
-        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
-      }
-    }
-
-    const actividad = await Actividad.findByPk(req.params.id);
-    if (!actividad) {
-      await t.rollback();
-      return res.status(404).json({ message: "Actividad asociada no encontrada" });
-    }
-
-    // Validar contenido si se envía
-    if (req.body.ejercicio?.contenido_id) {
-      const contenidoExistente = await Contenido.findByPk(req.body.ejercicio.contenido_id, {
-        include: [{ model: Tema, attributes: ['area_id'] }]
-      });
-      if (!contenidoExistente) {
-        await t.rollback();
-        return res.status(400).json({ message: "El contenido especificado no existe" });
-      }
-
-      if (contenidoExistente.estado === false) {
-        await t.rollback();
-        return res.status(400).json({ message: 'El contenido especificado está inactivo' });
-      }
-
-      if (req.docenteAreaId) {
-        const areaId = contenidoExistente.Tema?.area_id;
-        if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
-          await t.rollback();
-          return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
-        }
-      }
-    }
-
-    // Actualizar actividad y ejercicio en conjunto
-    if (req.body.actividad) {
-      // Si se provee un nuevo tipo_actividad_id, validarlo
-      if (req.body.actividad.tipo_actividad_id) {
-        const tipoAct = await TipoActividad.findByPk(req.body.actividad.tipo_actividad_id);
-        if (!tipoAct) {
-          await t.rollback();
-          return res.status(400).json({ message: "El tipo_actividad_id especificado no existe" });
-        }
-      }
-      await actividad.update(req.body.actividad, { transaction: t });
-    }
-    if (req.body.ejercicio) {
-      const data = { ...req.body.ejercicio };
-      if (data.tipo_ejercicio) {
-        const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'];
-        if (!TIPOS_PERMITIDOS.includes(data.tipo_ejercicio)) {
-          await t.rollback();
-          return res.status(400).json({ message: `tipo_ejercicio inválido. Use uno de: ${TIPOS_PERMITIDOS.join(', ')}` });
-        }
-      }
-
-      if ((data.tipo_ejercicio || ejercicio.tipo_ejercicio) === 'Compilador') {
-        const cfgActual = data.configuracion || ejercicio.configuracion || {};
-
-        if (cfgActual?.tipo === 'mvc') {
-          // MVC: solo normalizar casos de prueba, sin validar plantilla legacy
-          if (Array.isArray(cfgActual.casos_prueba)) {
-            cfgActual.casos_prueba = cfgActual.casos_prueba.map((c) => ({
-              inputs: (c.inputs || '').toString().trim(),
-              output: (c.output || '').toString().trim()
-            }));
-          }
-          cfgActual.lenguajesPermitidos = [62];
-          data.configuracion = cfgActual;
-        } else {
-          data.configuracion = normalizarConfiguracionCompilador({
-            configuracion: cfgActual,
-            codigoEstructura: data.codigoEstructura || ejercicio.codigoEstructura,
-            resultadoEjercicio: data.resultado_ejercicio || ejercicio.resultado_ejercicio
-          });
-
-          const codigoEstructura = data.codigoEstructura || ejercicio.codigoEstructura || data.configuracion?.metodo?.plantilla;
-          data.codigoEstructura = codigoEstructura;
-
-          const validacionCompilador = validarConfiguracionCompilador({
-            configuracion: data.configuracion,
-            codigoEstructura
-          });
-
-          if (!validacionCompilador.ok) {
-            await t.rollback();
-            return res.status(400).json({
-              message: 'Configuración inválida para ejercicio de compilador',
-              errores: validacionCompilador.errores
-            });
-          }
-        }
-      }
-
-      if ((data.tipo_ejercicio || ejercicio.tipo_ejercicio) === 'Diagramas UML') {
-        data.configuracion = normalizeUmlConfig(data.configuracion || ejercicio.configuracion || {});
-      }
-
-      // MVC: codigoEstructura null para no interferir con templateMain/templateModelo via VIRTUAL setter
-      if (data.configuracion?.tipo === 'mvc') {
-        data.codigoEstructura = null;
-      }
-      await ejercicio.update(data, { transaction: t });
-    }
-
-    await t.commit();
-    res.json({ actividad, ejercicio });
-  } catch (error) {
-    await t.rollback();
-    res.status(500).json({ message: "Error al actualizar el ejercicio", error: error.message || error });
-  }
-};
-
-// Eliminar ejercicio y su actividad (transacción)
-exports.deleteEjercicio = async (req, res) => {
-  const t = await sequelize.transaction();
-  try {
-    const ejercicio = await Ejercicio.findByPk(req.params.id);
-    if (!ejercicio) {
-      await t.rollback();
-      return res.status(404).json({ message: "Ejercicio no encontrado" });
-    }
-
-    if (req.docenteAreaId) {
-      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
-        include: [{ model: Tema, attributes: ['area_id'] }]
-      });
-      const areaId = contenidoActual?.Tema?.area_id;
-      if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
-        await t.rollback();
-        return res.status(403).json({ message: "Acceso denegado: área fuera de tu alcance" });
-      }
-    }
-
-    const actividad = await Actividad.findByPk(req.params.id);
-
-    if (!actividad) {
-      await t.rollback();
-      return res.status(404).json({ message: 'Actividad asociada no encontrada' });
-    }
-
-    if (actividad.estado === false) {
-      await t.rollback();
-      return res.json({ message: 'Ejercicio ya estaba inhabilitado' });
-    }
-
-    await actividad.update({ estado: false }, { transaction: t });
-
-    await t.commit();
-    res.json({ message: "Ejercicio inhabilitado correctamente" });
-  } catch (error) {
-    await t.rollback();
-    res.status(500).json({ message: "Error al inhabilitar el ejercicio", error: error.message || error });
-  }
-};
-
-exports.toggleEstadoEjercicio = async (req, res) => {
-  const t = await sequelize.transaction();
-
-  try {
-    const ejercicio = await Ejercicio.findByPk(req.params.id);
-    if (!ejercicio) {
-      await t.rollback();
-      return res.status(404).json({ message: 'Ejercicio no encontrado' });
-    }
-
-    if (req.docenteAreaId) {
-      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
-        include: [{ model: Tema, attributes: ['area_id'] }]
-      });
-      const areaId = contenidoActual?.Tema?.area_id;
-      if (!areaId || parseInt(areaId, 10) !== parseInt(req.docenteAreaId, 10)) {
-        await t.rollback();
-        return res.status(403).json({ message: 'Acceso denegado: área fuera de tu alcance' });
-      }
-    }
-
-    const actividad = await Actividad.findByPk(req.params.id);
-    if (!actividad) {
-      await t.rollback();
-      return res.status(404).json({ message: 'Actividad asociada no encontrada' });
-    }
-
-    const nuevoEstado = actividad.estado === false;
-    await actividad.update({ estado: nuevoEstado }, { transaction: t });
-
-    await t.commit();
-    return res.json({
-      message: `Ejercicio ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
-      estado: nuevoEstado,
-    });
-  } catch (error) {
-    await t.rollback();
-    return res.status(500).json({ message: 'Error al cambiar el estado del ejercicio', error: error.message || error });
-  }
-};
-
-
-
-// Resolver un ejercicio y verificar la respuesta
-exports.resolverEjercicio = async (req, res) => {
-  try {
-    const { ejercicioId } = req.params;
-    const { respuesta, respuestas } = req.body; // 'respuestas' para cuestionarios
-
-    // Buscar el ejercicio
-    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
-      include: [
-        { model: Actividad, as: 'actividad' },
-        { model: Contenido, as: 'contenido' }
-      ]
-    });
-    if (!ejercicio) {
-      return res.status(404).json({ message: "Ejercicio no encontrado" });
-    }
-
-    if (!isEjercicioActivo(ejercicio)) {
-      return res.status(404).json({ message: 'Ejercicio no encontrado' });
-    }
-
-    // Rama por tipo de ejercicio
-    if (ejercicio.tipo_ejercicio === 'Compilador') {
-      // Compatibilidad: comparación simple por texto si usan este endpoint
-      const normalizarTexto = (texto) =>
-        (texto || '')
-          .toLowerCase()
-          .trim()
-          .replace(/\s+/g, ' ');
-
-      const respuestaEstudiante = normalizarTexto(respuesta);
-      const esperado = normalizarTexto(
-        (ejercicio.configuracion && ejercicio.configuracion.esperado) || ejercicio.resultado_ejercicio
-      );
-      const esCorrecta = respuestaEstudiante === esperado;
-      return res.json({
-        ejercicioId,
-        esCorrecta,
-        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
-        retroalimentacion: esCorrecta
-          ? '¡Respuesta correcta! Bien hecho.'
-          : `Respuesta incorrecta. La salida esperada es: ${esperado}`
-      });
-    }
-
-    // Evaluación para Diagramas UML
-    if (ejercicio.tipo_ejercicio === 'Diagramas UML') {
-      const { diagram, respuesta: respuestaBody } = req.body || {};
-      const diagramPayload = diagram || (respuestaBody && respuestaBody.diagram);
-      const cfg = ejercicio.configuracion || {};
-
-      // Validaciones mínimas de entrada y reglas configuradas por el administrador
-      if (!diagramPayload) {
-        return res.status(400).json({ message: 'El campo "diagram" es requerido para resolver ejercicios UML.' });
-      }
-      if (!cfg.opciones || typeof cfg.opciones !== 'object') {
-        return res.status(400).json({ message: 'Este ejercicio UML no tiene reglas configuradas (configuracion.opciones). Solicite al administrador que las establezca.' });
-      }
-
-      // Aplicar exclusivamente las reglas configuradas por el administrador en el ejercicio
-      // Ignoramos opciones del request para evitar que el cliente relaje las validaciones
-      const result = umlValidator.validate(diagramPayload, normalizeUmlConfig(cfg).opciones);
-      const esCorrecta = !!result.success;
-      const puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
-      return res.status(esCorrecta ? 200 : 400).json({
-        ejercicioId,
-        esCorrecta,
-        puntosObtenidos,
-        detalle: { errors: result.errors, warnings: result.warnings }
-      });
-    }
-
-    // Opción única
-    if (ejercicio.tipo_ejercicio === 'Opción única') {
-      const cfg = ejercicio.configuracion || { tipo: 'opcion-unica', opciones: [], respuestaCorrecta: '' };
-      const norm = (t) => (t || '').toString().trim();
-      const recibido = norm(req.body?.respuesta?.opcion ?? req.body?.respuesta ?? '');
-      const esperado = norm(cfg.respuestaCorrecta ?? '');
-      const esCorrecta = recibido === esperado;
-      return res.status(esCorrecta ? 200 : 400).json({
-        ejercicioId,
-        esCorrecta,
-        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
-        retroalimentacion: esCorrecta ? '¡Correcto!' : 'Respuesta incorrecta.'
-      });
-    }
-
-    // Ordenar
-    if (ejercicio.tipo_ejercicio === 'Ordenar') {
-      const cfg = ejercicio.configuracion || { tipo: 'ordenar', items: [] };
-      const orden = req.body?.respuesta?.orden || [];
-      const normArr = (arr) => (arr || []).map(x => (x || '').toString().trim());
-      const esCorrecta = JSON.stringify(normArr(orden)) === JSON.stringify(normArr(cfg.items));
-      return res.status(esCorrecta ? 200 : 400).json({
-        ejercicioId,
-        esCorrecta,
-        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
-        retroalimentacion: esCorrecta ? 'Orden correcto.' : 'El orden no es correcto.'
-      });
-    }
-
-    // Relacionar
-    if (ejercicio.tipo_ejercicio === 'Relacionar') {
-      const cfg = ejercicio.configuracion || { tipo: 'relacionar', pares: [] };
-      const conceptos = (cfg.pares || []).map(p => p.concepto);
-      const definiciones = (cfg.pares || []).map(p => p.definicion);
-      let ok = true;
-      const parejas = req.body?.respuesta?.parejas;
-      const matches = req.body?.respuesta?.matches;
-      if (Array.isArray(parejas)) {
-        for (const pr of parejas) { if (pr.conceptoIndex !== pr.definicionIndex) { ok = false; break; } }
-      } else if (matches) {
-        for (const [c, d] of Object.entries(matches)) {
-          const idx = conceptos.findIndex(x => x === c);
-          if (idx < 0 || definiciones[idx] !== d) { ok = false; break; }
-        }
-      } else {
-        ok = false;
-      }
-      const esCorrecta = ok;
-      return res.status(esCorrecta ? 200 : 400).json({
-        ejercicioId,
-        esCorrecta,
-        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
-        retroalimentacion: esCorrecta ? 'Relaciones correctas.' : 'Relaciones incorrectas.'
-      });
-    }
-
-    // Evaluación para Preguntas (cuestionario)
-    const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
-    if (cfg.tipo !== 'cuestionario') {
-      return res.status(400).json({ message: 'Configuración inválida para evaluación no programática.' });
-    }
-
-    // Esperamos 'respuestas' como { [preguntaId]: valor }
-    const mapaRespuestas = respuestas || {};
-    let total = cfg.preguntas?.length || 0;
-    let correctas = 0;
-    const detalle = [];
-
-    (cfg.preguntas || []).forEach((p) => {
-      const recibido = mapaRespuestas[p.id];
-      let ok = false;
-      if (p.tipo === 'opcion-multiple') {
-        ok = recibido === p.respuesta_correcta;
-      } else if (p.tipo === 'abierta') {
-        const norm = (t) => (t || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
-        ok = norm(recibido) === norm(p.respuesta_correcta);
-      }
-      if (ok) correctas += 1;
-      detalle.push({ preguntaId: p.id, correcta: ok, recibido });
-    });
-
-    const esCorrecta = total > 0 && correctas === total;
-    const puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
-    return res.json({
-      ejercicioId,
-      esCorrecta,
-      totalPreguntas: total,
-      correctas,
-      puntosObtenidos,
-      detalle,
-      retroalimentacion: esCorrecta
-        ? '¡Excelente! Todas las respuestas son correctas.'
-        : `Correctas ${correctas}/${total}. Revise las respuestas.`
-    });
-
-  } catch (error) {
-    res.status(500).json({
-      message: "Error al resolver el ejercicio",
-      error: error.message || error
-    });
-  }
-};
-
-
-// Obtener la retroalimentación de un ejercicio
-exports.getRetroalimentacionEjercicio = async (req, res) => {
-  try {
-    const { ejercicioId } = req.params;
-
-    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
-      include: [
-        { model: Actividad, as: 'actividad' },
-        { model: Contenido, as: 'contenido' }
-      ]
-    });
-    if (!ejercicio) {
-      return res.status(404).json({ message: "Ejercicio no encontrado" });
-    }
-
-    if (!isEjercicioActivo(ejercicio)) {
-      return res.status(404).json({ message: 'Ejercicio no encontrado' });
-    }
-
-    res.json({
-      ejercicioId,
-      retroalimentacion: `La respuesta correcta es: ${ejercicio.resultado_ejercicio}`
-    });
-  } catch (error) {
-    res.status(500).json({
-      message: "Error al obtener la retroalimentación del ejercicio",
-      error: error.message || error
-    });
-  }
-};
-
-// Enviar respuesta de estudiante: guarda intento y evalúa
-exports.enviarRespuestaEjercicio = async (req, res) => {
-  try {
-    const { ejercicioId } = req.params;
-    const { estudiante_id, respuesta } = req.body;
-
-    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
-      include: [
-        { model: Actividad, as: 'actividad' },
-        { model: Contenido, as: 'contenido' }
-      ]
-    });
-    if (!ejercicio) {
-      return res.status(404).json({ message: 'Ejercicio no encontrado' });
-    }
-
-    if (!isEjercicioActivo(ejercicio)) {
-      return res.status(404).json({ message: 'Ejercicio no encontrado' });
-    }
-
-    const codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto;
-    const respuestaVacia = typeof respuesta === 'undefined' || respuesta === null;
-    if (!estudiante_id) {
-      return res.status(400).json({ message: 'Faltan campos: estudiante_id' });
-    }
-    if (ejercicio.tipo_ejercicio !== 'Compilador' && respuestaVacia) {
-      return res.status(400).json({ message: 'Faltan campos: respuesta' });
-    }
-    const esMvc = req.body?.archivos && typeof req.body.archivos === 'object';
-    if (ejercicio.tipo_ejercicio === 'Compilador' && !codigo && !esMvc) {
-      return res.status(400).json({ message: 'Faltan campos: codigo o archivos MVC' });
-    }
-
-    const key = `${estudiante_id}:${ejercicioId}`;
-    if (submissionLocks.get(key)) {
-      return res.status(429).json({ message: 'Evaluación en curso, intenta nuevamente en unos segundos.' });
-    }
-    submissionLocks.set(key, true);
-
-    // Bloquear nuevos intentos si ya está aprobado
-    const evaluacionAprobada = await Evaluacion.findOne({
-      where: { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10), estado: 'Aprobado' }
-    });
-    if (evaluacionAprobada) {
-      submissionLocks.delete(key);
-      return res.status(409).json({
-        message: 'Ejercicio ya aprobado para el estudiante',
-        evaluacionId: evaluacionAprobada.id
-      });
-    }
-
-    // Para compilador, delegamos en el controlador de evaluación
-    if (ejercicio.tipo_ejercicio === 'Compilador') {
-      if (!req.body.ejercicio_id) req.body.ejercicio_id = parseInt(ejercicioId, 10);
-      if (!req.body.lenguaje_id) req.body.lenguaje_id = 62;
-      submissionLocks.delete(key);
-      return evaluacionController.evaluarCompilador(req, res);
-    }
-
-    // Normalizar respuesta para evaluación
-    const respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
-
-    // Evaluar usando la misma lógica de resolver
-    let esCorrecta = false;
-    let puntosObtenidos = 0;
-    let detalle = undefined;
-    let retroalimentacion = undefined;
-
-    if (ejercicio.tipo_ejercicio === 'Diagramas UML') {
-      const diagramPayload = req.body.diagram || respuestaPayload?.diagram;
-      const cfg = ejercicio.configuracion || {};
-      if (!diagramPayload) {
-        submissionLocks.delete(key);
-        return res.status(400).json({ message: 'El campo "diagram" es requerido para resolver ejercicios UML.' });
-      }
-      if (!cfg.opciones || typeof cfg.opciones !== 'object') {
-        submissionLocks.delete(key);
-        return res.status(400).json({ message: 'Este ejercicio UML no tiene reglas configuradas (configuracion.opciones). Solicite al administrador que las establezca.' });
-      }
-      const result = require('../services/umlValidator').validate(diagramPayload, normalizeUmlConfig(cfg).opciones);
-      esCorrecta = !!result.success;
-      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
-      detalle = { errors: result.errors, warnings: result.warnings };
-    } else if (ejercicio.tipo_ejercicio === 'Opción única') {
-      // Config: { enunciado, opciones: string[], respuestaCorrecta: string }
-      const cfg = ejercicio.configuracion || { tipo: 'opcion-unica', opciones: [], respuestaCorrecta: '' };
-      const norm = (t) => (t || '').toString().trim();
-      const recibido = norm(respuestaPayload?.opcion ?? respuestaPayload?.respuesta ?? '');
-      const esperado = norm(cfg.respuestaCorrecta ?? '');
-      esCorrecta = recibido === esperado;
-      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
-      retroalimentacion = esCorrecta ? '¡Correcto!' : 'Respuesta incorrecta.';
-    } else if (ejercicio.tipo_ejercicio === 'Ordenar') {
-      // Config: { enunciado, items: string[] } en orden correcto
-      const cfg = ejercicio.configuracion || { tipo: 'ordenar', items: [] };
-      const orden = respuestaPayload?.orden || [];
-      const normArr = (arr) => (arr || []).map(x => (x || '').toString().trim());
-      esCorrecta = JSON.stringify(normArr(orden)) === JSON.stringify(normArr(cfg.items));
-      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
-      retroalimentacion = esCorrecta ? 'Orden correcto.' : 'El orden no es correcto.';
-    } else if (ejercicio.tipo_ejercicio === 'Relacionar') {
-      // Config: { enunciado, pares: [{ concepto, definicion }] }
-      const cfg = ejercicio.configuracion || { tipo: 'relacionar', pares: [] };
-      const conceptos = (cfg.pares || []).map(p => p.concepto);
-      const definiciones = (cfg.pares || []).map(p => p.definicion);
-      let ok = true;
-      if (Array.isArray(respuestaPayload?.parejas)) {
-        // Parejas de índices: correcto si conceptoIndex === definicionIndex para cada par
-        for (const pr of respuestaPayload.parejas) {
-          if (pr.conceptoIndex !== pr.definicionIndex) { ok = false; break; }
-        }
-      } else if (respuestaPayload?.matches) {
-        // matches: { concepto: definicion }
-        for (const [c, d] of Object.entries(respuestaPayload.matches)) {
-          const idx = conceptos.findIndex(x => x === c);
-          if (idx < 0 || definiciones[idx] !== d) { ok = false; break; }
-        }
-      } else {
-        ok = false;
-      }
-      esCorrecta = ok;
-      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
-      retroalimentacion = esCorrecta ? 'Relaciones correctas.' : 'Relaciones incorrectas.';
-    } else {
-      // Preguntas (cuestionario)
-      const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
-      if (cfg.tipo !== 'cuestionario') {
-        submissionLocks.delete(key);
-        return res.status(400).json({ message: 'Configuración inválida para evaluación no programática.' });
-      }
-      const mapaRespuestas = (respuestaPayload && respuestaPayload.respuestas) || {};
-      let total = cfg.preguntas?.length || 0;
-      let correctas = 0;
-      detalle = [];
-      (cfg.preguntas || []).forEach((p) => {
-        const recibido = mapaRespuestas[p.id];
-        let ok = false;
-        if (p.tipo === 'opcion-multiple') {
-          ok = recibido === p.respuesta_correcta;
-        } else if (p.tipo === 'abierta') {
-          const norm = (t) => (t || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
-          ok = norm(recibido) === norm(p.respuesta_correcta);
-        }
-        if (ok) correctas += 1;
-        detalle.push({ preguntaId: p.id, correcta: ok, recibido });
-      });
-      esCorrecta = total > 0 && correctas === total;
-      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
-      retroalimentacion = esCorrecta
-        ? '¡Excelente! Todas las respuestas son correctas.'
-        : `Correctas ${correctas}/${total}. Revise las respuestas.`;
-    }
-
-    const ejercicioIdNum = parseInt(ejercicioId, 10);
-    const registrarIntento = async () => {
-      const payloadRespuesta = {
-        ...(respuestaPayload || {}),
-        esCorrecta,
-        puntosObtenidos,
-        detalle,
-        retroalimentacion
-      };
-
-      const existente = await RespuestaEstudianteEjercicio.findOne({
-        where: {
-          estudiante_id,
-          ejercicio_id: ejercicioIdNum
-        }
-      });
-
-      if (existente) {
-        const nuevoContador = (existente.contador || 0) + 1;
-        await existente.update({
-          respuesta: payloadRespuesta,
-          estado: esCorrecta ? 'APROBADO' : 'REPROBADO',
-          contador: nuevoContador
-        });
-        return { id: existente.id, contador: nuevoContador };
-      }
-
-      const creado = await RespuestaEstudianteEjercicio.create({
-        respuesta: payloadRespuesta,
-        estudiante_id,
-        ejercicio_id: ejercicioIdNum,
-        estado: esCorrecta ? 'APROBADO' : 'REPROBADO',
-        contador: 1
-      });
-      return { id: creado.id, contador: 1 };
-    };
-
-    const intento = await registrarIntento();
-
-    if (esCorrecta) {
-      const evalWhere = { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) };
-      const existenteEval = await Evaluacion.findOne({ where: evalWhere });
-      const payloadEval = {
-        calificacion: puntosObtenidos,
-        retroalimentacion: retroalimentacion || null,
-        estudiante_id,
-        ejercicio_id: ejercicioIdNum,
-        estado: 'Aprobado'
-      };
-      if (existenteEval) {
-        await existenteEval.update(payloadEval);
-      } else {
-        await Evaluacion.create(payloadEval);
-      }
-      submissionLocks.delete(key);
-      return res.status(200).json({
-        intentoId: intento.id,
-        contador: intento.contador,
-        ejercicioId,
-        esCorrecta,
-        puntosObtenidos,
-        detalle,
-        retroalimentacion
-      });
-    }
-
-    // Incorrecta: se persiste intento y se permite reintentar
-    submissionLocks.delete(key);
-    return res.status(400).json({
-      intentoId: intento.id,
-      contador: intento.contador,
-      ejercicioId,
-      esCorrecta,
-      puntosObtenidos,
-      detalle,
-      retroalimentacion
-    });
-  } catch (error) {
-    // Liberar lock en caso de error
-    try {
-      const { ejercicioId } = req.params;
-      const { estudiante_id } = req.body || {};
-      if (estudiante_id && ejercicioId) submissionLocks.delete(`${estudiante_id}:${ejercicioId}`);
-    } catch {}
-    res.status(500).json({
-      message: 'Error al enviar la respuesta del ejercicio',
-      error: error.message || error
-    });
-  }
-};
-
+const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion, Tema } = require('../models');
+const evaluacionController = require('./evaluacion.controller');
+const { normalizarConfiguracionCompilador, validarConfiguracionCompilador } = require('../utils/compilerExercise');
+// Bloqueos en memoria por envío en curso (clave: estudianteId:ejercicioId)
+const submissionLocks = new Map();
+const umlValidator = require('../services/umlValidator');
+
+const createDefaultUmlOptions = () => ({
+  minClasses: 2,
+  requireRelationships: false,
+  requireMultiplicities: false,
+});
+
+const normalizeUmlConfig = (configuracion = {}) => ({
+  ...configuracion,
+  opciones: {
+    ...createDefaultUmlOptions(),
+    ...(configuracion?.opciones || {}),
+  },
+});
+
+const canViewInactiveEjercicios = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
+const isEjercicioActivo = (ejercicio) => ejercicio?.actividad?.estado !== false && ejercicio?.contenido?.estado !== false;
+
+// Crear ejercicio con su actividad base (herencia con transacción)
+exports.createEjercicio = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const { actividad, ejercicio } = req.body;
+
+    // Validar contenido
+    const contenidoExistente = await Contenido.findByPk(ejercicio.contenido_id, {
+      include: [{ model: Tema, attributes: ['asignatura_id'] }]
+    });
+    if (!contenidoExistente) {
+      await t.rollback();
+      return res.status(400).json({ message: "El contenido especificado no existe" });
+    }
+
+    if (contenidoExistente.estado === false) {
+      await t.rollback();
+      return res.status(400).json({ message: 'El contenido especificado está inactivo' });
+    }
+
+    if (req.docenteAsignaturaId) {
+      const asignaturaId = contenidoExistente.Tema?.asignatura_id;
+      if (!asignaturaId || parseInt(asignaturaId, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+        await t.rollback();
+        return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
+      }
+    }
+
+    // Validar tipo_actividad_id
+    if (!actividad || !actividad.tipo_actividad_id) {
+      await t.rollback();
+      return res.status(400).json({ message: "tipo_actividad_id es requerido en actividad" });
+    }
+    const tipoActividad = await TipoActividad.findByPk(actividad.tipo_actividad_id);
+    if (!tipoActividad) {
+      await t.rollback();
+      return res.status(400).json({ message: "El tipo_actividad_id especificado no existe" });
+    }
+
+    // Crear la actividad primero
+    const nuevaActividad = await Actividad.create(actividad, { transaction: t });
+
+    // Crear el ejercicio usando el mismo id de la actividad
+    // Validar tipo_ejercicio
+    const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'];
+    const tipo = ejercicio.tipo_ejercicio || 'Compilador';
+    if (!TIPOS_PERMITIDOS.includes(tipo)) {
+      await t.rollback();
+      return res.status(400).json({ message: `tipo_ejercicio inválido. Use uno de: ${TIPOS_PERMITIDOS.join(', ')}` });
+    }
+
+    // Definir configuración por defecto si no viene
+    let configuracion = ejercicio.configuracion || null;
+    if (!configuracion) {
+      if (tipo === 'Compilador') {
+        configuracion = { tipo: 'programacion', esperado: ejercicio.resultado_ejercicio || '', casos_prueba: [] };
+      } else if (tipo === 'Diagramas UML') {
+        configuracion = normalizeUmlConfig();
+      } else if (tipo === 'Opción única') {
+        configuracion = { tipo: 'opcion-unica', enunciado: '', opciones: [], respuestaCorrecta: '' };
+      } else if (tipo === 'Ordenar') {
+        configuracion = { tipo: 'ordenar', enunciado: '', items: [] };
+      } else if (tipo === 'Relacionar') {
+        configuracion = { tipo: 'relacionar', enunciado: '', pares: [] };
+      } else {
+        configuracion = { tipo: 'cuestionario', preguntas: [] };
+      }
+    }
+
+    if (tipo === 'Diagramas UML') {
+      configuracion = normalizeUmlConfig(configuracion);
+    }
+
+    let codigoEstructura = ejercicio.codigoEstructura || null;
+    if (tipo === 'Compilador') {
+      // Ejercicios MVC no usan plantilla de método ni los validadores legacy
+      if (configuracion?.tipo === 'mvc') {
+        // Solo normalizar los casos de prueba
+        if (Array.isArray(configuracion.casos_prueba)) {
+          configuracion.casos_prueba = configuracion.casos_prueba.map((c) => ({
+            inputs: (c.inputs || '').toString().trim(),
+            output: (c.output || '').toString().trim()
+          }));
+        }
+        configuracion.lenguajesPermitidos = [62];
+      } else {
+        configuracion = normalizarConfiguracionCompilador({
+          configuracion,
+          codigoEstructura,
+          resultadoEjercicio: ejercicio.resultado_ejercicio
+        });
+        codigoEstructura = codigoEstructura || configuracion?.metodo?.plantilla || null;
+
+        const validacionCompilador = validarConfiguracionCompilador({ configuracion, codigoEstructura });
+        if (!validacionCompilador.ok) {
+          await t.rollback();
+          return res.status(400).json({
+            message: 'Configuración inválida para ejercicio de compilador',
+            errores: validacionCompilador.errores
+          });
+        }
+      }
+    }
+
+    // Para MVC, codigoEstructura es null para evitar que el setter VIRTUAL
+    // sobrescriba templateMain/templateModelo en configuracion JSONB.
+    const codigoEstructuraFinal = configuracion?.tipo === 'mvc' ? null : codigoEstructura;
+
+    const nuevoEjercicio = await Ejercicio.create(
+      {
+        id: nuevaActividad.id, // herencia: mismo PK que Actividad
+        contenido_id: ejercicio.contenido_id,
+        tipo_ejercicio: tipo,
+        puntos: ejercicio.puntos,
+        resultado_ejercicio: ejercicio.resultado_ejercicio,
+        codigoEstructura: codigoEstructuraFinal,
+        configuracion
+      },
+      { transaction: t }
+    );
+
+    // Confirmar transacción
+    await t.commit();
+
+    res.status(201).json({
+      actividad: nuevaActividad,
+      ejercicio: nuevoEjercicio
+    });
+  } catch (error) {
+    await t.rollback();
+    res.status(500).json({ message: "Error al crear el ejercicio", error: error.message || error });
+  }
+};
+
+// Listar ejercicios con su actividad y contenido
+exports.getEjercicios = async (req, res) => {
+  try {
+    let ejercicios = [];
+    const contenidoId = req.query.contenido_id ? parseInt(req.query.contenido_id, 10) : null;
+    const asignaturaId = req.query.asignatura_id ? parseInt(req.query.asignatura_id, 10) : null;
+
+    if (req.docenteAsignaturaId) {
+      const temas = await Tema.findAll({
+        where: { asignatura_id: req.docenteAsignaturaId },
+        attributes: ['id']
+      });
+      const temaIds = temas.map((tema) => tema.id);
+
+      if (temaIds.length === 0) {
+        return res.json([]);
+      }
+
+      const contenidos = await Contenido.findAll({
+        where: { tema_id: temaIds },
+        attributes: ['id']
+      });
+      const contenidoIds = contenidos.map((contenido) => contenido.id);
+
+      if (contenidoIds.length === 0) {
+        return res.json([]);
+      }
+
+      const where = { contenido_id: contenidoIds };
+      if (contenidoId) {
+        where.contenido_id = contenidoIds.filter((id) => parseInt(id, 10) === contenidoId);
+      }
+
+      if (asignaturaId && parseInt(req.docenteAsignaturaId, 10) !== asignaturaId) {
+        return res.status(403).json({ message: 'Acceso denegado: asignatura fuera de tu alcance' });
+      }
+
+      ejercicios = await Ejercicio.findAll({
+        where,
+        include: [
+          { model: Actividad, as: 'actividad' },
+          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['asignatura_id'] }] }
+        ]
+      });
+    } else {
+      let where = contenidoId ? { contenido_id: contenidoId } : undefined;
+
+      if (asignaturaId) {
+        const temas = await Tema.findAll({
+          where: { asignatura_id: asignaturaId, estado: true },
+          attributes: ['id']
+        });
+        const temaIds = temas.map((tema) => tema.id);
+
+        if (temaIds.length === 0) {
+          return res.json([]);
+        }
+
+        const contenidos = await Contenido.findAll({
+          where: { tema_id: temaIds, estado: true },
+          attributes: ['id']
+        });
+        const contenidoIds = contenidos.map((contenido) => contenido.id);
+
+        if (contenidoIds.length === 0) {
+          return res.json([]);
+        }
+
+        where = { ...(where || {}), contenido_id: contenidoId ? contenidoId : contenidoIds };
+      }
+
+      ejercicios = await Ejercicio.findAll({
+        where,
+        include: [
+          { model: Actividad, as: 'actividad' },
+          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['asignatura_id'] }] }
+        ]
+      });
+    }
+
+    if (!canViewInactiveEjercicios(req)) {
+      ejercicios = ejercicios.filter(isEjercicioActivo);
+    }
+
+    res.json(ejercicios);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener los ejercicios", error: error.message || error });
+  }
+};
+
+// Obtener un ejercicio por ID
+exports.getEjercicioById = async (req, res) => {
+  try {
+    let ejercicio = null;
+
+    if (req.docenteAsignaturaId) {
+      ejercicio = await Ejercicio.findByPk(req.params.id, {
+        include: [
+          { model: Actividad, as: 'actividad' },
+          { model: Contenido, as: 'contenido', include: [{ model: Tema, attributes: ['asignatura_id'] }] }
+        ]
+      });
+      if (ejercicio?.contenido?.Tema) {
+        const asignaturaId = ejercicio.contenido.Tema.asignatura_id;
+        if (parseInt(asignaturaId, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+          return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
+        }
+      }
+    } else {
+      ejercicio = await Ejercicio.findByPk(req.params.id, {
+        include: [
+          { model: Actividad, as: 'actividad' },
+          { model: Contenido, as: 'contenido' }
+        ]
+      });
+    }
+
+    if (!ejercicio) return res.status(404).json({ message: "Ejercicio no encontrado" });
+    if (!canViewInactiveEjercicios(req) && !isEjercicioActivo(ejercicio)) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+    res.json(ejercicio);
+  } catch (error) {
+    res.status(500).json({ message: "Error al obtener el ejercicio", error: error.message || error });
+  }
+};
+
+// Actualizar ejercicio y su actividad (transacción)
+exports.updateEjercicio = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const ejercicio = await Ejercicio.findByPk(req.params.id);
+    if (!ejercicio) {
+      await t.rollback();
+      return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    if (req.docenteAsignaturaId) {
+      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
+        include: [{ model: Tema, attributes: ['asignatura_id'] }]
+      });
+      const asignaturaId = contenidoActual?.Tema?.asignatura_id;
+      if (!asignaturaId || parseInt(asignaturaId, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+        await t.rollback();
+        return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
+      }
+    }
+
+    const actividad = await Actividad.findByPk(req.params.id);
+    if (!actividad) {
+      await t.rollback();
+      return res.status(404).json({ message: "Actividad asociada no encontrada" });
+    }
+
+    // Validar contenido si se envía
+    if (req.body.ejercicio?.contenido_id) {
+      const contenidoExistente = await Contenido.findByPk(req.body.ejercicio.contenido_id, {
+        include: [{ model: Tema, attributes: ['asignatura_id'] }]
+      });
+      if (!contenidoExistente) {
+        await t.rollback();
+        return res.status(400).json({ message: "El contenido especificado no existe" });
+      }
+
+      if (contenidoExistente.estado === false) {
+        await t.rollback();
+        return res.status(400).json({ message: 'El contenido especificado está inactivo' });
+      }
+
+      if (req.docenteAsignaturaId) {
+        const asignaturaId = contenidoExistente.Tema?.asignatura_id;
+        if (!asignaturaId || parseInt(asignaturaId, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+          await t.rollback();
+          return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
+        }
+      }
+    }
+
+    // Actualizar actividad y ejercicio en conjunto
+    if (req.body.actividad) {
+      // Si se provee un nuevo tipo_actividad_id, validarlo
+      if (req.body.actividad.tipo_actividad_id) {
+        const tipoAct = await TipoActividad.findByPk(req.body.actividad.tipo_actividad_id);
+        if (!tipoAct) {
+          await t.rollback();
+          return res.status(400).json({ message: "El tipo_actividad_id especificado no existe" });
+        }
+      }
+      await actividad.update(req.body.actividad, { transaction: t });
+    }
+    if (req.body.ejercicio) {
+      const data = { ...req.body.ejercicio };
+      if (data.tipo_ejercicio) {
+        const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'];
+        if (!TIPOS_PERMITIDOS.includes(data.tipo_ejercicio)) {
+          await t.rollback();
+          return res.status(400).json({ message: `tipo_ejercicio inválido. Use uno de: ${TIPOS_PERMITIDOS.join(', ')}` });
+        }
+      }
+
+      if ((data.tipo_ejercicio || ejercicio.tipo_ejercicio) === 'Compilador') {
+        const cfgActual = data.configuracion || ejercicio.configuracion || {};
+
+        if (cfgActual?.tipo === 'mvc') {
+          // MVC: solo normalizar casos de prueba, sin validar plantilla legacy
+          if (Array.isArray(cfgActual.casos_prueba)) {
+            cfgActual.casos_prueba = cfgActual.casos_prueba.map((c) => ({
+              inputs: (c.inputs || '').toString().trim(),
+              output: (c.output || '').toString().trim()
+            }));
+          }
+          cfgActual.lenguajesPermitidos = [62];
+          data.configuracion = cfgActual;
+        } else {
+          data.configuracion = normalizarConfiguracionCompilador({
+            configuracion: cfgActual,
+            codigoEstructura: data.codigoEstructura || ejercicio.codigoEstructura,
+            resultadoEjercicio: data.resultado_ejercicio || ejercicio.resultado_ejercicio
+          });
+
+          const codigoEstructura = data.codigoEstructura || ejercicio.codigoEstructura || data.configuracion?.metodo?.plantilla;
+          data.codigoEstructura = codigoEstructura;
+
+          const validacionCompilador = validarConfiguracionCompilador({
+            configuracion: data.configuracion,
+            codigoEstructura
+          });
+
+          if (!validacionCompilador.ok) {
+            await t.rollback();
+            return res.status(400).json({
+              message: 'Configuración inválida para ejercicio de compilador',
+              errores: validacionCompilador.errores
+            });
+          }
+        }
+      }
+
+      if ((data.tipo_ejercicio || ejercicio.tipo_ejercicio) === 'Diagramas UML') {
+        data.configuracion = normalizeUmlConfig(data.configuracion || ejercicio.configuracion || {});
+      }
+
+      // MVC: codigoEstructura null para no interferir con templateMain/templateModelo via VIRTUAL setter
+      if (data.configuracion?.tipo === 'mvc') {
+        data.codigoEstructura = null;
+      }
+      await ejercicio.update(data, { transaction: t });
+    }
+
+    await t.commit();
+    res.json({ actividad, ejercicio });
+  } catch (error) {
+    await t.rollback();
+    res.status(500).json({ message: "Error al actualizar el ejercicio", error: error.message || error });
+  }
+};
+
+// Eliminar ejercicio y su actividad (transacción)
+exports.deleteEjercicio = async (req, res) => {
+  const t = await sequelize.transaction();
+  try {
+    const ejercicio = await Ejercicio.findByPk(req.params.id);
+    if (!ejercicio) {
+      await t.rollback();
+      return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    if (req.docenteAsignaturaId) {
+      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
+        include: [{ model: Tema, attributes: ['asignatura_id'] }]
+      });
+      const asignaturaId = contenidoActual?.Tema?.asignatura_id;
+      if (!asignaturaId || parseInt(asignaturaId, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+        await t.rollback();
+        return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
+      }
+    }
+
+    const actividad = await Actividad.findByPk(req.params.id);
+
+    if (!actividad) {
+      await t.rollback();
+      return res.status(404).json({ message: 'Actividad asociada no encontrada' });
+    }
+
+    if (actividad.estado === false) {
+      await t.rollback();
+      return res.json({ message: 'Ejercicio ya estaba inhabilitado' });
+    }
+
+    await actividad.update({ estado: false }, { transaction: t });
+
+    await t.commit();
+    res.json({ message: "Ejercicio inhabilitado correctamente" });
+  } catch (error) {
+    await t.rollback();
+    res.status(500).json({ message: "Error al inhabilitar el ejercicio", error: error.message || error });
+  }
+};
+
+exports.toggleEstadoEjercicio = async (req, res) => {
+  const t = await sequelize.transaction();
+
+  try {
+    const ejercicio = await Ejercicio.findByPk(req.params.id);
+    if (!ejercicio) {
+      await t.rollback();
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    if (req.docenteAsignaturaId) {
+      const contenidoActual = await Contenido.findByPk(ejercicio.contenido_id, {
+        include: [{ model: Tema, attributes: ['asignatura_id'] }]
+      });
+      const asignaturaId = contenidoActual?.Tema?.asignatura_id;
+      if (!asignaturaId || parseInt(asignaturaId, 10) !== parseInt(req.docenteAsignaturaId, 10)) {
+        await t.rollback();
+        return res.status(403).json({ message: 'Acceso denegado: asignatura fuera de tu alcance' });
+      }
+    }
+
+    const actividad = await Actividad.findByPk(req.params.id);
+    if (!actividad) {
+      await t.rollback();
+      return res.status(404).json({ message: 'Actividad asociada no encontrada' });
+    }
+
+    const nuevoEstado = actividad.estado === false;
+    await actividad.update({ estado: nuevoEstado }, { transaction: t });
+
+    await t.commit();
+    return res.json({
+      message: `Ejercicio ${nuevoEstado ? 'habilitado' : 'inhabilitado'} correctamente`,
+      estado: nuevoEstado,
+    });
+  } catch (error) {
+    await t.rollback();
+    return res.status(500).json({ message: 'Error al cambiar el estado del ejercicio', error: error.message || error });
+  }
+};
+
+
+
+// Resolver un ejercicio y verificar la respuesta
+exports.resolverEjercicio = async (req, res) => {
+  try {
+    const { ejercicioId } = req.params;
+    const { respuesta, respuestas } = req.body; // 'respuestas' para cuestionarios
+
+    // Buscar el ejercicio
+    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
+      include: [
+        { model: Actividad, as: 'actividad' },
+        { model: Contenido, as: 'contenido' }
+      ]
+    });
+    if (!ejercicio) {
+      return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    if (!isEjercicioActivo(ejercicio)) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    // Rama por tipo de ejercicio
+    if (ejercicio.tipo_ejercicio === 'Compilador') {
+      // Compatibilidad: comparación simple por texto si usan este endpoint
+      const normalizarTexto = (texto) =>
+        (texto || '')
+          .toLowerCase()
+          .trim()
+          .replace(/\s+/g, ' ');
+
+      const respuestaEstudiante = normalizarTexto(respuesta);
+      const esperado = normalizarTexto(
+        (ejercicio.configuracion && ejercicio.configuracion.esperado) || ejercicio.resultado_ejercicio
+      );
+      const esCorrecta = respuestaEstudiante === esperado;
+      return res.json({
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
+        retroalimentacion: esCorrecta
+          ? '¡Respuesta correcta! Bien hecho.'
+          : `Respuesta incorrecta. La salida esperada es: ${esperado}`
+      });
+    }
+
+    // Evaluación para Diagramas UML
+    if (ejercicio.tipo_ejercicio === 'Diagramas UML') {
+      const { diagram, respuesta: respuestaBody } = req.body || {};
+      const diagramPayload = diagram || (respuestaBody && respuestaBody.diagram);
+      const cfg = ejercicio.configuracion || {};
+
+      // Validaciones mínimas de entrada y reglas configuradas por el administrador
+      if (!diagramPayload) {
+        return res.status(400).json({ message: 'El campo "diagram" es requerido para resolver ejercicios UML.' });
+      }
+      if (!cfg.opciones || typeof cfg.opciones !== 'object') {
+        return res.status(400).json({ message: 'Este ejercicio UML no tiene reglas configuradas (configuracion.opciones). Solicite al administrador que las establezca.' });
+      }
+
+      // Aplicar exclusivamente las reglas configuradas por el administrador en el ejercicio
+      // Ignoramos opciones del request para evitar que el cliente relaje las validaciones
+      const result = umlValidator.validate(diagramPayload, normalizeUmlConfig(cfg).opciones);
+      const esCorrecta = !!result.success;
+      const puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      return res.status(esCorrecta ? 200 : 400).json({
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos,
+        detalle: { errors: result.errors, warnings: result.warnings }
+      });
+    }
+
+    // Opción única
+    if (ejercicio.tipo_ejercicio === 'Opción única') {
+      const cfg = ejercicio.configuracion || { tipo: 'opcion-unica', opciones: [], respuestaCorrecta: '' };
+      const norm = (t) => (t || '').toString().trim();
+      const recibido = norm(req.body?.respuesta?.opcion ?? req.body?.respuesta ?? '');
+      const esperado = norm(cfg.respuestaCorrecta ?? '');
+      const esCorrecta = recibido === esperado;
+      return res.status(esCorrecta ? 200 : 400).json({
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
+        retroalimentacion: esCorrecta ? '¡Correcto!' : 'Respuesta incorrecta.'
+      });
+    }
+
+    // Ordenar
+    if (ejercicio.tipo_ejercicio === 'Ordenar') {
+      const cfg = ejercicio.configuracion || { tipo: 'ordenar', items: [] };
+      const orden = req.body?.respuesta?.orden || [];
+      const normArr = (arr) => (arr || []).map(x => (x || '').toString().trim());
+      const esCorrecta = JSON.stringify(normArr(orden)) === JSON.stringify(normArr(cfg.items));
+      return res.status(esCorrecta ? 200 : 400).json({
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
+        retroalimentacion: esCorrecta ? 'Orden correcto.' : 'El orden no es correcto.'
+      });
+    }
+
+    // Relacionar
+    if (ejercicio.tipo_ejercicio === 'Relacionar') {
+      const cfg = ejercicio.configuracion || { tipo: 'relacionar', pares: [] };
+      const conceptos = (cfg.pares || []).map(p => p.concepto);
+      const definiciones = (cfg.pares || []).map(p => p.definicion);
+      let ok = true;
+      const parejas = req.body?.respuesta?.parejas;
+      const matches = req.body?.respuesta?.matches;
+      if (Array.isArray(parejas)) {
+        for (const pr of parejas) { if (pr.conceptoIndex !== pr.definicionIndex) { ok = false; break; } }
+      } else if (matches) {
+        for (const [c, d] of Object.entries(matches)) {
+          const idx = conceptos.findIndex(x => x === c);
+          if (idx < 0 || definiciones[idx] !== d) { ok = false; break; }
+        }
+      } else {
+        ok = false;
+      }
+      const esCorrecta = ok;
+      return res.status(esCorrecta ? 200 : 400).json({
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos: esCorrecta ? ejercicio.puntos : 0,
+        retroalimentacion: esCorrecta ? 'Relaciones correctas.' : 'Relaciones incorrectas.'
+      });
+    }
+
+    // Evaluación para Preguntas (cuestionario)
+    const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
+    if (cfg.tipo !== 'cuestionario') {
+      return res.status(400).json({ message: 'Configuración inválida para evaluación no programática.' });
+    }
+
+    // Esperamos 'respuestas' como { [preguntaId]: valor }
+    const mapaRespuestas = respuestas || {};
+    let total = cfg.preguntas?.length || 0;
+    let correctas = 0;
+    const detalle = [];
+
+    (cfg.preguntas || []).forEach((p) => {
+      const recibido = mapaRespuestas[p.id];
+      let ok = false;
+      if (p.tipo === 'opcion-multiple') {
+        ok = recibido === p.respuesta_correcta;
+      } else if (p.tipo === 'abierta') {
+        const norm = (t) => (t || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
+        ok = norm(recibido) === norm(p.respuesta_correcta);
+      }
+      if (ok) correctas += 1;
+      detalle.push({ preguntaId: p.id, correcta: ok, recibido });
+    });
+
+    const esCorrecta = total > 0 && correctas === total;
+    const puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+    return res.json({
+      ejercicioId,
+      esCorrecta,
+      totalPreguntas: total,
+      correctas,
+      puntosObtenidos,
+      detalle,
+      retroalimentacion: esCorrecta
+        ? '¡Excelente! Todas las respuestas son correctas.'
+        : `Correctas ${correctas}/${total}. Revise las respuestas.`
+    });
+
+  } catch (error) {
+    res.status(500).json({
+      message: "Error al resolver el ejercicio",
+      error: error.message || error
+    });
+  }
+};
+
+
+// Obtener la retroalimentación de un ejercicio
+exports.getRetroalimentacionEjercicio = async (req, res) => {
+  try {
+    const { ejercicioId } = req.params;
+
+    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
+      include: [
+        { model: Actividad, as: 'actividad' },
+        { model: Contenido, as: 'contenido' }
+      ]
+    });
+    if (!ejercicio) {
+      return res.status(404).json({ message: "Ejercicio no encontrado" });
+    }
+
+    if (!isEjercicioActivo(ejercicio)) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    res.json({
+      ejercicioId,
+      retroalimentacion: `La respuesta correcta es: ${ejercicio.resultado_ejercicio}`
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: "Error al obtener la retroalimentación del ejercicio",
+      error: error.message || error
+    });
+  }
+};
+
+// Enviar respuesta de estudiante: guarda intento y evalúa
+exports.enviarRespuestaEjercicio = async (req, res) => {
+  try {
+    const { ejercicioId } = req.params;
+    const { estudiante_id, respuesta } = req.body;
+
+    const ejercicio = await Ejercicio.findByPk(ejercicioId, {
+      include: [
+        { model: Actividad, as: 'actividad' },
+        { model: Contenido, as: 'contenido' }
+      ]
+    });
+    if (!ejercicio) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    if (!isEjercicioActivo(ejercicio)) {
+      return res.status(404).json({ message: 'Ejercicio no encontrado' });
+    }
+
+    const codigo = req.body?.codigo || req.body?.respuesta?.codigo || req.body?.respuesta?.texto;
+    const respuestaVacia = typeof respuesta === 'undefined' || respuesta === null;
+    if (!estudiante_id) {
+      return res.status(400).json({ message: 'Faltan campos: estudiante_id' });
+    }
+    if (ejercicio.tipo_ejercicio !== 'Compilador' && respuestaVacia) {
+      return res.status(400).json({ message: 'Faltan campos: respuesta' });
+    }
+    const esMvc = req.body?.archivos && typeof req.body.archivos === 'object';
+    if (ejercicio.tipo_ejercicio === 'Compilador' && !codigo && !esMvc) {
+      return res.status(400).json({ message: 'Faltan campos: codigo o archivos MVC' });
+    }
+
+    const key = `${estudiante_id}:${ejercicioId}`;
+    if (submissionLocks.get(key)) {
+      return res.status(429).json({ message: 'Evaluación en curso, intenta nuevamente en unos segundos.' });
+    }
+    submissionLocks.set(key, true);
+
+    // Bloquear nuevos intentos si ya está aprobado
+    const evaluacionAprobada = await Evaluacion.findOne({
+      where: { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10), estado: 'Aprobado' }
+    });
+    if (evaluacionAprobada) {
+      submissionLocks.delete(key);
+      return res.status(409).json({
+        message: 'Ejercicio ya aprobado para el estudiante',
+        evaluacionId: evaluacionAprobada.id
+      });
+    }
+
+    // Para compilador, delegamos en el controlador de evaluación
+    if (ejercicio.tipo_ejercicio === 'Compilador') {
+      if (!req.body.ejercicio_id) req.body.ejercicio_id = parseInt(ejercicioId, 10);
+      if (!req.body.lenguaje_id) req.body.lenguaje_id = 62;
+      submissionLocks.delete(key);
+      return evaluacionController.evaluarCompilador(req, res);
+    }
+
+    // Normalizar respuesta para evaluación
+    const respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
+
+    // Evaluar usando la misma lógica de resolver
+    let esCorrecta = false;
+    let puntosObtenidos = 0;
+    let detalle = undefined;
+    let retroalimentacion = undefined;
+
+    if (ejercicio.tipo_ejercicio === 'Diagramas UML') {
+      const diagramPayload = req.body.diagram || respuestaPayload?.diagram;
+      const cfg = ejercicio.configuracion || {};
+      if (!diagramPayload) {
+        submissionLocks.delete(key);
+        return res.status(400).json({ message: 'El campo "diagram" es requerido para resolver ejercicios UML.' });
+      }
+      if (!cfg.opciones || typeof cfg.opciones !== 'object') {
+        submissionLocks.delete(key);
+        return res.status(400).json({ message: 'Este ejercicio UML no tiene reglas configuradas (configuracion.opciones). Solicite al administrador que las establezca.' });
+      }
+      const result = require('../services/umlValidator').validate(diagramPayload, normalizeUmlConfig(cfg).opciones);
+      esCorrecta = !!result.success;
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      detalle = { errors: result.errors, warnings: result.warnings };
+    } else if (ejercicio.tipo_ejercicio === 'Opción única') {
+      // Config: { enunciado, opciones: string[], respuestaCorrecta: string }
+      const cfg = ejercicio.configuracion || { tipo: 'opcion-unica', opciones: [], respuestaCorrecta: '' };
+      const norm = (t) => (t || '').toString().trim();
+      const recibido = norm(respuestaPayload?.opcion ?? respuestaPayload?.respuesta ?? '');
+      const esperado = norm(cfg.respuestaCorrecta ?? '');
+      esCorrecta = recibido === esperado;
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta ? '¡Correcto!' : 'Respuesta incorrecta.';
+    } else if (ejercicio.tipo_ejercicio === 'Ordenar') {
+      // Config: { enunciado, items: string[] } en orden correcto
+      const cfg = ejercicio.configuracion || { tipo: 'ordenar', items: [] };
+      const orden = respuestaPayload?.orden || [];
+      const normArr = (arr) => (arr || []).map(x => (x || '').toString().trim());
+      esCorrecta = JSON.stringify(normArr(orden)) === JSON.stringify(normArr(cfg.items));
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta ? 'Orden correcto.' : 'El orden no es correcto.';
+    } else if (ejercicio.tipo_ejercicio === 'Relacionar') {
+      // Config: { enunciado, pares: [{ concepto, definicion }] }
+      const cfg = ejercicio.configuracion || { tipo: 'relacionar', pares: [] };
+      const conceptos = (cfg.pares || []).map(p => p.concepto);
+      const definiciones = (cfg.pares || []).map(p => p.definicion);
+      let ok = true;
+      if (Array.isArray(respuestaPayload?.parejas)) {
+        // Parejas de índices: correcto si conceptoIndex === definicionIndex para cada par
+        for (const pr of respuestaPayload.parejas) {
+          if (pr.conceptoIndex !== pr.definicionIndex) { ok = false; break; }
+        }
+      } else if (respuestaPayload?.matches) {
+        // matches: { concepto: definicion }
+        for (const [c, d] of Object.entries(respuestaPayload.matches)) {
+          const idx = conceptos.findIndex(x => x === c);
+          if (idx < 0 || definiciones[idx] !== d) { ok = false; break; }
+        }
+      } else {
+        ok = false;
+      }
+      esCorrecta = ok;
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta ? 'Relaciones correctas.' : 'Relaciones incorrectas.';
+    } else {
+      // Preguntas (cuestionario)
+      const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
+      if (cfg.tipo !== 'cuestionario') {
+        submissionLocks.delete(key);
+        return res.status(400).json({ message: 'Configuración inválida para evaluación no programática.' });
+      }
+      const mapaRespuestas = (respuestaPayload && respuestaPayload.respuestas) || {};
+      let total = cfg.preguntas?.length || 0;
+      let correctas = 0;
+      detalle = [];
+      (cfg.preguntas || []).forEach((p) => {
+        const recibido = mapaRespuestas[p.id];
+        let ok = false;
+        if (p.tipo === 'opcion-multiple') {
+          ok = recibido === p.respuesta_correcta;
+        } else if (p.tipo === 'abierta') {
+          const norm = (t) => (t || '').toString().toLowerCase().trim().replace(/\s+/g, ' ');
+          ok = norm(recibido) === norm(p.respuesta_correcta);
+        }
+        if (ok) correctas += 1;
+        detalle.push({ preguntaId: p.id, correcta: ok, recibido });
+      });
+      esCorrecta = total > 0 && correctas === total;
+      puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
+      retroalimentacion = esCorrecta
+        ? '¡Excelente! Todas las respuestas son correctas.'
+        : `Correctas ${correctas}/${total}. Revise las respuestas.`;
+    }
+
+    const ejercicioIdNum = parseInt(ejercicioId, 10);
+    const registrarIntento = async () => {
+      const payloadRespuesta = {
+        ...(respuestaPayload || {}),
+        esCorrecta,
+        puntosObtenidos,
+        detalle,
+        retroalimentacion
+      };
+
+      const existente = await RespuestaEstudianteEjercicio.findOne({
+        where: {
+          estudiante_id,
+          ejercicio_id: ejercicioIdNum
+        }
+      });
+
+      if (existente) {
+        const nuevoContador = (existente.contador || 0) + 1;
+        await existente.update({
+          respuesta: payloadRespuesta,
+          estado: esCorrecta ? 'APROBADO' : 'REPROBADO',
+          contador: nuevoContador
+        });
+        return { id: existente.id, contador: nuevoContador };
+      }
+
+      const creado = await RespuestaEstudianteEjercicio.create({
+        respuesta: payloadRespuesta,
+        estudiante_id,
+        ejercicio_id: ejercicioIdNum,
+        estado: esCorrecta ? 'APROBADO' : 'REPROBADO',
+        contador: 1
+      });
+      return { id: creado.id, contador: 1 };
+    };
+
+    const intento = await registrarIntento();
+
+    if (esCorrecta) {
+      const evalWhere = { estudiante_id, ejercicio_id: parseInt(ejercicioId, 10) };
+      const existenteEval = await Evaluacion.findOne({ where: evalWhere });
+      const payloadEval = {
+        calificacion: puntosObtenidos,
+        retroalimentacion: retroalimentacion || null,
+        estudiante_id,
+        ejercicio_id: ejercicioIdNum,
+        estado: 'Aprobado'
+      };
+      if (existenteEval) {
+        await existenteEval.update(payloadEval);
+      } else {
+        await Evaluacion.create(payloadEval);
+      }
+      submissionLocks.delete(key);
+      return res.status(200).json({
+        intentoId: intento.id,
+        contador: intento.contador,
+        ejercicioId,
+        esCorrecta,
+        puntosObtenidos,
+        detalle,
+        retroalimentacion
+      });
+    }
+
+    // Incorrecta: se persiste intento y se permite reintentar
+    submissionLocks.delete(key);
+    return res.status(400).json({
+      intentoId: intento.id,
+      contador: intento.contador,
+      ejercicioId,
+      esCorrecta,
+      puntosObtenidos,
+      detalle,
+      retroalimentacion
+    });
+  } catch (error) {
+    // Liberar lock en caso de error
+    try {
+      const { ejercicioId } = req.params;
+      const { estudiante_id } = req.body || {};
+      if (estudiante_id && ejercicioId) submissionLocks.delete(`${estudiante_id}:${ejercicioId}`);
+    } catch {}
+    res.status(500).json({
+      message: 'Error al enviar la respuesta del ejercicio',
+      error: error.message || error
+    });
+  }
+};
+
