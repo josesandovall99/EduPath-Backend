@@ -44,6 +44,19 @@ const parseBoolean = (value) => {
   return null;
 };
 
+const isDocenteAllowedAsignaturaId = (req, asignaturaId) => {
+  if (req.tipoUsuario !== 'DOCENTE') return true;
+  const id = Number(asignaturaId);
+  const allowed = Array.isArray(req.docenteAsignaturaIds)
+    ? req.docenteAsignaturaIds.map((x) => Number(x)).filter((x) => Number.isFinite(x))
+    : [];
+  if (allowed.length > 0) return allowed.includes(id);
+  if (req.docenteAsignaturaId != null && req.docenteAsignaturaId !== '') {
+    return id === Number(req.docenteAsignaturaId);
+  }
+  return false;
+};
+
 const getEffectivePillarType = (AsignaturaLike) => normalizePillarType(AsignaturaLike?.tipo_pilar) || inferLegacyPillarType(AsignaturaLike?.nombre);
 
 const isEffectivePillarAsignatura = (AsignaturaLike) => Boolean(AsignaturaLike?.es_asignatura_pilar) || getEffectivePillarType(AsignaturaLike) !== null;
@@ -234,6 +247,37 @@ const ensureUniqueActivePillarAsignatura = async (tipoPilar, excludeId = null) =
 
 const canViewInactiveasignaturas = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
 
+// Docente o admin: activar/desactivar desbloqueo progresivo por asignatura
+exports.patchProgresionSecuencial = async (req, res) => {
+  try {
+    const asignaturaId = parseInt(req.params.id, 10);
+    if (!Number.isFinite(asignaturaId)) {
+      return res.status(400).json({ message: 'ID de asignatura inválido' });
+    }
+
+    const val = parseBoolean(req.body?.progresion_secuencial);
+    if (val === null) {
+      return res.status(400).json({ message: 'Envía progresion_secuencial como booleano.' });
+    }
+
+    if (!['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario)) {
+      return res.status(403).json({ message: 'No autorizado' });
+    }
+
+    if (req.tipoUsuario === 'DOCENTE' && !isDocenteAllowedAsignaturaId(req, asignaturaId)) {
+      return res.status(403).json({ message: 'No puedes modificar esta asignatura.' });
+    }
+
+    const asignatura = await AsignaturaModel.findByPk(asignaturaId);
+    if (!asignatura) return res.status(404).json({ message: 'Asignatura no encontrada' });
+
+    await asignatura.update({ progresion_secuencial: val });
+    res.json(serializeAsignaturaResponse(asignatura));
+  } catch (error) {
+    res.status(500).json({ message: error.message || 'Error al actualizar la progresión', error });
+  }
+};
+
 // Crear un asignatura (solo ADMINISTRADOR)
 exports.createAsignatura = async (req, res) => {
   try {
@@ -267,6 +311,7 @@ exports.createAsignatura = async (req, res) => {
         descripcion: descripcion || null,
         es_asignatura_pilar: isPillarAsignatura,
         tipo_pilar: isPillarAsignatura ? requestedPillarType : null,
+        progresion_secuencial: parseBoolean(req.body?.progresion_secuencial) === true,
       }, { transaction });
 
       if (isPillarAsignatura && requestedPillarType) {
@@ -400,15 +445,29 @@ exports.updateAsignatura = async (req, res) => {
       await ensureUniqueActivePillarAsignatura(requestedPillarType, asignatura.id);
     }
 
+    let nextProgresionSecuencial;
+    if (payload.progresion_secuencial !== undefined) {
+      const parsed = parseBoolean(payload.progresion_secuencial);
+      if (parsed === null) {
+        return res.status(400).json({ message: 'progresion_secuencial debe ser un valor booleano.' });
+      }
+      nextProgresionSecuencial = parsed;
+    }
+
     const transaction = await sequelize.transaction();
 
     try {
-      await asignatura.update({
+      const updateFields = {
         nombre: nextName,
         descripcion: nextDescription || null,
         es_asignatura_pilar: Boolean(requestedPillarFlag),
         tipo_pilar: requestedPillarFlag ? requestedPillarType : null,
-      }, { transaction });
+      };
+      if (nextProgresionSecuencial !== undefined) {
+        updateFields.progresion_secuencial = nextProgresionSecuencial;
+      }
+
+      await asignatura.update(updateFields, { transaction });
 
       if (requestedPillarFlag && requestedPillarType) {
         await ensurePillarTemplate({ Asignatura: asignatura, tipoPilar: requestedPillarType, transaction });

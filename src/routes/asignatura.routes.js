@@ -11,6 +11,11 @@ router.post('/', autenticacionUsuario, requiereAdmin, AsignaturaController.creat
 // GET: permite lectura si está autenticado
 router.get('/', autenticacionUsuario, AsignaturaController.getAsignaturas);
 router.get('/mis-asignaturas', autenticacionUsuario, requiereDocente, AsignaturaController.getMisAsignaturasDocente);
+router.patch(
+  '/:id/progresion-secuencial',
+  autenticacionUsuario,
+  AsignaturaController.patchProgresionSecuencial
+);
 router.get('/:id', autenticacionUsuario, AsignaturaController.getAsignaturaById);
 // PUT, DELETE: requieren ser ADMINISTRADOR
 router.put('/:id', autenticacionUsuario, requiereAdmin, AsignaturaController.updateAsignatura);
