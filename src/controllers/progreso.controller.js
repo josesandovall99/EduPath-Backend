@@ -3963,12 +3963,7 @@ exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
 
 
     console.log(`📦 Contenido IDs usados para el cálculo de progreso (en secuencia activa):`, contenidoIds);
-
-    console.log(`👁️ Contenidos visualizados por estudiante ${esId}: ${contenidosVisualizados}`);
-
-
-
-    // ==========================================
+// ==========================================
 
     // 2. EJERCICIOS DEL ÁREA (desde respuestas enviadas o aprobadas)
 

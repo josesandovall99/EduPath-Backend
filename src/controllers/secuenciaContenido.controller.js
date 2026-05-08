@@ -405,10 +405,7 @@ exports.createSecuenciaContenido = async (req, res) => {
 
     const originContext = await resolveContenidoAsignatura(contenido_origen_id);
     ensureDocenteAsignaturaAccess(req, originContext.asignaturaId);
-
-    console.log(`[CREATE] Creando ${contenido_origen_id} → ${contenido_destino_id}`);
-
-    // Ejecutar 8 validaciones exhaustivas
+// Ejecutar 8 validaciones exhaustivas
     const validacion = await validarSecuenciaContenido(
       contenido_origen_id,
       contenido_destino_id,
@@ -417,8 +414,7 @@ exports.createSecuenciaContenido = async (req, res) => {
     );
 
     if (!validacion.valido) {
-      console.log(`[CREATE] Validacion fallida: ${validacion.error}`);
-      return res.status(400).json({
+return res.status(400).json({
         message: "Validación fallida",
         error: validacion.error,
         detalles: validacion.detalles,
@@ -433,10 +429,7 @@ exports.createSecuenciaContenido = async (req, res) => {
       descripcion: descripcion || null,
       estado: estado !== undefined ? estado : true
     });
-
-    console.log(`[CREATE] Secuencia creada. ID: ${nuevaSecuencia.id}`);
-
-    return res.status(201).json({
+return res.status(201).json({
       message: "Secuencia creada correctamente",
       secuencia: nuevaSecuencia,
       validacionesRealizadas: validacion.validacionesRealizadas,
@@ -757,8 +750,7 @@ exports.updateSecuenciaContenido = async (req, res) => {
       );
 
       if (!validacion.valido) {
-        console.log(`[UPDATE] Validacion fallida: ${validacion.error}`);
-        return res.status(400).json({
+return res.status(400).json({
           message: "Validación fallida",
           error: validacion.error,
           detalles: validacion.detalles,
@@ -774,10 +766,7 @@ exports.updateSecuenciaContenido = async (req, res) => {
       descripcion: descripcion !== undefined ? descripcion : secuencia.descripcion,
       estado: estado !== undefined ? estado : secuencia.estado
     });
-
-    console.log(`[UPDATE] ID ${secuencia.id} actualizada`);
-
-    return res.json({
+return res.json({
       message: "Secuencia actualizada correctamente",
       secuencia: actualizada
     });

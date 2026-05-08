@@ -37,10 +37,7 @@ const initializeRAG = async () => {
             console.warn('Ni OLLAMA_BASE_URL ni GROQ_API_KEY encontradas. El chatbot no estará disponible.');
             return;
         }
-
-        console.log(`Env detectados: OLLAMA_BASE_URL=${useOllama ? process.env.OLLAMA_BASE_URL : 'no'}, GROQ_API_KEY=${useGroq ? 'si' : 'no'}`);
-
-        ragManager = buildRagManager();
+ragManager = buildRagManager();
 
         const chatbotDocsPath = path.join(__dirname, '../../uploads/chatbot-docs');
         await fs.mkdir(chatbotDocsPath, { recursive: true });
@@ -48,8 +45,7 @@ const initializeRAG = async () => {
         const pdfFiles = files.filter((file) => file.toLowerCase().endsWith('.pdf'));
 
         if (pdfFiles.length === 0) {
-            console.log('Carpeta chatbot-docs vacía. Esperando documentos...');
-            return;
+return;
         }
 
         console.log(`Cargando ${pdfFiles.length} PDF(s) existente(s)...`);
@@ -57,15 +53,13 @@ const initializeRAG = async () => {
             const pdfPath = path.join(chatbotDocsPath, pdfFile);
             try {
                 await ragManager.loadPDFFromPath(pdfPath);
-                console.log(`   ${pdfFile} cargado`);
-            } catch (error) {
+} catch (error) {
                 console.error(`   Error cargando ${pdfFile}: ${error.message}`);
             }
         }
 
         const stats = ragManager.getStats();
-        console.log(stats.message);
-    } catch (err) {
+} catch (err) {
         console.error('Error inicializando RAGManager:', err.message || err);
     }
 };

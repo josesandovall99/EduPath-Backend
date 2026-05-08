@@ -947,8 +947,7 @@ exports.ejecutarCompilador = async (req, res) => {
             body: req.body
           });
         } catch (logErr) {
-          console.log('ejecutarCompilador: error al imprimir payload', logErr && logErr.message);
-        }
+}
       }
       return res.status(400).json({ message: 'Faltan campos: ejercicio_id, lenguaje_id, codigo' });
     }

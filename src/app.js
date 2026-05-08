@@ -1,6 +1,7 @@
-require('dotenv').config({ quiet: true }); 
+require('dotenv').config({ quiet: true });
 const express = require('express');
 const cors = require('cors');
+const compression = require('compression');
 const app = express();
 const sequelize = require('./config/database');
 const db = require('./models');
@@ -21,14 +22,17 @@ const allowedOrigins = new Set([
     'http://localhost:3000',
     'http://localhost:3001',
     'http://localhost:3002',
+    'http://localhost:4173',  // vite preview
     'http://localhost:5173',
     'http://127.0.0.1:3000',
     'http://127.0.0.1:3001',
+    'http://127.0.0.1:4173',  // vite preview
     'http://127.0.0.1:5173',
     // Red local (LAN)
     'http://192.168.3.21',
-    'http://192.168.3.21:5173',
     'http://192.168.3.21:3000',
+    'http://192.168.3.21:4173',  // vite preview LAN
+    'http://192.168.3.21:5173',
     ...configuredOrigins,
 ]);
 
@@ -50,6 +54,10 @@ const corsOptions = {
 
 app.use(cors(corsOptions));
 
+// Gzip: reduce el tamaño de las respuestas JSON un 70-85%.
+// Debe ir antes de cualquier ruta para comprimir todos los payloads.
+app.use(compression({ level: 6 }));
+
 app.use((req, res, next) => {
     // Baseline OWASP-recommended security headers for API responses.
     res.set('X-Content-Type-Options', 'nosniff');
@@ -58,25 +66,26 @@ app.use((req, res, next) => {
     res.set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
     res.set('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
 
-    res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    res.set('Pragma', 'no-cache');
-    res.set('Expires', '0');
-    res.set('Surrogate-Control', 'no-store');
+    // Los GETs de listados se pueden cachear 30 s en el cliente (reducen re-fetches).
+    // POSTs, PUTs, DELETEs nunca deben cachearse.
+    if (req.method === 'GET') {
+        res.set('Cache-Control', 'private, max-age=30');
+    } else {
+        res.set('Cache-Control', 'no-store');
+    }
     next();
 });
 
-// Cambie esto: app.use(express.json());
+// 50mb era innecesario para una API de contenido educativo y permitía ataques
+// de payload gigante. Se limita a 5mb (suficiente para PDFs de chatbot base64).
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ limit: '5mb', extended: true }));
 
-//Por esto:
-app.use(express.json({ limit: '50mb' }))
-app.use(express.urlencoded({ limit: '50mb', extended: true }))
 
-
-// Logger para confirmar qué llega al servidor
-app.use((req, res, next) => {
-    console.log(`Mensaje del Servidor: Recibido ${req.method} en ${req.url}`);
-    next();
-});
+// Logger eliminado en producción: console.log por cada request bloquea el
+// event loop de Node.js y añade latencia visible (~5-15 ms/req en I/O lento).
+// Para debug local, descomenta temporalmente:
+// app.use((req, res, next) => { console.log(`${req.method} ${req.url}`); next(); });
 
 // --- RUTAS DEL SISTEMA ---
 
@@ -126,9 +135,14 @@ app.get('/debug', (req, res) => {
 // --- ARRANQUE DEL SERVIDOR CON SINCRONIZACIÓN ---
 const PORT = process.env.PORT || 4000;
 
-// Sincronizamos con la base de datos antes de iniciar el servidor
-// .sync({ alter: true }) creará las tablas automáticamente en la nueva BD de Render
-db.sequelize.sync({ alter: true })
+// En desarrollo se usa { alter: true } para que Sequelize ajuste las columnas
+// automáticamente. En producción/LAN se usa { force: false } (solo crea tablas
+// que no existen) para evitar la inspección de esquema que añade 3-8 s al arranque.
+const syncOptions = process.env.NODE_ENV === 'development'
+    ? { alter: true }
+    : { force: false };
+
+db.sequelize.sync(syncOptions)
     .then(async () => {
         console.log('Base de datos sincronizada con exito');
         

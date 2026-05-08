@@ -308,10 +308,7 @@ const importarEstudiantesDesdeExcel = async (req, res) => {
         datos.push(fila);
       }
     });
-
-    console.log('Datos del Excel:', datos);
-
-    const personasParaCorreo = [];
+const personasParaCorreo = [];
 
     for (const fila of datos) {
       const Nombres = fila["Nombres"];
@@ -322,8 +319,7 @@ const importarEstudiantesDesdeExcel = async (req, res) => {
       const Semestre = fila["Semestre"];
 
       if (!Nombres || !Apellidos || !Email || !CodigoEstudiantil) {
-        console.log('Fila ignorada por datos incompletos:', fila);
-        continue;
+continue;
       }
 
       // Generar credenciales
