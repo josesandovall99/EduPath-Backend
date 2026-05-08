@@ -29,6 +29,46 @@ function normalizeTopK(topK, maxTopK = 1, defaultTopK = 1) {
     return Math.max(1, Math.min(Number(topK) || defaultTopK, maxTopK));
 }
 
+/**
+ * Ollama acepta keep_alive como:
+ * - duración con unidad: "5m", "10s", "1h" (ver docs)
+ * - número (0 descarga el modelo; -1 en muchas versiones mantiene el modelo cargado)
+ * La cadena "-1" NO es una duración válida → HTTP 400.
+ * Sin valor: no enviamos el campo y Ollama usa su default (p. ej. 5m).
+ */
+function normalizeKeepAliveForOllama(raw) {
+    if (raw === undefined || raw === null) return undefined;
+    const s = String(raw).trim();
+    if (s === '') return undefined;
+    if (s === '-1') return -1;
+    if (/^-?\d+(\.\d+)?$/.test(s)) return Number(s);
+    return s;
+}
+
+function buildGenerateOptions({ temperature, maxTokens }) {
+    const t = Number(temperature);
+    const safeTemp = Number.isFinite(t) ? Math.min(2, Math.max(0, t)) : 0.2;
+    const n = Math.round(Number(maxTokens));
+    const numPredict = Number.isFinite(n) && n >= 1 ? Math.min(n, 128000) : 256;
+    return { temperature: safeTemp, num_predict: numPredict };
+}
+
+async function readOllamaErrorMessage(res) {
+    try {
+        const text = await res.text();
+        if (!text) return '';
+        try {
+            const j = JSON.parse(text);
+            if (j && typeof j.error === 'string') return j.error;
+        } catch (_) {
+            /* cuerpo no JSON */
+        }
+        return text.slice(0, 500);
+    } catch (_) {
+        return '';
+    }
+}
+
 
 /**
  * Cliente HTTP para Ollama (PC B)
@@ -40,25 +80,39 @@ class OllamaHTTPClient {
         this.model = model;
         this.temperature = temperature;
         this.maxTokens = maxTokens;
-        this.keepAlive = process.env.OLLAMA_KEEP_ALIVE || '-1';
+        /** Ejemplos: "30m", "1h", "0" (descargar), "-1" (numérico en JSON). No uses la cadena "-1" cruda en JSON (400). */
+        this.keepAlive = process.env.OLLAMA_KEEP_ALIVE;
         this.generateTimeoutMs = Number(process.env.OLLAMA_GENERATE_TIMEOUT_MS || 120000);
         this.streamStartTimeoutMs = Number(process.env.OLLAMA_STREAM_START_TIMEOUT_MS || 120000);
+    }
+
+    _buildPayload(prompt, stream, options = {}) {
+        const modelName = (options.model || this.model || '').trim();
+        if (!modelName) {
+            throw new Error('Falta el nombre del modelo Ollama (model en chatbot o OLLAMA_MODEL).');
+        }
+        const keepAlive = normalizeKeepAliveForOllama(options.keepAlive !== undefined ? options.keepAlive : this.keepAlive);
+        const genOpts = buildGenerateOptions({
+            temperature: options.temperature ?? this.temperature,
+            maxTokens: options.maxTokens || this.maxTokens,
+        });
+        const payload = {
+            model: modelName,
+            prompt,
+            stream,
+            options: genOpts,
+        };
+        if (keepAlive !== undefined) {
+            payload.keep_alive = keepAlive;
+        }
+        return payload;
     }
 
     async generate(prompt, options = {}) {
         const generationStart = nowMs();
         const endpoint = '/api/generate';
         const url = `${this.baseUrl}${endpoint}`;
-        const payload = {
-            model: options.model || this.model,
-            prompt,
-            stream: false,
-            keep_alive: options.keepAlive || this.keepAlive,
-            options: {
-                temperature: options.temperature ?? this.temperature,
-                num_predict: options.maxTokens || this.maxTokens,
-            },
-        };
+        const payload = this._buildPayload(prompt, false, options);
 
         try {
             console.log(`Enviando prompt a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | timeout ms: ${this.generateTimeoutMs}`);
@@ -73,7 +127,9 @@ class OllamaHTTPClient {
 
             if (!res.ok) {
                 logTiming('Generación LLM total con error', generationStart);
-                throw new Error(`HTTP ${res.status} en ${endpoint}`);
+                const ollamaErr = await readOllamaErrorMessage(res);
+                const hint = ollamaErr ? `: ${ollamaErr}` : '';
+                throw new Error(`HTTP ${res.status} en ${endpoint}${hint}`);
             }
 
             const json = await res.json();
@@ -87,7 +143,7 @@ class OllamaHTTPClient {
             }
 
             logTiming('Generación LLM total con error', generationStart);
-            throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${lastError?.message}`);
+            throw new Error(`Ollama en ${this.baseUrl} rechazó la petición o no respondió. Revisa modelo y logs de Ollama. Detalle: ${lastError?.message}`);
         }
     }
 
@@ -95,16 +151,7 @@ class OllamaHTTPClient {
         const generationStart = nowMs();
         const endpoint = '/api/generate';
         const url = `${this.baseUrl}${endpoint}`;
-        const payload = {
-            model: options.model || this.model,
-            prompt,
-            stream: true,
-            keep_alive: options.keepAlive || this.keepAlive,
-            options: {
-                temperature: options.temperature ?? this.temperature,
-                num_predict: options.maxTokens || this.maxTokens,
-            },
-        };
+        const payload = this._buildPayload(prompt, true, options);
 
         try {
             console.log(`Enviando prompt streaming a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | start timeout ms: ${this.streamStartTimeoutMs}`);
@@ -124,7 +171,9 @@ class OllamaHTTPClient {
 
             if (!res.ok) {
                 logTiming('Generación LLM stream con error', generationStart);
-                throw new Error(`HTTP ${res.status} en ${endpoint}`);
+                const ollamaErr = await readOllamaErrorMessage(res);
+                const hint = ollamaErr ? `: ${ollamaErr}` : '';
+                throw new Error(`HTTP ${res.status} en ${endpoint}${hint}`);
             }
 
             if (!res.body) {
@@ -215,7 +264,7 @@ class OllamaHTTPClient {
             }
 
             logTiming('Generación LLM stream con error', generationStart);
-            throw new Error(`PC B no responde en ${this.baseUrl}. Verifica que Ollama esté corriendo. Detalle: ${error?.message}`);
+            throw new Error(`Ollama en ${this.baseUrl} rechazó la petición o no respondió. Revisa modelo y logs de Ollama. Detalle: ${error?.message}`);
         }
     }
 }

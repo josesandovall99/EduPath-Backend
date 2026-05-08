@@ -1,3 +1,5 @@
+const { chatbotAsignaturaFkColumn } = require('../config/columnNames');
+
 module.exports = (sequelize, DataTypes) => {
   const Chatbot = sequelize.define('Chatbot', {
     id: {
@@ -25,6 +27,7 @@ module.exports = (sequelize, DataTypes) => {
     asignatura_id: {
       type: DataTypes.BIGINT,
       allowNull: true,
+      field: chatbotAsignaturaFkColumn,
     },
     miniproyecto_id: {
       type: DataTypes.BIGINT,
