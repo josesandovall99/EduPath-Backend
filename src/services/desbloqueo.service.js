@@ -1,62 +1,72 @@
-const { Contenido, Subtema, Tema, Progreso, SecuenciaContenido } = require('../models');
+const { Contenido, Subtema, Tema, Progreso, Asignatura, SecuenciaContenido } = require('../models');
 const { Op } = require('sequelize');
 
 /**
- * Servicio para manejar la lógica de desbloqueo de contenidos, subtemas y temas
- * basado en el progreso del estudiante.
- * 
- * Reglas:
- * - El primer elemento siempre está desbloqueado
- * - Un contenido se desbloquea cuando su predecesor en la secuencia está completado
- * - Un subtema está completo cuando todos sus contenidos están completados
- * - Un tema está completo cuando todos sus subtemas están completos
+ * Progresión por asignatura (`Asignatura.progresion_secuencial`):
+ * - false: estudiantes navegan libremente (API devuelve todo desbloqueado).
+ * - true: reglas anteriores — secuencia de contenidos, subtemas y temas en orden.
  */
 
+async function obtenerProgresionSecuencialPorAsignaturaId(asignaturaId) {
+  if (!asignaturaId) return false;
+  const a = await Asignatura.findOne({
+    where: { id: asignaturaId },
+    attributes: ['progresion_secuencial'],
+  });
+  return Boolean(a?.progresion_secuencial);
+}
+
+async function obtenerProgresionSecuencialPorTemaId(temaId) {
+  const tema = await Tema.findOne({
+    where: { id: temaId, estado: true },
+    attributes: ['asignatura_id'],
+  });
+  if (!tema) return false;
+  return obtenerProgresionSecuencialPorAsignaturaId(tema.asignatura_id);
+}
+
 /**
- * Verifica si un contenido está desbloqueado para un estudiante
- * @param {number} estudianteId - ID del estudiante
- * @param {number} contenidoId - ID del contenido
- * @returns {Promise<{desbloqueado: boolean, razon: string}>}
+ * Verifica si un contenido está disponible para un estudiante
+ * @param {number} estudianteId
+ * @param {number} contenidoId
  */
 exports.verificarContenidoDesbloqueado = async (estudianteId, contenidoId) => {
   try {
-    // Verificar que el contenido existe
     const contenido = await Contenido.findOne({ where: { id: contenidoId, estado: true } });
     if (!contenido) {
       return { desbloqueado: false, razon: 'Contenido no encontrado' };
     }
 
-    // Buscar si este contenido tiene un predecesor en la secuencia
-    // (es decir, si existe una secuencia donde este contenido es el destino)
+    const secuencial = await obtenerProgresionSecuencialPorTemaId(contenido.tema_id);
+    if (!secuencial) {
+      return { desbloqueado: true, razon: 'Acceso libre' };
+    }
+
     const secuenciaEntrante = await SecuenciaContenido.findOne({
       where: {
         contenido_destino_id: contenidoId,
-        estado: true
-      }
+        estado: true,
+      },
     });
 
-    // Si no tiene predecesor, es el primero y está desbloqueado
     if (!secuenciaEntrante) {
       return { desbloqueado: true, razon: 'Es el primer contenido de la secuencia' };
     }
 
-    // Si tiene predecesor, verificar si el predecesor está completado
     const predecesorId = secuenciaEntrante.contenido_origen_id;
     const progresoPredecesor = await Progreso.findOne({
       where: {
         estudiante_id: estudianteId,
         contenido_id: predecesorId,
         completado: true,
-        estado: 'Visualizado'
-      }
+        estado: 'Visualizado',
+      },
     });
 
     if (progresoPredecesor) {
       return { desbloqueado: true, razon: 'Contenido predecesor completado' };
-    } else {
-      return { desbloqueado: false, razon: 'Contenido predecesor no completado' };
     }
-
+    return { desbloqueado: false, razon: 'Contenido predecesor no completado' };
   } catch (error) {
     console.error('Error en verificarContenidoDesbloqueado:', error);
     return { desbloqueado: false, razon: 'Error al verificar', error: error.message };
@@ -65,16 +75,12 @@ exports.verificarContenidoDesbloqueado = async (estudianteId, contenidoId) => {
 
 /**
  * Verifica si un subtema está completo para un estudiante
- * @param {number} estudianteId - ID del estudiante
- * @param {number} subtemaId - ID del subtema
- * @returns {Promise<{completo: boolean, totalContenidos: number, contenidosCompletados: number}>}
  */
 exports.verificarSubtemaCompleto = async (estudianteId, subtemaId) => {
   try {
-    // Obtener todos los contenidos del subtema
     const contenidos = await Contenido.findAll({
       where: { subtema_id: subtemaId, estado: true },
-      attributes: ['id']
+      attributes: ['id'],
     });
 
     const totalContenidos = contenidos.length;
@@ -83,16 +89,15 @@ exports.verificarSubtemaCompleto = async (estudianteId, subtemaId) => {
       return { completo: true, totalContenidos: 0, contenidosCompletados: 0, razon: 'Sin contenidos' };
     }
 
-    const contenidoIds = contenidos.map(c => c.id);
+    const contenidoIds = contenidos.map((c) => c.id);
 
-    // Contar cuántos contenidos están completados
     const contenidosCompletados = await Progreso.count({
       where: {
         estudiante_id: estudianteId,
         contenido_id: { [Op.in]: contenidoIds },
         completado: true,
-        estado: 'Visualizado'
-      }
+        estado: 'Visualizado',
+      },
     });
 
     const completo = contenidosCompletados === totalContenidos;
@@ -101,9 +106,8 @@ exports.verificarSubtemaCompleto = async (estudianteId, subtemaId) => {
       completo,
       totalContenidos,
       contenidosCompletados,
-      porcentaje: Math.round((contenidosCompletados / totalContenidos) * 100)
+      porcentaje: Math.round((contenidosCompletados / totalContenidos) * 100),
     };
-
   } catch (error) {
     console.error('Error en verificarSubtemaCompleto:', error);
     return { completo: false, totalContenidos: 0, contenidosCompletados: 0, error: error.message };
@@ -112,16 +116,12 @@ exports.verificarSubtemaCompleto = async (estudianteId, subtemaId) => {
 
 /**
  * Verifica si un tema está completo para un estudiante
- * @param {number} estudianteId - ID del estudiante
- * @param {number} temaId - ID del tema
- * @returns {Promise<{completo: boolean, totalSubtemas: number, subtemasCompletados: number}>}
  */
 exports.verificarTemaCompleto = async (estudianteId, temaId) => {
   try {
-    // Obtener todos los subtemas del tema
     const subtemas = await Subtema.findAll({
       where: { tema_id: temaId, estado: true },
-      attributes: ['id']
+      attributes: ['id'],
     });
 
     const totalSubtemas = subtemas.length;
@@ -130,10 +130,9 @@ exports.verificarTemaCompleto = async (estudianteId, temaId) => {
       return { completo: true, totalSubtemas: 0, subtemasCompletados: 0, razon: 'Sin subtemas' };
     }
 
-    // Verificar cuántos subtemas están completos
     let subtemasCompletados = 0;
     for (const subtema of subtemas) {
-      const resultado = await this.verificarSubtemaCompleto(estudianteId, subtema.id);
+      const resultado = await exports.verificarSubtemaCompleto(estudianteId, subtema.id);
       if (resultado.completo) {
         subtemasCompletados++;
       }
@@ -145,183 +144,154 @@ exports.verificarTemaCompleto = async (estudianteId, temaId) => {
       completo,
       totalSubtemas,
       subtemasCompletados,
-      porcentaje: Math.round((subtemasCompletados / totalSubtemas) * 100)
+      porcentaje: Math.round((subtemasCompletados / totalSubtemas) * 100),
     };
-
   } catch (error) {
     console.error('Error en verificarTemaCompleto:', error);
     return { completo: false, totalSubtemas: 0, subtemasCompletados: 0, error: error.message };
   }
 };
 
-/**
- * Obtiene el estado de todos los contenidos de un tema para un estudiante
- * @param {number} estudianteId - ID del estudiante
- * @param {number} temaId - ID del tema
- * @returns {Promise<Array>} Lista de contenidos con su estado de desbloqueo
- */
 exports.obtenerEstadoContenidosTema = async (estudianteId, temaId) => {
   try {
-    // Obtener todos los contenidos del tema con sus relaciones
     const contenidos = await Contenido.findAll({
       where: { tema_id: temaId, estado: true },
-      include: [
-        { model: Subtema, attributes: ['id', 'nombre'] }
-      ],
-      order: [['subtema_id', 'ASC'], ['id', 'ASC']]
+      include: [{ model: Subtema, attributes: ['id', 'nombre'] }],
+      order: [['subtema_id', 'ASC'], ['id', 'ASC']],
     });
 
-    // Para cada contenido, verificar si está desbloqueado y si está completado
-    const resultado = await Promise.all(contenidos.map(async (contenido) => {
-      const desbloqueo = await this.verificarContenidoDesbloqueado(estudianteId, contenido.id);
-      
-      const progreso = await Progreso.findOne({
-        where: {
-          estudiante_id: estudianteId,
-          contenido_id: contenido.id,
-          completado: true,
-          estado: 'Visualizado'
-        }
-      });
+    const resultado = await Promise.all(
+      contenidos.map(async (contenido) => {
+        const desbloqueo = await exports.verificarContenidoDesbloqueado(estudianteId, contenido.id);
 
-      return {
-        id: contenido.id,
-        titulo: contenido.titulo,
-        tipo: contenido.tipo,
-        subtema_id: contenido.subtema_id,
-        subtema_nombre: contenido.Subtema?.nombre,
-        desbloqueado: desbloqueo.desbloqueado,
-        completado: !!progreso,
-        razon: desbloqueo.razon
-      };
-    }));
+        const progreso = await Progreso.findOne({
+          where: {
+            estudiante_id: estudianteId,
+            contenido_id: contenido.id,
+            completado: true,
+            estado: 'Visualizado',
+          },
+        });
+
+        return {
+          id: contenido.id,
+          titulo: contenido.titulo,
+          tipo: contenido.tipo,
+          subtema_id: contenido.subtema_id,
+          subtema_nombre: contenido.Subtema?.nombre,
+          desbloqueado: desbloqueo.desbloqueado,
+          completado: !!progreso,
+          razon: desbloqueo.razon,
+        };
+      })
+    );
 
     return resultado;
-
   } catch (error) {
     console.error('Error en obtenerEstadoContenidosTema:', error);
     throw error;
   }
 };
 
-/**
- * Obtiene el estado de todos los subtemas de un tema para un estudiante
- * @param {number} estudianteId - ID del estudiante
- * @param {number} temaId - ID del tema
- * @returns {Promise<Array>} Lista de subtemas con su estado
- */
 exports.obtenerEstadoSubtemasTema = async (estudianteId, temaId) => {
   try {
-    // Obtener todos los subtemas del tema
+    const secuencial = await obtenerProgresionSecuencialPorTemaId(temaId);
+
     const subtemas = await Subtema.findAll({
       where: { tema_id: temaId, estado: true },
-      order: [['id', 'ASC']]
+      order: [['id', 'ASC']],
     });
 
-    // Para cada subtema, verificar su estado
-    const resultado = await Promise.all(subtemas.map(async (subtema, index) => {
-      const estadoSubtema = await this.verificarSubtemaCompleto(estudianteId, subtema.id);
-      
-      // El primer subtema siempre está desbloqueado
-      let desbloqueado = index === 0;
-      
-      // Si no es el primero, verificar si el anterior está completo
-      if (index > 0) {
-        const subtemaAnterior = subtemas[index - 1];
-        const estadoAnterior = await this.verificarSubtemaCompleto(estudianteId, subtemaAnterior.id);
-        desbloqueado = estadoAnterior.completo;
-      }
+    const resultado = await Promise.all(
+      subtemas.map(async (subtema, index) => {
+        const estadoSubtema = await exports.verificarSubtemaCompleto(estudianteId, subtema.id);
 
-      return {
-        id: subtema.id,
-        nombre: subtema.nombre,
-        descripcion: subtema.descripcion,
-        desbloqueado,
-        completo: estadoSubtema.completo,
-        totalContenidos: estadoSubtema.totalContenidos,
-        contenidosCompletados: estadoSubtema.contenidosCompletados,
-        porcentaje: estadoSubtema.porcentaje
-      };
-    }));
+        let desbloqueado = true;
+        if (secuencial) {
+          desbloqueado = index === 0;
+          if (index > 0) {
+            const subtemaAnterior = subtemas[index - 1];
+            const estadoAnterior = await exports.verificarSubtemaCompleto(estudianteId, subtemaAnterior.id);
+            desbloqueado = estadoAnterior.completo;
+          }
+        }
+
+        return {
+          id: subtema.id,
+          nombre: subtema.nombre,
+          descripcion: subtema.descripcion,
+          desbloqueado,
+          completo: estadoSubtema.completo,
+          totalContenidos: estadoSubtema.totalContenidos,
+          contenidosCompletados: estadoSubtema.contenidosCompletados,
+          porcentaje: estadoSubtema.porcentaje,
+        };
+      })
+    );
 
     return resultado;
-
   } catch (error) {
     console.error('Error en obtenerEstadoSubtemasTema:', error);
     throw error;
   }
 };
 
-/**
- * Obtiene el estado de todos los temas de un asignatura para un estudiante
- * @param {number} estudianteId - ID del estudiante
- * @param {number} asignaturaId - ID del asignatura
- * @returns {Promise<Array>} Lista de temas con su estado
- */
 exports.obtenerEstadoTemasAsignatura = async (estudianteId, asignaturaId) => {
   try {
-    // Obtener todos los temas del asignatura ordenados
+    const secuencial = await obtenerProgresionSecuencialPorAsignaturaId(asignaturaId);
+
     const temas = await Tema.findAll({
       where: { asignatura_id: asignaturaId, estado: true },
-      order: [['orden', 'ASC'], ['id', 'ASC']]
+      order: [['orden', 'ASC'], ['id', 'ASC']],
     });
 
-    // Para cada tema, verificar su estado
-    const resultado = await Promise.all(temas.map(async (tema, index) => {
-      const estadoTema = await this.verificarTemaCompleto(estudianteId, tema.id);
-      
-      // El primer tema siempre está desbloqueado
-      let desbloqueado = index === 0;
-      
-      // Si no es el primero, verificar si el anterior está completo
-      if (index > 0) {
-        const temaAnterior = temas[index - 1];
-        const estadoAnterior = await this.verificarTemaCompleto(estudianteId, temaAnterior.id);
-        desbloqueado = estadoAnterior.completo;
-      }
+    const resultado = await Promise.all(
+      temas.map(async (tema, index) => {
+        const estadoTema = await exports.verificarTemaCompleto(estudianteId, tema.id);
 
-      return {
-        id: tema.id,
-        nombre: tema.nombre,
-        descripcion: tema.descripcion,
-        orden: tema.orden,
-        desbloqueado,
-        completo: estadoTema.completo,
-        totalSubtemas: estadoTema.totalSubtemas,
-        subtemasCompletados: estadoTema.subtemasCompletados,
-        porcentaje: estadoTema.porcentaje
-      };
-    }));
+        let desbloqueado = true;
+        if (secuencial) {
+          desbloqueado = index === 0;
+          if (index > 0) {
+            const temaAnterior = temas[index - 1];
+            const estadoAnterior = await exports.verificarTemaCompleto(estudianteId, temaAnterior.id);
+            desbloqueado = estadoAnterior.completo;
+          }
+        }
+
+        return {
+          id: tema.id,
+          nombre: tema.nombre,
+          descripcion: tema.descripcion,
+          orden: tema.orden,
+          desbloqueado,
+          completo: estadoTema.completo,
+          totalSubtemas: estadoTema.totalSubtemas,
+          subtemasCompletados: estadoTema.subtemasCompletados,
+          porcentaje: estadoTema.porcentaje,
+        };
+      })
+    );
 
     return resultado;
-
   } catch (error) {
     console.error('Error en obtenerEstadoTemasAsignatura:', error);
     throw error;
   }
 };
 
-/**
- * Obtiene el siguiente contenido disponible para el estudiante en un tema
- * @param {number} estudianteId - ID del estudiante
- * @param {number} temaId - ID del tema
- * @returns {Promise<Object|null>} Siguiente contenido disponible o null
- */
 exports.obtenerSiguienteContenido = async (estudianteId, temaId) => {
   try {
-    const estadoContenidos = await this.obtenerEstadoContenidosTema(estudianteId, temaId);
-    
-    // Buscar el primer contenido desbloqueado y no completado
-    const siguiente = estadoContenidos.find(c => c.desbloqueado && !c.completado);
-    
+    const estadoContenidos = await exports.obtenerEstadoContenidosTema(estudianteId, temaId);
+
+    const siguiente = estadoContenidos.find((c) => c.desbloqueado && !c.completado);
+
     if (!siguiente) {
-      // Si no hay siguiente, buscar el primer contenido desbloqueado (aunque esté completado)
-      const primerDesbloqueado = estadoContenidos.find(c => c.desbloqueado);
+      const primerDesbloqueado = estadoContenidos.find((c) => c.desbloqueado);
       return primerDesbloqueado || null;
     }
-    
-    return siguiente;
 
+    return siguiente;
   } catch (error) {
     console.error('Error en obtenerSiguienteContenido:', error);
     throw error;

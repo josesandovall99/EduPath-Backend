@@ -47,7 +47,7 @@ const corsOptions = {
         if (isAllowed) return callback(null, true);
         return callback(new Error(`CORS bloqueado para origin: ${origin}`));
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'x-docente-id', 'x-tipo-usuario', 'x-asignatura-id', 'x-persona-id', 'x-admin-id' , 'x-administrador-id'],
     credentials: true,
 };

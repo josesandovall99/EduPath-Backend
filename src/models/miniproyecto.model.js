@@ -1,3 +1,5 @@
+const { miniproyectoAsignaturaFkColumn } = require('../config/columnNames');
+
 module.exports = (sequelize, DataTypes) => {
     const Miniproyecto = sequelize.define('Miniproyecto', {
         id: {
@@ -12,7 +14,8 @@ module.exports = (sequelize, DataTypes) => {
         },
         asignatura_id: {
             type: DataTypes.BIGINT,
-            allowNull: false
+            allowNull: false,
+            field: miniproyectoAsignaturaFkColumn,
         },
         entregable: {
             type: DataTypes.TEXT
