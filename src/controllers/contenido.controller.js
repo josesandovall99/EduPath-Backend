@@ -657,16 +657,15 @@ exports.getContenidosPorasignaturaNombre = async (req, res) => {
     const temas = await Tema.findAll({ where: { asignatura_id: asignatura.id, estado: true } });
     const temaIds = temas.map(t => t.id);
 
-    // Buscar contenidos relacionados a esos temas
     const contenidos = await Contenido.findAll({
       where: {
         tema_id: temaIds,
         ...(canViewInactiveContenidos(req) ? {} : { estado: true })
       },
       include: [
-        { model: Tema },
-        { model: Subtema }
-      ]
+        { model: Tema,    attributes: ['id', 'nombre', 'asignatura_id'] },
+        { model: Subtema, attributes: ['id', 'nombre', 'tema_id'] },
+      ],
     });
 
     res.json(contenidos);
@@ -741,13 +740,12 @@ exports.adaptarContenidoPorPerfil = async (req, res) => {
 
     const temaIds = temas.map(tema => tema.id);
 
-    // Buscar los contenidos relacionados a esos temas
     const contenidos = await Contenido.findAll({
       where: { tema_id: temaIds, estado: true },
       include: [
-        { model: Tema },
-        { model: Subtema }
-      ]
+        { model: Tema,    attributes: ['id', 'nombre', 'asignatura_id'] },
+        { model: Subtema, attributes: ['id', 'nombre', 'tema_id'] },
+      ],
     });
 
     res.json({

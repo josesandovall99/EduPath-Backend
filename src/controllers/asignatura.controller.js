@@ -533,7 +533,7 @@ exports.getAdminStats = async (req, res) => {
       AsignaturaModel.count({ where: { estado: true } }),
       // Cuenta estudiantes cuya persona asociada esté activa
       Estudiante
-        ? Estudiante.count({ include: [{ model: Persona, where: { estado: true }, required: true }] })
+        ? Estudiante.count({ include: [{ model: Persona, as: 'persona', where: { estado: true }, required: true }] })
         : Promise.resolve(0),
     ]);
 

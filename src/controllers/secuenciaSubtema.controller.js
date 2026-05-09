@@ -354,9 +354,10 @@ exports.getSubtemasOrdenadosPorSecuencia = async (req, res) => {
       return res.json([]);
     }
 
-    // Obtener todas las secuencias activas
+    // Solo secuencias del tema actual — evita cargar toda la tabla
+    const subtemaIds = subtemas.map(s => s.id);
     const secuencias = await SecuenciaSubtema.findAll({
-      where: { estado: true }
+      where: { estado: true, subtema_origen_id: subtemaIds }
     });
 
     // Crear mapa de secuencias

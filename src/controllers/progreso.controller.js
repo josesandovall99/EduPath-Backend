@@ -2078,7 +2078,7 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
 
           include: [
 
-            { model: Contenido, include: [{ model: Tema }] },
+            { model: Contenido, attributes: ['id', 'titulo', 'tipo', 'tema_id', 'subtema_id'], include: [{ model: Tema, attributes: ['id', 'nombre', 'asignatura_id'] }] },
 
             { model: Actividad, as: 'actividad' }
 
@@ -3813,589 +3813,182 @@ exports.delete = async (req, res) => {
 // Obtener progreso de un estudiante por asignatura (para la barra de progreso)
 
 exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
-
   try {
-
     const { asignatura_id, estudiante_id } = req.query;
 
-
-
     if (!asignatura_id || !estudiante_id) {
-
-      return res.status(400).json({
-
-        message: "asignatura_id y estudiante_id son requeridos como parámetros de query"
-
-      });
-
+      return res.status(400).json({ message: 'asignatura_id y estudiante_id son requeridos como parámetros de query' });
     }
 
-
-
-    const aId = parseInt(asignatura_id, 10);
-
+    const aId  = parseInt(asignatura_id, 10);
     const esId = parseInt(estudiante_id, 10);
 
-
-
     if (isNaN(aId) || isNaN(esId)) {
-
-      return res.status(400).json({
-
-        message: "asignatura_id y estudiante_id deben ser números válidos"
-
-      });
-
+      return res.status(400).json({ message: 'asignatura_id y estudiante_id deben ser números válidos' });
     }
 
+    // Ronda 1 — validación + conteos + temas, todo en paralelo (solo necesitan aId/esId)
+    const [Asignatura, estudiante, totalMiniproyectos, miniproyectosAprobados, miniproyectosDesaprobados, temas] = await Promise.all([
+      AsignaturaModel.findOne({ where: { id: aId, estado: true } }),
+      Estudiante.findByPk(esId, { attributes: ['id'] }),
+      Miniproyecto.count({ where: { asignatura_id: aId } }),
+      Evaluacion.count({
+        where: { estudiante_id: esId, estado: 'APROBADO', miniproyecto_id: { [Op.ne]: null } },
+        include: [{ model: Miniproyecto, where: { asignatura_id: aId }, required: true }],
+      }),
+      Evaluacion.count({
+        where: { estudiante_id: esId, estado: 'REPROBADO', miniproyecto_id: { [Op.ne]: null } },
+        include: [{ model: Miniproyecto, where: { asignatura_id: aId }, required: true }],
+      }),
+      Tema.findAll({
+        where: { asignatura_id: aId, estado: true },
+        attributes: ['id', 'nombre', 'orden'],
+        order: [['orden', 'ASC'], ['id', 'ASC']],
+      }),
+    ]);
 
-
-    const Asignatura = await AsignaturaModel.findOne({ where: { id: aId, estado: true } });
-
-    if (!Asignatura) {
-
-      return res.status(404).json({ message: "Asignatura no encontrada" });
-
-    }
-
-
-
-    const estudiante = await Estudiante.findByPk(esId);
-
-    if (!estudiante) {
-
-      return res.status(404).json({ message: "Estudiante no encontrado" });
-
-    }
-
-
-
-    // Obtener solo temas activos (estado = true) para aplicar filtro en cascada
-
-    const temas = await Tema.findAll({
-
-      where: { asignatura_id: aId, estado: true },
-
-      attributes: ['id', 'nombre', 'orden'],
-
-      order: [['orden', 'ASC'], ['id', 'ASC']]
-
-    });
+    if (!Asignatura) return res.status(404).json({ message: 'Asignatura no encontrada' });
+    if (!estudiante) return res.status(404).json({ message: 'Estudiante no encontrado' });
 
     const temaIds = temas.map(t => t.id);
-
-
-
-    // ==========================================
-
-    // 1. CONTENIDOS DEL ÁREA (filtrados por secuencia activa)
-
-    // ==========================================
-
-    const contenidosDelAsignatura = await Contenido.findAll({
-
-      where: { tema_id: { [Op.in]: temaIds }, estado: true },
-
-      attributes: ['id']
-
-    });
-
-    const contenidoIdsDelAsignatura = contenidosDelAsignatura.map(c => c.id);
-
-
-
-    const secuencias = await SecuenciaContenido.findAll({
-
-      where: {
-
-        estado: true,
-
-        [Op.or]: [
-
-          { contenido_origen_id: { [Op.in]: contenidoIdsDelAsignatura } },
-
-          { contenido_destino_id: { [Op.in]: contenidoIdsDelAsignatura } }
-
-        ]
-
-      },
-
-      attributes: ['contenido_origen_id', 'contenido_destino_id']
-
-    });
-
-
-
-    const contenidoIdsEnSecuencia = new Set();
-
-    secuencias.forEach(seq => {
-
-      contenidoIdsEnSecuencia.add(seq.contenido_origen_id);
-
-      contenidoIdsEnSecuencia.add(seq.contenido_destino_id);
-
-    });
-
-
-
-    const contenidoIds = [...contenidoIdsEnSecuencia].filter(id => contenidoIdsDelAsignatura.includes(id));
-
-    const totalContenidos = contenidoIds.length;
-
-
-
-    const contenidosVisualizados = await Progreso.count({
-
-      where: {
-
+    if (temaIds.length === 0) {
+      return res.json({
+        Asignatura: { id: Asignatura.id, nombre: Asignatura.nombre },
         estudiante_id: esId,
+        progreso: {},
+        miniproyectos: { total: totalMiniproyectos, aprobados: miniproyectosAprobados, desaprobados: miniproyectosDesaprobados },
+        temas: { total: 0, completados: 0, pendientes: 0, siguiente: 'Sin temas registrados', detalle: [] },
+        resumen: { totalItems: 0, itemsCompletados: 0, porcentajeTotalAsignatura: 0, estado: 'Iniciado' },
+      });
+    }
 
-        contenido_id: { [Op.in]: contenidoIds },
+    // Ronda 3 — contenidos y subtemas en paralelo
+    const [contenidosDelArea, subtemas] = await Promise.all([
+      Contenido.findAll({ where: { tema_id: { [Op.in]: temaIds }, estado: true }, attributes: ['id', 'tema_id'] }),
+      Subtema.findAll({ where: { tema_id: { [Op.in]: temaIds }, estado: true }, attributes: ['id', 'tema_id'] }),
+    ]);
 
-        completado: true,
-
-        estado: 'Visualizado'
-
-      }
-
-    });
-
-
-
-    console.log(`📦 Contenido IDs usados para el cálculo de progreso (en secuencia activa):`, contenidoIds);
-// ==========================================
-
-    // 2. EJERCICIOS DEL ÁREA (desde respuestas enviadas o aprobadas)
-
-    // ==========================================
-
-    const subtemas = await Subtema.findAll({
-
-      where: { tema_id: { [Op.in]: temaIds }, estado: true },
-
-      attributes: ['id']
-
-    });
-
+    const contenidoIdsDelArea = contenidosDelArea.map(c => c.id);
     const subtemaIds = subtemas.map(s => s.id);
 
+    // Ronda 4 — secuencias y contenidos para ejercicios en paralelo
+    const [secuencias, contenidosParaEj] = await Promise.all([
+      contenidoIdsDelArea.length > 0
+        ? SecuenciaContenido.findAll({
+            where: { estado: true, [Op.or]: [{ contenido_origen_id: { [Op.in]: contenidoIdsDelArea } }, { contenido_destino_id: { [Op.in]: contenidoIdsDelArea } }] },
+            attributes: ['contenido_origen_id', 'contenido_destino_id'],
+          })
+        : Promise.resolve([]),
+      subtemaIds.length > 0
+        ? Contenido.findAll({ where: { subtema_id: { [Op.in]: subtemaIds }, estado: true }, attributes: ['id'] })
+        : Promise.resolve([]),
+    ]);
 
-
-    // Obtener ejercicios del asignatura a través de contenidos de esos subtemas
-
-    const contenidosParaEjercicios = await Contenido.findAll({
-
-      where: { subtema_id: { [Op.in]: subtemaIds.length > 0 ? subtemaIds : [0] }, estado: true },
-
-      attributes: ['id']
-
+    const contenidoIdsEnSecuencia = new Set();
+    secuencias.forEach(s => {
+      if (contenidoIdsDelArea.includes(s.contenido_origen_id)) contenidoIdsEnSecuencia.add(s.contenido_origen_id);
+      if (contenidoIdsDelArea.includes(s.contenido_destino_id)) contenidoIdsEnSecuencia.add(s.contenido_destino_id);
     });
+    const contenidoIds = [...contenidoIdsEnSecuencia];
+    const contenidoIdsParaEj = contenidosParaEj.map(c => c.id);
 
-    const contenidoIdsParaEjercicios = contenidosParaEjercicios.map(c => c.id);
+    // Ronda 5 — progreso, ejercicios y respuestas en paralelo
+    const [progresoRows, ejercicios] = await Promise.all([
+      contenidoIds.length > 0
+        ? Progreso.findAll({
+            where: { estudiante_id: esId, contenido_id: { [Op.in]: contenidoIds }, completado: true, estado: 'Visualizado' },
+            attributes: ['contenido_id'],
+          })
+        : Promise.resolve([]),
+      contenidoIdsParaEj.length > 0
+        ? Ejercicio.findAll({ where: { contenido_id: { [Op.in]: contenidoIdsParaEj } }, attributes: ['id', 'contenido_id'] })
+        : Promise.resolve([]),
+    ]);
 
-
-
-    const ejerciciosAsignatura = await Ejercicio.findAll({
-
-      where: { contenido_id: { [Op.in]: contenidoIdsParaEjercicios.length > 0 ? contenidoIdsParaEjercicios : [0] } },
-
-      attributes: ['id']
-
-    });
-
-    const ejercicioIds = ejerciciosAsignatura.map(e => e.id);
-
+    const visualizadosSet = new Set(progresoRows.map(r => Number(r.contenido_id)));
+    const ejercicioIds = ejercicios.map(e => e.id);
     const totalEjercicios = ejercicioIds.length;
+    const contenidosVisualizados = progresoRows.length;
+    const totalContenidos = contenidoIds.length;
 
+    // Ronda 6 — respuestas de ejercicios (solo si hay ejercicios)
+    const respuestasRows = ejercicioIds.length > 0
+      ? await RespuestaEstudianteEjercicio.findAll({
+          where: { estudiante_id: esId, ejercicio_id: { [Op.in]: ejercicioIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } },
+          attributes: ['ejercicio_id', 'estado'],
+        })
+      : [];
 
+    const ejerciciosAprobadosSet = new Set(respuestasRows.filter(r => r.estado === 'APROBADO').map(r => Number(r.ejercicio_id)));
+    const ejerciciosCompletados = respuestasRows.length;
 
-    const ejerciciosCompletados = await RespuestaEstudianteEjercicio.count({
-
-      where: {
-
-        estudiante_id: esId,
-
-        ejercicio_id: { [Op.in]: ejercicioIds },
-
-        estado: { [Op.in]: ['ENVIADO', 'APROBADO'] }
-
-      }
-
-    });
-
-
-
-    const totalMiniproyectos = await Miniproyecto.count({ where: { asignatura_id: aId } });
-
-    const miniproyectosAprobados = await Evaluacion.count({
-
-      where: {
-
-        estudiante_id: esId,
-
-        estado: 'APROBADO',
-
-        miniproyecto_id: { [Op.ne]: null }
-
-      },
-
-      include: [{ model: Miniproyecto, where: { asignatura_id: aId }, required: true }]
-
-    });
-
-    const miniproyectosDesaprobados = await Evaluacion.count({
-
-      where: {
-
-        estudiante_id: esId,
-
-        estado: 'REPROBADO',
-
-        miniproyecto_id: { [Op.ne]: null }
-
-      },
-
-      include: [{ model: Miniproyecto, where: { asignatura_id: aId }, required: true }]
-
-    });
-
-
-
-    // ==========================================
-
-    // 4. CÁLCULO DE PORCENTAJE
-
-    // ==========================================
-
+    // Cálculo del porcentaje global
     let totalItems = 0;
-
     let itemsCompletados = 0;
+    if (totalContenidos > 0) { totalItems += totalContenidos; itemsCompletados += contenidosVisualizados; }
+    if (totalEjercicios > 0) { totalItems += totalEjercicios; itemsCompletados += ejerciciosCompletados; }
+    const porcentajeProgreso = totalItems > 0 ? Math.round((itemsCompletados / totalItems) * 100) : 0;
 
-
-
-    if (totalContenidos > 0) {
-
-      totalItems += totalContenidos;
-
-      itemsCompletados += contenidosVisualizados;
-
-    }
-
-
-
-    if (totalEjercicios > 0) {
-
-      totalItems += totalEjercicios;
-
-      itemsCompletados += ejerciciosCompletados;
-
-    }
-
-
-
-    let porcentajeProgreso = 0;
-
-    if (totalItems > 0) {
-
-      porcentajeProgreso = Math.round((itemsCompletados / totalItems) * 100);
-
-    }
-
-
-
-    const progresoDetallado = {};
-
-
-
-    if (totalContenidos > 0) {
-
-      progresoDetallado.contenidos = {
-
-        total: totalContenidos,
-
-        completados: contenidosVisualizados,
-
-        porcentaje: Math.round((contenidosVisualizados / totalContenidos) * 100)
-
-      };
-
-    }
-
-
-
-    if (totalEjercicios > 0) {
-
-      progresoDetallado.ejercicios = {
-
-        total: totalEjercicios,
-
-        completados: ejerciciosCompletados,
-
-        porcentaje: Math.round((ejerciciosCompletados / totalEjercicios) * 100)
-
-      };
-
-    }
-
-
-
-    // ==========================================
-
-    // 5. INFO POR TEMA (para tarjetas del dashboard)
-
-    //    Un tema está COMPLETO solo si:
-
-    //      • todos sus contenidos en secuencia activa están visualizados, Y
-
-    //      • todos sus ejercicios están aprobados.
-
-    // ==========================================
-
-    const contenidosPorTema = await Contenido.findAll({
-
-      where: {
-
-        tema_id: { [Op.in]: temaIds.length > 0 ? temaIds : [0] },
-
-        id: { [Op.in]: contenidoIds.length > 0 ? contenidoIds : [0] },
-
-        estado: true
-
-      },
-
-      attributes: ['id', 'tema_id']
-
-    });
-
-
-
-    // Mapa tema_id → [contenido_ids] y contenido_id → tema_id
-
+    // Mapa tema → contenidos y ejercicios (en JS, sin más queries)
+    const contenidoToTema = new Map(contenidosDelArea.filter(c => contenidoIdsEnSecuencia.has(c.id)).map(c => [Number(c.id), Number(c.tema_id)]));
     const contenidosPorTemaMap = new Map();
-
-    const contenidoToTema = new Map();
-
-    for (const c of contenidosPorTema) {
-
-      const tId = Number(c.tema_id);
-
-      const cId = Number(c.id);
-
+    for (const [cId, tId] of contenidoToTema) {
       if (!contenidosPorTemaMap.has(tId)) contenidosPorTemaMap.set(tId, []);
-
       contenidosPorTemaMap.get(tId).push(cId);
-
-      contenidoToTema.set(cId, tId);
-
     }
-
-
-
-    // Contenidos visualizados por el estudiante
-
-    const visualizadosRows = await Progreso.findAll({
-
-      where: {
-
-        estudiante_id: esId,
-
-        contenido_id: { [Op.in]: contenidoIds.length > 0 ? contenidoIds : [0] },
-
-        completado: true,
-
-        estado: 'Visualizado'
-
-      },
-
-      attributes: ['contenido_id']
-
-    });
-
-    const visualizadosSet = new Set(visualizadosRows.map(r => Number(r.contenido_id)));
-
-
-
-    // Ejercicios por tema (vía contenido_id → tema_id)
-
-    const ejerciciosConContenido = await Ejercicio.findAll({
-
-      where: { id: { [Op.in]: ejercicioIds.length > 0 ? ejercicioIds : [0] } },
-
-      attributes: ['id', 'contenido_id']
-
-    });
 
     const ejerciciosPorTemaMap = new Map();
-
-    for (const ej of ejerciciosConContenido) {
-
+    for (const ej of ejercicios) {
       const tId = contenidoToTema.get(Number(ej.contenido_id));
-
       if (!tId) continue;
-
       if (!ejerciciosPorTemaMap.has(tId)) ejerciciosPorTemaMap.set(tId, []);
-
       ejerciciosPorTemaMap.get(tId).push(Number(ej.id));
-
     }
 
-
-
-    // Ejercicios estrictamente APROBADOS (no basta con ENVIADO)
-
-    const ejerciciosAprobadosRows = await RespuestaEstudianteEjercicio.findAll({
-
-      where: {
-
-        estudiante_id: esId,
-
-        ejercicio_id: { [Op.in]: ejercicioIds.length > 0 ? ejercicioIds : [0] },
-
-        estado: 'APROBADO'
-
-      },
-
-      attributes: ['ejercicio_id']
-
-    });
-
-    const ejerciciosAprobadosSet = new Set(ejerciciosAprobadosRows.map(r => Number(r.ejercicio_id)));
-
-
-
     let temasCompletados = 0;
-
     let siguienteTemaNombre = null;
-
     const temasDetalle = temas.map(t => {
-
       const cIds = contenidosPorTemaMap.get(Number(t.id)) || [];
-
       const eIds = ejerciciosPorTemaMap.get(Number(t.id)) || [];
-
-      const totalC = cIds.length;
-
-      const totalE = eIds.length;
-
-      const vistos = cIds.filter(id => visualizadosSet.has(id)).length;
-
+      const vistos   = cIds.filter(id => visualizadosSet.has(id)).length;
       const aprobados = eIds.filter(id => ejerciciosAprobadosSet.has(id)).length;
-
-
-
-      // Tema completo: tiene items Y todos están terminados
-
-      const totalTotal = totalC + totalE;
-
-      const hechosTotal = vistos + aprobados;
-
-      const completado = totalTotal > 0 && hechosTotal === totalTotal;
-
-
-
-      if (completado) temasCompletados += 1;
-
+      const totalTotal = cIds.length + eIds.length;
+      const completado = totalTotal > 0 && (vistos + aprobados) === totalTotal;
+      if (completado) temasCompletados++;
       else if (!siguienteTemaNombre) siguienteTemaNombre = t.nombre;
-
-
-
-      return {
-
-        id: t.id,
-
-        nombre: t.nombre,
-
-        totalContenidos: totalC,
-
-        contenidosVistos: vistos,
-
-        totalEjercicios: totalE,
-
-        ejerciciosAprobados: aprobados,
-
-        completado
-
-      };
-
+      return { id: t.id, nombre: t.nombre, totalContenidos: cIds.length, contenidosVistos: vistos, totalEjercicios: eIds.length, ejerciciosAprobados: aprobados, completado };
     });
 
-
+    const progresoDetallado = {};
+    if (totalContenidos > 0) progresoDetallado.contenidos = { total: totalContenidos, completados: contenidosVisualizados, porcentaje: Math.round((contenidosVisualizados / totalContenidos) * 100) };
+    if (totalEjercicios > 0) progresoDetallado.ejercicios = { total: totalEjercicios, completados: ejerciciosCompletados, porcentaje: Math.round((ejerciciosCompletados / totalEjercicios) * 100) };
 
     res.json({
-
-      Asignatura: {
-
-        id: Asignatura.id,
-
-        nombre: Asignatura.nombre
-
-      },
-
+      Asignatura: { id: Asignatura.id, nombre: Asignatura.nombre },
       estudiante_id: esId,
-
       progreso: progresoDetallado,
-
-      miniproyectos: {
-
-        total: totalMiniproyectos,
-
-        aprobados: miniproyectosAprobados,
-
-        desaprobados: miniproyectosDesaprobados
-
-      },
-
+      miniproyectos: { total: totalMiniproyectos, aprobados: miniproyectosAprobados, desaprobados: miniproyectosDesaprobados },
       temas: {
-
         total: temas.length,
-
         completados: temasCompletados,
-
         pendientes: temas.length - temasCompletados,
-
         siguiente: siguienteTemaNombre || (temas.length > 0 ? 'Todos los temas completados' : 'Sin temas registrados'),
-
-        detalle: temasDetalle
-
+        detalle: temasDetalle,
       },
-
       resumen: {
-
         totalItems,
-
         itemsCompletados,
-
         porcentajeTotalAsignatura: porcentajeProgreso,
-
-        estado: porcentajeProgreso === 100 ? 'Completado' : porcentajeProgreso >= 50 ? 'En progreso' : 'Iniciado'
-
-      }
-
+        estado: porcentajeProgreso === 100 ? 'Completado' : porcentajeProgreso >= 50 ? 'En progreso' : 'Iniciado',
+      },
     });
-
-
 
   } catch (error) {
-
-    console.error('❌ Error en obtenerProgresoEstudiantePorAsignatura:', error);
-
-    res.status(500).json({
-
-      message: "Error al obtener progreso del estudiante por asignatura",
-
-      error: error.message || error
-
-    });
-
+    console.error('Error en obtenerProgresoEstudiantePorAsignatura:', error);
+    res.status(500).json({ message: 'Error al obtener progreso del estudiante por asignatura', error: error.message || error });
   }
-
 };
 
-
-
-// Obtener calificación estimada general de un estudiante
-
-// Query params: estudiante_id
 
 exports.getCalificacionEstimada = async (req, res) => {
 

@@ -15,7 +15,15 @@ module.exports = (sequelize, DataTypes) => {
     fecha_fin: DataTypes.DATE
   }, {
     tableName: 'progreso',
-    timestamps: false
+    timestamps: false,
+    indexes: [
+      // Lookup por estudiante — patrón más frecuente en todos los endpoints de progreso
+      { fields: ['estudiante_id'], name: 'idx_progreso_estudiante_id' },
+      // Lookup por contenido — usado en marcarContenidoVisualizado
+      { fields: ['contenido_id'], name: 'idx_progreso_contenido_id' },
+      // Compuesto para verificar si un estudiante completó un contenido específico
+      { fields: ['estudiante_id', 'contenido_id', 'completado'], name: 'idx_progreso_est_cont_completado' },
+    ]
   });
 
   Progreso.associate = models => {

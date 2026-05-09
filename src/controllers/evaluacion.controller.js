@@ -183,8 +183,12 @@ exports.findAll = async (req, res) => {
 exports.findOne = async (req, res) => {
   try {
     const data = await Evaluacion.findByPk(req.params.id, {
-      attributes: { exclude: ['estudiante_id', 'ejercicio_id', 'miniproyecto_id'] },
-      include: [{ model: Estudiante }, { model: Ejercicio }, { model: Miniproyecto }]
+      attributes: ['id', 'calificacion', 'estado', 'retroalimentacion', 'fecha_evaluacion'],
+      include: [
+        { model: Estudiante,   attributes: ['id', 'codigoEstudiantil'] },
+        { model: Ejercicio,    attributes: ['id'] },
+        { model: Miniproyecto, attributes: ['id'] },
+      ],
     });
     if (!data) return res.status(404).json({ message: "No se encontró la evaluación" });
     res.json(data);
@@ -233,8 +237,12 @@ exports.findBy = async (req, res) => {
 
     const data = await Evaluacion.findAll({
       where,
-      attributes: { exclude: ['estudiante_id', 'ejercicio_id', 'miniproyecto_id'] },
-      include: [{ model: Estudiante }, { model: Ejercicio }, { model: Miniproyecto }]
+      attributes: ['id', 'calificacion', 'estado', 'retroalimentacion', 'fecha_evaluacion'],
+      include: [
+        { model: Estudiante, attributes: ['id', 'codigoEstudiantil'] },
+        { model: Ejercicio,  attributes: ['id'] },
+        { model: Miniproyecto, attributes: ['id'] },
+      ],
     });
     res.json(data);
   } catch (e) {
