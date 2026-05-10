@@ -438,7 +438,11 @@ const buildReportHtml = ({ type, data }) => {
 
         ? 'Desempeño por Actividad'
 
-        : 'Fallos por Actividad';
+        : type === 'content-views'
+
+          ? 'Contenidos más vistos'
+
+          : 'Fallos por Actividad';
 
 
 
@@ -1037,6 +1041,30 @@ const buildReportHtml = ({ type, data }) => {
       }
 
       .list li:last-child { border-bottom: none; }
+
+      /* Content-views: tarjetas con texto más pequeño para que no se recorte */
+      body.type-content-views .cards {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      body.type-content-views .card-value {
+        font-size: 14px;
+        font-weight: 700;
+        word-break: break-word;
+        line-height: 1.4;
+        margin-top: 6px;
+      }
+      body.type-content-views .card-title {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #9CA3AF;
+      }
+      body.type-content-views .card-sub {
+        font-size: 11px;
+        color: #6B7280;
+        margin-top: 8px;
+        font-weight: 600;
+      }
 
       .meta {
 
@@ -1930,7 +1958,7 @@ const buildReportHtml = ({ type, data }) => {
 
   </head>
 
-  <body>
+  <body class="type-${type}">
 
     <div class="page">
 
@@ -4231,9 +4259,9 @@ exports.generarPdfReporte = async (req, res) => {
 
     const type = (req.query.type || '').toString().toLowerCase();
 
-    if (!['student', 'date', 'activity', 'failures'].includes(type)) {
+    if (!['student', 'date', 'activity', 'failures', 'content-views'].includes(type)) {
 
-      return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'|'failures'" });
+      return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'|'failures'|'content-views'" });
 
     }
 
@@ -5980,6 +6008,165 @@ exports.generarPdfReporte = async (req, res) => {
 
 
 
+    if (type === 'content-views') {
+
+      const sequelize = Progreso.sequelize;
+
+      const replacements = { limit: 10 };
+
+      let filtro = '';
+
+      const asignaturaFiltroId = docenteAsignaturaId
+        || (req.query.asignatura_id ? parseInt(req.query.asignatura_id, 10) : null);
+
+      const filtradoPorAsignatura = Boolean(asignaturaFiltroId);
+
+      if (asignaturaFiltroId) {
+
+        filtro = 'AND a.id = :asignaturaId';
+
+        replacements.asignaturaId = asignaturaFiltroId;
+
+      }
+
+      const base = `
+        FROM progreso p
+        INNER JOIN contenidos  c ON p.contenido_id  = c.id
+        INNER JOIN subtemas    s ON c.subtema_id    = s.id
+        INNER JOIN temas       t ON c.tema_id       = t.id
+        INNER JOIN asignaturas a ON t.asignatura_id = a.id
+        WHERE p.estado = 'Visualizado'
+          AND p.completado = true
+          AND p.contenido_id IS NOT NULL
+          ${filtro}
+      `;
+
+      const [contenidos, subtemas, temas, asignaturas] = await Promise.all([
+
+        sequelize.query(
+          `SELECT c.id AS id, c.titulo AS nombre, c.tipo AS tipo,
+                  a.nombre AS asignatura, t.nombre AS tema, s.nombre AS subtema,
+                  COUNT(DISTINCT p.estudiante_id)::int AS vistas
+           ${base}
+           GROUP BY c.id, c.titulo, c.tipo, a.nombre, t.nombre, s.nombre
+           ORDER BY vistas DESC LIMIT :limit`,
+          { replacements, type: sequelize.QueryTypes.SELECT }
+        ),
+
+        sequelize.query(
+          `SELECT s.id AS id, s.nombre AS nombre,
+                  t.nombre AS tema, a.nombre AS asignatura,
+                  COUNT(DISTINCT p.estudiante_id)::int AS vistas
+           ${base}
+           GROUP BY s.id, s.nombre, t.nombre, a.nombre
+           ORDER BY vistas DESC LIMIT :limit`,
+          { replacements, type: sequelize.QueryTypes.SELECT }
+        ),
+
+        sequelize.query(
+          `SELECT t.id AS id, t.nombre AS nombre,
+                  a.nombre AS asignatura,
+                  COUNT(DISTINCT p.estudiante_id)::int AS vistas
+           ${base}
+           GROUP BY t.id, t.nombre, a.nombre
+           ORDER BY vistas DESC LIMIT :limit`,
+          { replacements, type: sequelize.QueryTypes.SELECT }
+        ),
+
+        !filtradoPorAsignatura ? sequelize.query(
+          `SELECT a.id AS id, a.nombre AS nombre,
+                  COUNT(DISTINCT p.estudiante_id)::int AS vistas
+           ${base}
+           GROUP BY a.id, a.nombre
+           ORDER BY vistas DESC LIMIT :limit`,
+          { replacements, type: sequelize.QueryTypes.SELECT }
+        ) : Promise.resolve([])
+
+      ]);
+
+      const top = (arr) => arr[0] || null;
+
+      const buildRankingTable = (items, columns) => {
+
+        if (!items.length) return '<p style="color:#9CA3AF;font-size:12px;">Sin datos</p>';
+
+        const headers = columns.map(c => `<th>${escapeHtml(c.label)}</th>`).join('');
+
+        const rows = items.map((item, idx) => {
+
+          const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}`;
+
+          const cells = columns.map(c => `<td>${escapeHtml(String(c.value(item) ?? ''))}</td>`).join('');
+
+          return `<tr><td style="text-align:center">${medal}</td>${cells}<td style="font-weight:700;color:#4A90E2;text-align:right">${item.vistas}</td></tr>`;
+
+        }).join('');
+
+        return `<table class="app-data-table"><thead><tr><th>#</th>${headers}<th style="text-align:right">Vistas</th></tr></thead><tbody>${rows}</tbody></table>`;
+
+      };
+
+      const contenidosTable = buildRankingTable(contenidos, [
+        { label: 'Contenido',  value: it => it.nombre  },
+        { label: 'Tipo',       value: it => it.tipo    },
+        ...(!filtradoPorAsignatura ? [{ label: 'Asignatura', value: it => it.asignatura }] : []),
+        { label: 'Tema',       value: it => it.tema    },
+        { label: 'Subtema',    value: it => it.subtema },
+      ]);
+
+      const subtemasTable = buildRankingTable(subtemas, [
+        { label: 'Subtema',    value: it => it.nombre     },
+        ...(!filtradoPorAsignatura ? [{ label: 'Asignatura', value: it => it.asignatura }] : []),
+        { label: 'Tema',       value: it => it.tema       },
+      ]);
+
+      const temasTable = buildRankingTable(temas, [
+        { label: 'Tema',       value: it => it.nombre     },
+        ...(!filtradoPorAsignatura ? [{ label: 'Asignatura', value: it => it.asignatura }] : []),
+      ]);
+
+      const sections = [
+
+        { title: 'Top 10 Contenidos más vistos',  subtitle: 'Ordenados por número de estudiantes que los visualizaron', body: contenidosTable },
+
+        { title: 'Top 10 Subtemas más vistos',    subtitle: 'Acumulado de vistas de todos sus contenidos', body: subtemasTable },
+
+        { title: 'Top 10 Temas más vistos',       subtitle: 'Acumulado de vistas de todos sus subtemas',  body: temasTable },
+
+      ];
+
+      if (!filtradoPorAsignatura && asignaturas.length) {
+
+        sections.push({ title: 'Top 10 Asignaturas más vistas', subtitle: 'Acumulado total de visualizaciones', body: buildRankingTable(asignaturas, [{ label: 'Asignatura', value: it => it.nombre }]) });
+
+      }
+
+      reportData = {
+
+        subtitle: `Reporte generado el ${formatDate(new Date())}${filtradoPorAsignatura ? ` · Asignatura ${asignaturaFiltroId}` : ''}`,
+
+        stats: [
+
+          { label: 'Contenido #1',   value: top(contenidos)?.nombre  ?? '—', sub: top(contenidos)  ? `${top(contenidos).vistas} estudiantes`  : '' },
+
+          { label: 'Subtema #1',     value: top(subtemas)?.nombre    ?? '—', sub: top(subtemas)    ? `${top(subtemas).vistas} estudiantes`    : '' },
+
+          { label: 'Tema #1',        value: top(temas)?.nombre       ?? '—', sub: top(temas)       ? `${top(temas).vistas} estudiantes`       : '' },
+
+          ...(!filtradoPorAsignatura ? [{ label: 'Asignatura #1', value: top(asignaturas)?.nombre ?? '—', sub: top(asignaturas) ? `${top(asignaturas).vistas} estudiantes` : '' }] : []),
+
+        ],
+
+        sections,
+
+        charts: [],
+
+        tableHeaders: [], tableRows: [], tableTitle: '', tableSubtitle: ''
+
+      };
+
+    }
+
     const html = buildReportHtml({ type, data: reportData });
 
 
@@ -6016,7 +6203,7 @@ exports.generarPdfReporte = async (req, res) => {
 
     res.setHeader('Content-Type', 'application/pdf');
 
-    const nombreES = { student: 'estudiante', date: 'fecha', activity: 'actividad', failures: 'fallos' };
+    const nombreES = { student: 'estudiante', date: 'fecha', activity: 'actividad', failures: 'fallos', 'content-views': 'contenidos-vistos' };
 
     res.setHeader('Content-Disposition', `attachment; filename="reporte_${nombreES[type] ?? type}.pdf"`);
 
@@ -6489,6 +6676,275 @@ exports.obtenerEstadoTemasAsignatura = async (req, res) => {
  * GET /api/progreso/siguiente-contenido?estudiante_id=X&tema_id=Y
 
  */
+
+exports.obtenerRankingVisualizaciones = async (req, res) => {
+
+  try {
+
+    const { asignatura_id, limit = 10 } = req.query;
+
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
+
+    const sequelize = Progreso.sequelize;
+
+    const replacements = { limit: limitNum };
+
+    let filtro = '';
+
+    if (asignatura_id) {
+
+      const asignaturaIdNum = parseInt(asignatura_id, 10);
+
+      if (isNaN(asignaturaIdNum)) {
+
+        return res.status(400).json({ message: 'asignatura_id debe ser un número válido' });
+
+      }
+
+      filtro = 'AND a.id = :asignaturaId';
+
+      replacements.asignaturaId = asignaturaIdNum;
+
+    }
+
+    const base = `
+      FROM progreso p
+      INNER JOIN contenidos  c ON p.contenido_id  = c.id
+      INNER JOIN subtemas    s ON c.subtema_id    = s.id
+      INNER JOIN temas       t ON c.tema_id       = t.id
+      INNER JOIN asignaturas a ON t.asignatura_id = a.id
+      WHERE p.estado = 'Visualizado'
+        AND p.completado = true
+        AND p.contenido_id IS NOT NULL
+        ${filtro}
+    `;
+
+    const [contenidos, subtemas, temas, asignaturas] = await Promise.all([
+
+      sequelize.query(
+        `SELECT c.id AS id, c.titulo AS nombre, c.tipo AS tipo,
+                a.nombre AS asignatura, t.nombre AS tema, s.nombre AS subtema,
+                COUNT(DISTINCT p.estudiante_id)::int AS vistas
+         ${base}
+         GROUP BY c.id, c.titulo, c.tipo, a.nombre, t.nombre, s.nombre
+         ORDER BY vistas DESC LIMIT :limit`,
+        { replacements, type: sequelize.QueryTypes.SELECT }
+      ),
+
+      sequelize.query(
+        `SELECT s.id AS id, s.nombre AS nombre,
+                t.nombre AS tema, a.nombre AS asignatura,
+                COUNT(DISTINCT p.estudiante_id)::int AS vistas
+         ${base}
+         GROUP BY s.id, s.nombre, t.nombre, a.nombre
+         ORDER BY vistas DESC LIMIT :limit`,
+        { replacements, type: sequelize.QueryTypes.SELECT }
+      ),
+
+      sequelize.query(
+        `SELECT t.id AS id, t.nombre AS nombre,
+                a.nombre AS asignatura,
+                COUNT(DISTINCT p.estudiante_id)::int AS vistas
+         ${base}
+         GROUP BY t.id, t.nombre, a.nombre
+         ORDER BY vistas DESC LIMIT :limit`,
+        { replacements, type: sequelize.QueryTypes.SELECT }
+      ),
+
+      sequelize.query(
+        `SELECT a.id AS id, a.nombre AS nombre,
+                COUNT(DISTINCT p.estudiante_id)::int AS vistas
+         ${base}
+         GROUP BY a.id, a.nombre
+         ORDER BY vistas DESC LIMIT :limit`,
+        { replacements, type: sequelize.QueryTypes.SELECT }
+      )
+
+    ]);
+
+    res.json({ contenidos, subtemas, temas, asignaturas });
+
+  } catch (error) {
+
+    console.error('❌ Error en obtenerRankingVisualizaciones:', error);
+
+    res.status(500).json({ message: 'Error al obtener ranking de visualizaciones', error: error.message || error });
+
+  }
+
+};
+
+
+
+exports.obtenerContenidosMasVistosPorArea = async (req, res) => {
+
+  try {
+
+    const { asignatura_id, limit = 10 } = req.query;
+
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
+
+    const sequelize = Progreso.sequelize;
+
+    const replacements = {};
+
+    let filtroAsignatura = '';
+
+    if (asignatura_id) {
+
+      const asignaturaIdNum = parseInt(asignatura_id, 10);
+
+      if (isNaN(asignaturaIdNum)) {
+
+        return res.status(400).json({ message: 'asignatura_id debe ser un número válido' });
+
+      }
+
+      filtroAsignatura = 'AND a.id = :asignaturaId';
+
+      replacements.asignaturaId = asignaturaIdNum;
+
+    }
+
+    const filas = await sequelize.query(
+
+      `SELECT
+         a.id          AS asignatura_id,
+         a.nombre      AS asignatura_nombre,
+         t.id          AS tema_id,
+         t.nombre      AS tema_nombre,
+         s.id          AS subtema_id,
+         s.nombre      AS subtema_nombre,
+         c.id          AS contenido_id,
+         c.titulo      AS contenido_titulo,
+         c.tipo        AS contenido_tipo,
+         COUNT(DISTINCT p.estudiante_id)::int AS total_estudiantes
+       FROM progreso p
+       INNER JOIN contenidos  c ON p.contenido_id  = c.id
+       INNER JOIN subtemas    s ON c.subtema_id    = s.id
+       INNER JOIN temas       t ON c.tema_id       = t.id
+       INNER JOIN asignaturas a ON t.asignatura_id = a.id
+       WHERE p.estado = 'Visualizado'
+         AND p.completado = true
+         AND p.contenido_id IS NOT NULL
+         ${filtroAsignatura}
+       GROUP BY a.id, a.nombre, t.id, t.nombre, s.id, s.nombre, c.id, c.titulo, c.tipo
+       ORDER BY a.nombre ASC, t.nombre ASC, s.nombre ASC, total_estudiantes DESC`,
+
+      { replacements, type: sequelize.QueryTypes.SELECT }
+
+    );
+
+    // Construir jerarquía asignatura → tema → subtema → contenidos (top N por subtema)
+    const mapaAsignaturas = new Map();
+
+    for (const fila of filas) {
+
+      if (!mapaAsignaturas.has(fila.asignatura_id)) {
+
+        mapaAsignaturas.set(fila.asignatura_id, {
+
+          asignatura_id: fila.asignatura_id,
+
+          asignatura_nombre: fila.asignatura_nombre,
+
+          temas: new Map()
+
+        });
+
+      }
+
+      const area = mapaAsignaturas.get(fila.asignatura_id);
+
+      if (!area.temas.has(fila.tema_id)) {
+
+        area.temas.set(fila.tema_id, {
+
+          tema_id: fila.tema_id,
+
+          tema_nombre: fila.tema_nombre,
+
+          subtemas: new Map()
+
+        });
+
+      }
+
+      const tema = area.temas.get(fila.tema_id);
+
+      if (!tema.subtemas.has(fila.subtema_id)) {
+
+        tema.subtemas.set(fila.subtema_id, {
+
+          subtema_id: fila.subtema_id,
+
+          subtema_nombre: fila.subtema_nombre,
+
+          contenidos: []
+
+        });
+
+      }
+
+      const subtema = tema.subtemas.get(fila.subtema_id);
+
+      if (subtema.contenidos.length < limitNum) {
+
+        subtema.contenidos.push({
+
+          contenido_id: fila.contenido_id,
+
+          titulo: fila.contenido_titulo,
+
+          tipo: fila.contenido_tipo,
+
+          total_estudiantes: fila.total_estudiantes
+
+        });
+
+      }
+
+    }
+
+    const resultado = Array.from(mapaAsignaturas.values()).map(a => ({
+
+      asignatura_id: a.asignatura_id,
+
+      asignatura_nombre: a.asignatura_nombre,
+
+      temas: Array.from(a.temas.values()).map(t => ({
+
+        tema_id: t.tema_id,
+
+        tema_nombre: t.tema_nombre,
+
+        subtemas: Array.from(t.subtemas.values()).map(s => ({
+
+          subtema_id: s.subtema_id,
+
+          subtema_nombre: s.subtema_nombre,
+
+          contenidos: s.contenidos
+
+        }))
+
+      }))
+
+    }));
+
+    res.json(resultado);
+
+  } catch (error) {
+
+    console.error('❌ Error en obtenerContenidosMasVistosPorArea:', error);
+
+    res.status(500).json({ message: 'Error al obtener contenidos más vistos por área', error: error.message || error });
+
+  }
+
+};
+
+
 
 exports.obtenerSiguienteContenido = async (req, res) => {
 
