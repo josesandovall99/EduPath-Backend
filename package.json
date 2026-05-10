@@ -6,7 +6,13 @@
   "scripts": {
     "dev": "nodemon src/app.js",
     "start": "node src/app.js",
-    "test": "jest --runInBand",
+    "test": "jest --runInBand --testPathIgnorePatterns=test/integration",
+    "test:integration": "jest --runInBand test/integration --testPathIgnorePatterns=live.localhost.integration.test.js --testPathIgnorePatterns=login.integration.test.js --testPathIgnorePatterns=ejercicio.persist.integration.test.js --testPathIgnorePatterns=compilador.integration.test.js --testPathIgnorePatterns=supabase.connection.integration.test.js",
+    "test:integration:login": "jest --runInBand test/integration/login.integration.test.js",
+    "test:integration:db": "jest --runInBand test/integration/supabase.connection.integration.test.js",
+    "test:integration:frontend": "jest --runInBand test/integration/frontend-backend.integration.test.js",
+    "test:acceptance": "node scripts/run-acceptance.cjs",
+    "test:all": "npm run test && npm run test:integration",
     "test:security": "node --test test/*.test.js",
     "security:sast": "node scripts/security-sast.js",
     "security:deps": "npm audit --omit=dev --audit-level=high",
@@ -24,6 +30,10 @@
     "url": "https://github.com/josesandovall99/EduPath-Backend/issues"
   },
   "homepage": "https://github.com/josesandovall99/EduPath-Backend#readme",
+  "jest": {
+    "testEnvironment": "node",
+    "setupFiles": ["<rootDir>/test/integration/jest-setup-load-env.cjs"]
+  },
   "dependencies": {
     "@langchain/community": "^1.1.22",
     "@langchain/core": "^1.1.22",
