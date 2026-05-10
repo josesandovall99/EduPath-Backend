@@ -1,4 +1,5 @@
 const { SecuenciaSubtema, Subtema, Tema, sequelize } = require('../models');
+const { obtenerSubtemasOrdenadosPorSecuenciaParaTema } = require('../utils/subtemaOrdenSecuencia');
 const { Op } = require('sequelize');
 const {
   ensureDocenteAsignaturaAccess,
@@ -345,66 +346,7 @@ exports.getSubtemasOrdenadosPorSecuencia = async (req, res) => {
     const temaContext = await resolveTemaAsignatura(temaId);
     allowStudentReadAccess(req, temaContext.asignaturaId); // estudiantes pueden leer
 
-    // Obtener todos los subtemas del tema
-    const subtemas = await Subtema.findAll({
-      where: { tema_id: temaId, estado: true }
-    });
-
-    if (subtemas.length === 0) {
-      return res.json([]);
-    }
-
-    // Solo secuencias del tema actual — evita cargar toda la tabla
-    const subtemaIds = subtemas.map(s => s.id);
-    const secuencias = await SecuenciaSubtema.findAll({
-      where: { estado: true, subtema_origen_id: subtemaIds }
-    });
-
-    // Crear mapa de secuencias
-    const secuenciaMap = new Map();
-    secuencias.forEach(sec => {
-      if (!secuenciaMap.has(sec.subtema_origen_id)) {
-        secuenciaMap.set(sec.subtema_origen_id, []);
-      }
-      secuenciaMap.get(sec.subtema_origen_id).push(sec.subtema_destino_id);
-    });
-
-    // Encontrar subtemas iniciales (que no son destino de ninguno)
-    const subtemasDestinoIds = new Set();
-    secuencias.forEach(s => subtemasDestinoIds.add(s.subtema_destino_id));
-
-    const subtemasIniciales = subtemas.filter(s => !subtemasDestinoIds.has(s.id));
-
-    // Construir la secuencia ordenada
-    const ordenado = [];
-    const visitados = new Set();
-
-    const agregarSecuencia = (subtemaId) => {
-      if (visitados.has(subtemaId)) return;
-      
-      const subtema = subtemas.find(s => s.id === subtemaId);
-      if (subtema) {
-        ordenado.push(subtema);
-        visitados.add(subtemaId);
-
-        const destinos = secuenciaMap.get(subtemaId);
-        if (destinos && destinos.length > 0) {
-          agregarSecuencia(destinos[0]);
-        }
-      }
-    };
-
-    // Agregar secuencias desde subtemas iniciales
-    subtemasIniciales.forEach(s => agregarSecuencia(s.id));
-
-    // Añadir subtemas no secuenciados al final
-    const ids = new Set(ordenado.map(s => s.id));
-    subtemas.forEach(s => {
-      if (!ids.has(s.id)) {
-        ordenado.push(s);
-      }
-    });
-
+    const ordenado = await obtenerSubtemasOrdenadosPorSecuenciaParaTema(temaId);
     res.json(ordenado);
   } catch (error) {
     console.error("Error al obtener subtemas ordenados:", error);

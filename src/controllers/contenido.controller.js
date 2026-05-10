@@ -1,5 +1,6 @@
 const { Op } = require('sequelize');
 const { Contenido, Tema, Subtema, Asignatura: AsignaturaModel, Estudiante, SecuenciaContenido, Progreso } = require('../models');
+const { progresoCuentaContenidoVisualizado } = require('../utils/progresoContenidoVisto');
 
 const canViewInactiveContenidos = (req) => ['ADMINISTRADOR', 'DOCENTE'].includes(req.tipoUsuario);
 const CONTENIDO_TYPE_MAP = {
@@ -851,9 +852,8 @@ exports.obtenerEstadoVisualizacion = async (req, res) => {
       });
     }
 
-    // Si existe, retornar el estado
     res.json({
-      visualizado: progreso.completado === true && progreso.estado === 'Visualizado',
+      visualizado: progresoCuentaContenidoVisualizado(progreso),
       contenido_id: progreso.contenido_id,
       estudiante_id: progreso.estudiante_id,
       estado: progreso.estado,

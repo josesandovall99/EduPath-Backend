@@ -1,6 +1,24 @@
 const { Contenido, Subtema, Tema, Progreso, Asignatura, SecuenciaContenido } = require('../models');
 
+const { obtenerSubtemasOrdenadosPorSecuenciaParaTema } = require('../utils/subtemaOrdenSecuencia');
+
+const { progresoCuentaContenidoVisualizado } = require('../utils/progresoContenidoVisto');
+
 const { Op } = require('sequelize');
+
+/** IDs de contenido marcados como vistos por el estudiante según tabla progreso (criterio relajado). */
+async function idsContenidosVistosDesdeProgreso(estudianteId, contenidoIds) {
+  if (!contenidoIds.length) return new Set();
+  const rows = await Progreso.findAll({
+    where: { estudiante_id: estudianteId, contenido_id: { [Op.in]: contenidoIds } },
+    attributes: ['contenido_id', 'completado', 'estado'],
+  });
+  const out = new Set();
+  rows.forEach((r) => {
+    if (progresoCuentaContenidoVisualizado(r)) out.add(Number(r.contenido_id));
+  });
+  return out;
+}
 
 
 
@@ -111,24 +129,16 @@ exports.verificarContenidoDesbloqueado = async (estudianteId, contenidoId) => {
     const predecesorId = secuenciaEntrante.contenido_origen_id;
 
     const progresoPredecesor = await Progreso.findOne({
-
       where: {
-
         estudiante_id: estudianteId,
-
         contenido_id: predecesorId,
-
-        completado: true,
-
-        estado: 'Visualizado',
-
       },
-
+      attributes: ['completado', 'estado'],
     });
 
 
 
-    if (progresoPredecesor) {
+    if (progresoCuentaContenidoVisualizado(progresoPredecesor)) {
 
       return { desbloqueado: true, razon: 'Contenido predecesor completado' };
 
@@ -184,21 +194,9 @@ exports.verificarSubtemaCompleto = async (estudianteId, subtemaId) => {
 
 
 
-    const contenidosCompletados = await Progreso.count({
+    const vistos = await idsContenidosVistosDesdeProgreso(estudianteId, contenidoIds);
 
-      where: {
-
-        estudiante_id: estudianteId,
-
-        contenido_id: { [Op.in]: contenidoIds },
-
-        completado: true,
-
-        estado: 'Visualizado',
-
-      },
-
-    });
+    const contenidosCompletados = contenidoIds.filter((cid) => vistos.has(Number(cid))).length;
 
 
 
@@ -321,10 +319,10 @@ exports.obtenerEstadoContenidosTema = async (estudianteId, temaId) => {
 
     const contenidoIds = contenidos.map(c => c.id);
 
-    const [progresos, secuencias] = await Promise.all([
+    const [progresosRaw, secuencias] = await Promise.all([
       Progreso.findAll({
-        where: { estudiante_id: estudianteId, contenido_id: { [Op.in]: contenidoIds }, completado: true, estado: 'Visualizado' },
-        attributes: ['contenido_id'],
+        where: { estudiante_id: estudianteId, contenido_id: { [Op.in]: contenidoIds } },
+        attributes: ['contenido_id', 'completado', 'estado'],
       }),
       secuencial
         ? SecuenciaContenido.findAll({
@@ -334,15 +332,17 @@ exports.obtenerEstadoContenidosTema = async (estudianteId, temaId) => {
         : Promise.resolve([]),
     ]);
 
-    const completadosSet = new Set(progresos.map(p => Number(p.contenido_id)));
+    const completadosSet = new Set(
+      progresosRaw.filter((p) => progresoCuentaContenidoVisualizado(p)).map((p) => Number(p.contenido_id))
+    );
     const predecesores = new Map(secuencias.map(s => [Number(s.contenido_destino_id), Number(s.contenido_origen_id)]));
 
     return contenidos.map(contenido => {
-      const completado = completadosSet.has(contenido.id);
+      const completado = completadosSet.has(Number(contenido.id));
       let desbloqueado = true;
       if (secuencial) {
-        const predecesorId = predecesores.get(contenido.id);
-        if (predecesorId) desbloqueado = completadosSet.has(predecesorId);
+        const predecesorId = predecesores.get(Number(contenido.id));
+        if (predecesorId) desbloqueado = completadosSet.has(Number(predecesorId));
       }
       return {
         id: contenido.id,
@@ -364,10 +364,15 @@ exports.obtenerEstadoContenidosTema = async (estudianteId, temaId) => {
 // Reescrito: 1+N*2+(N-1)*2 queries => 3 queries batch
 exports.obtenerEstadoSubtemasTema = async (estudianteId, temaId) => {
   try {
-    const [secuencial, subtemas] = await Promise.all([
-      obtenerProgresionSecuencialPorTemaId(temaId),
-      Subtema.findAll({ where: { tema_id: temaId, estado: true }, order: [['id', 'ASC']] }),
-    ]);
+    const secuencial = await obtenerProgresionSecuencialPorTemaId(temaId);
+
+    /** Misma orden que /secuencias-subtema/tema/:id/ordenados cuando hay progresión secuencial */
+    const subtemas = secuencial
+      ? await obtenerSubtemasOrdenadosPorSecuenciaParaTema(temaId)
+      : await Subtema.findAll({
+          where: { tema_id: temaId, estado: true },
+          order: [['id', 'ASC']],
+        });
 
     if (subtemas.length === 0) return [];
 
@@ -380,14 +385,9 @@ exports.obtenerEstadoSubtemasTema = async (estudianteId, temaId) => {
 
     const contenidoIds = contenidos.map(c => c.id);
 
-    const progresos = contenidoIds.length > 0
-      ? await Progreso.findAll({
-          where: { estudiante_id: estudianteId, contenido_id: { [Op.in]: contenidoIds }, completado: true, estado: 'Visualizado' },
-          attributes: ['contenido_id'],
-        })
-      : [];
-
-    const completadosSet = new Set(progresos.map(p => Number(p.contenido_id)));
+    const completadosSet = contenidoIds.length > 0
+      ? await idsContenidosVistosDesdeProgreso(estudianteId, contenidoIds)
+      : new Set();
 
     const contenidosPorSubtema = new Map();
     contenidos.forEach(c => {
@@ -398,7 +398,7 @@ exports.obtenerEstadoSubtemasTema = async (estudianteId, temaId) => {
     const calcularEstadoSubtema = (subtemaId) => {
       const ids = contenidosPorSubtema.get(subtemaId) || [];
       const total = ids.length;
-      const completados = ids.filter(id => completadosSet.has(id)).length;
+      const completados = ids.filter(id => completadosSet.has(Number(id))).length;
       return { total, completados, completo: total === 0 || completados === total };
     };
 
@@ -453,14 +453,9 @@ exports.obtenerEstadoTemasAsignatura = async (estudianteId, asignaturaId) => {
 
     const contenidoIds = contenidos.map(c => c.id);
 
-    const progresos = contenidoIds.length > 0
-      ? await Progreso.findAll({
-          where: { estudiante_id: estudianteId, contenido_id: { [Op.in]: contenidoIds }, completado: true, estado: 'Visualizado' },
-          attributes: ['contenido_id'],
-        })
-      : [];
-
-    const completadosSet = new Set(progresos.map(p => Number(p.contenido_id)));
+    const completadosSet = contenidoIds.length > 0
+      ? await idsContenidosVistosDesdeProgreso(estudianteId, contenidoIds)
+      : new Set();
 
     const subtemasPorTema = new Map();
     subtemas.forEach(s => {
@@ -476,7 +471,7 @@ exports.obtenerEstadoTemasAsignatura = async (estudianteId, asignaturaId) => {
 
     const estaSubtemaCompleto = (subtemaId) => {
       const ids = contenidosPorSubtema.get(subtemaId) || [];
-      return ids.length === 0 || ids.every(id => completadosSet.has(id));
+      return ids.length === 0 || ids.every(id => completadosSet.has(Number(id)));
     };
 
     const estaTemaCompleto = (temaId) => {
@@ -495,7 +490,7 @@ exports.obtenerEstadoTemasAsignatura = async (estudianteId, asignaturaId) => {
       }
       const contenidosDelTema = subs.flatMap(sid => contenidosPorSubtema.get(sid) || []);
       const totalContenidos = contenidosDelTema.length;
-      const completadosDelTema = contenidosDelTema.filter(id => completadosSet.has(id)).length;
+      const completadosDelTema = contenidosDelTema.filter(id => completadosSet.has(Number(id))).length;
       const porcentaje = totalContenidos > 0 ? Math.round((completadosDelTema / totalContenidos) * 100) : 0;
       return {
         id: tema.id,
