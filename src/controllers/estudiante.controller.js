@@ -19,7 +19,7 @@ const crearEstudiante = async (req, res) => {
   const transaction = await sequelize.transaction();
   
   try {
-    const { nombre, email, codigoAcceso, contraseña, codigoEstudiantil, programa, semestre } = req.body;
+    const { nombre, email, codigoAcceso, contraseña, codigoEstudiantil, programa, periodo_academico } = req.body;
 
     if (!isNonEmptyString(nombre) || !isValidEmail(email) || !isNonEmptyString(codigoAcceso) || !isStrongPassword(contraseña)) {
       await transaction.rollback();
@@ -46,7 +46,7 @@ const crearEstudiante = async (req, res) => {
     persona_id: persona.id,
     codigoEstudiantil,
     programa,
-    semestre,
+    periodo_academico: periodo_academico || "2026-A",
   },
   { transaction }
 );
@@ -148,7 +148,7 @@ const actualizarEstudiante = async (req, res) => {
       codigoAcceso,
       contraseña,
       programa,
-      semestre,
+      periodo_academico,
     } = req.body;
 
     if (email !== undefined && !isValidEmail(email)) {
@@ -173,7 +173,7 @@ const actualizarEstudiante = async (req, res) => {
     );
 
     await estudiante.update(
-      { programa, semestre },
+      { programa, periodo_academico },
       { transaction }
     );
 
@@ -316,25 +316,53 @@ const personasParaCorreo = [];
       const Email = fila["Email_institucional"];
       const CodigoEstudiantil = fila["CodigoEstudiantil"];
       const Programa = fila["Programa"];
-      const Semestre = fila["Semestre"];
+      const PeriodoAcademico = fila["PeriodoAcademico"];
 
       if (!Nombres || !Apellidos || !Email || !CodigoEstudiantil) {
-continue;
+        continue;
       }
 
-      // Generar credenciales
+      if (!isValidEmail(Email)) {
+        continue;
+      }
+
+      const estudianteExistente = await Estudiante.findOne({
+        where: { codigoEstudiantil: CodigoEstudiantil },
+        include: [{ model: Persona, as: 'persona' }],
+        transaction
+      });
+
+      if (estudianteExistente) {
+        // Upsert: actualizar periodo y correo si cambió y no está en uso
+        const updatePersona = {};
+        const nuevoEmail = Email.trim().toLowerCase();
+        if (nuevoEmail !== estudianteExistente.persona.email) {
+          const emailEnUso = await Persona.findOne({ where: { email: nuevoEmail }, transaction });
+          if (!emailEnUso) {
+            updatePersona.email = nuevoEmail;
+          }
+        }
+        if (Object.keys(updatePersona).length > 0) {
+          await estudianteExistente.persona.update(updatePersona, { transaction });
+        }
+        await estudianteExistente.update(
+          { periodo_academico: PeriodoAcademico || "2026-A", programa: Programa || estudianteExistente.programa },
+          { transaction }
+        );
+        continue;
+      }
+
+      // Generar credenciales para estudiante nuevo
       const passwordPlana = generarPassword();
       const codigoAcceso = generarCodigoAcceso();
 
-      // Encriptar para la base de datos
       const salt = await bcrypt.genSalt(10);
       const passwordHash = await bcrypt.hash(passwordPlana, salt);
 
-      // Crear persona
       const persona = await Persona.create(
         {
           nombre: `${Nombres} ${Apellidos}`,
-          email: Email,
+          email: Email.trim().toLowerCase(),
           contraseña: passwordHash,
           codigoAcceso,
           tipoUsuario: "ESTUDIANTE",
@@ -342,18 +370,16 @@ continue;
         { transaction }
       );
 
-      // Crear estudiante
       await Estudiante.create(
         {
           persona_id: persona.id,
           codigoEstudiantil: CodigoEstudiantil,
           programa: Programa,
-          semestre: Semestre,
+          periodo_academico: PeriodoAcademico || "2026-A",
         },
         { transaction }
       );
 
-      // Datos para el correo
       personasParaCorreo.push({
         nombre: `${Nombres} ${Apellidos}`,
         email: Email,

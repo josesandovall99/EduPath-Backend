@@ -36,6 +36,11 @@ module.exports = (sequelize, DataTypes) => {
     fecha_creacion: {
       type: DataTypes.DATE,
       allowNull: true
+    },
+    periodo_academico: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: "2026-A"
     }
   }, {
     tableName: 'respuestas_estudiante_ejercicio',
@@ -43,12 +48,12 @@ module.exports = (sequelize, DataTypes) => {
     createdAt: 'fecha_creacion',
     updatedAt: false,
     underscored: true,
-    // Un solo registro por estudiante+ejercicio; se actualiza en cada intento
+    // Un registro por estudiante+ejercicio+periodo; permite re-intentos en nuevos periodos
     indexes: [
       {
         unique: true,
-        fields: ['estudiante_id', 'ejercicio_id'],
-        name: 'ux_estudiante_ejercicio'
+        fields: ['estudiante_id', 'ejercicio_id', 'periodo_academico'],
+        name: 'ux_estudiante_ejercicio_periodo'
       }
     ]
   });

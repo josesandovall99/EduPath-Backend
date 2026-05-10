@@ -550,7 +550,7 @@ const evaluateEmbeddedExercise = async ({ exercise, reqBody }) => {
   };
 };
 
-const upsertConfigurableExerciseProgress = async ({ estudianteId, miniproyecto, exercise, evaluationResult }) => {
+const upsertConfigurableExerciseProgress = async ({ estudianteId, miniproyecto, exercise, evaluationResult, periodoAcademico }) => {
   const record = await RespuestaEstudianteMiniproyecto.findOne({
     where: {
       estudiante_id: estudianteId,
@@ -560,9 +560,8 @@ const upsertConfigurableExerciseProgress = async ({ estudianteId, miniproyecto, 
 
   const existingProgress = parseConfigurableResponseProgress(record);
   const currentExerciseProgress = existingProgress.exercises?.[exercise.id] || { intentos: 0 };
-  const existingEvaluation = await Evaluacion.findOne({
-    where: { estudiante_id: estudianteId, miniproyecto_id: miniproyecto.id }
-  });
+  const evalWhere = { estudiante_id: estudianteId, miniproyecto_id: miniproyecto.id, periodo_academico: periodoAcademico || '2026-A' };
+  const existingEvaluation = await Evaluacion.findOne({ where: evalWhere });
 
   if (String(existingEvaluation?.estado || '').toUpperCase() === 'APROBADO') {
     return { conflict: true, progress: existingProgress.exercises, summary: existingProgress.evaluation || {} };
@@ -1454,7 +1453,7 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
     }
 
     const evalExistente = await Evaluacion.findOne({
-      where: { estudiante_id, miniproyecto_id: parseInt(id, 10), estado: 'APROBADO' }
+      where: { estudiante_id, miniproyecto_id: parseInt(id, 10), estado: 'APROBADO', periodo_academico: estudiante.periodo_academico }
     });
     if (evalExistente) {
       return res.status(409).json({ message: 'Miniproyecto ya aprobado para el estudiante' });
@@ -1502,9 +1501,10 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
         retroalimentacion: resultado.resumen,
         estudiante_id,
         miniproyecto_id: parseInt(id, 10),
-        estado: aprobado ? 'APROBADO' : 'REPROBADO'
+        estado: aprobado ? 'APROBADO' : 'REPROBADO',
+        periodo_academico: estudiante.periodo_academico
       };
-      const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10) } });
+      const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10), periodo_academico: estudiante.periodo_academico } });
       if (evalPrev) {
         await evalPrev.update(evalPayload);
       } else {
@@ -1568,9 +1568,10 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
         retroalimentacion: evaluacion.data?.estado || evaluacion.message || 'Respuesta incorrecta',
         estudiante_id,
         miniproyecto_id: parseInt(id, 10),
-        estado: 'REPROBADO'
+        estado: 'REPROBADO',
+        periodo_academico: estudiante.periodo_academico
       };
-      const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10) } });
+      const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10), periodo_academico: estudiante.periodo_academico } });
       if (evalPrev) {
         await evalPrev.update(evalPayload);
       } else {
@@ -1618,9 +1619,10 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
       retroalimentacion: 'Aprobado automaticamente. Salida y sintaxis correctas.',
       estudiante_id,
       miniproyecto_id: parseInt(id, 10),
-      estado: 'APROBADO'
+      estado: 'APROBADO',
+      periodo_academico: estudiante.periodo_academico
     };
-    const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10) } });
+    const evalPrev = await Evaluacion.findOne({ where: { estudiante_id, miniproyecto_id: parseInt(id, 10), periodo_academico: estudiante.periodo_academico } });
     if (evalPrev) {
       await evalPrev.update(evalPayload);
     } else {
@@ -1705,6 +1707,7 @@ exports.enviarEjercicioConfigurable = async (req, res) => {
         miniproyecto,
         exercise,
         evaluationResult,
+        periodoAcademico: estudiante.periodo_academico,
       });
 
       if (persistence.conflict) {
@@ -1767,8 +1770,10 @@ exports.evaluarMiniproyectoConfigurable = async (req, res) => {
 
     const parsedProgress = parseConfigurableResponseProgress(record);
 
+    const estudianteObjEval = await Estudiante.findByPk(estudianteId, { attributes: ['id', 'periodo_academico'] });
+    const periodoEval = estudianteObjEval?.periodo_academico || '2026-A';
     const existingEvaluation = await Evaluacion.findOne({
-      where: { estudiante_id: estudianteId, miniproyecto_id: miniproyecto.id }
+      where: { estudiante_id: estudianteId, miniproyecto_id: miniproyecto.id, periodo_academico: periodoEval }
     });
 
     if (String(existingEvaluation?.estado || '').toUpperCase() === 'APROBADO') {
@@ -1847,6 +1852,7 @@ exports.evaluarMiniproyectoConfigurable = async (req, res) => {
         estado: approved ? 'APROBADO' : 'REPROBADO',
         estudiante_id: estudianteId,
         miniproyecto_id: miniproyecto.id,
+        periodo_academico: periodoEval,
       });
     }
 

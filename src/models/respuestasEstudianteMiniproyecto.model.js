@@ -39,6 +39,12 @@ module.exports = (sequelize, DataTypes) => {
         allowNull: false,
         defaultValue: 0,
       },
+
+      periodo_academico: {
+        type: DataTypes.STRING,
+        allowNull: true,
+        defaultValue: "2026-A",
+      },
     },
     {
       tableName: "respuestas_estudiante_miniproyecto",

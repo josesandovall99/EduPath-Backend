@@ -230,7 +230,7 @@ const buildStudentDetailedProgressHtml = (student) => {
 
           <div class="student-detail-name">${escapeHtml(student.name || 'Estudiante')}</div>
 
-          <div class="student-detail-meta">${escapeHtml(student.email || '-')} | Semestre ${escapeHtml(student.semester || '-')}</div>
+          <div class="student-detail-meta">${escapeHtml(student.email || '-')} | Periodo ${escapeHtml(student.periodo_academico || '-')}</div>
 
         </div>
 
@@ -344,7 +344,7 @@ const buildCohortDetailedHtml = (cohorts = []) => {
 
           <div>
 
-            <div class="cohort-title">Cohorte: ${escapeHtml(cohort.cohortLabel || cohort.date || 'Sin fecha')}</div>
+            <div class="cohort-title">Periodo: ${escapeHtml(cohort.cohortLabel || cohort.date || 'Sin periodo')}</div>
 
             <div class="cohort-sub">${cohort.studentCount || 0} estudiantes</div>
 
@@ -2022,9 +2022,13 @@ const buildReportHtml = ({ type, data }) => {
 
 
 
-const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => {
+const buildFailuresReportData = async ({ estudianteId, asignaturaIds, periodoAcademico } = {}) => {
 
   const respuestaWhere = estudianteId ? { estudiante_id: estudianteId } : {};
+
+  if (periodoAcademico) {
+    respuestaWhere.periodo_academico = periodoAcademico;
+  }
 
   const evaluacionWhere = estudianteId ? { estudiante_id: estudianteId } : {};
 
@@ -2046,7 +2050,7 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
 
 
 
-  const [asignaturas, temas, contenidos, ejercicios, evaluaciones, respuestasEjercicio, respuestasMiniproyecto] = await Promise.all([
+  const [asignaturas, temas, contenidos, ejercicios, miniproyectos, evaluaciones, respuestasEjercicio, respuestasMiniproyecto] = await Promise.all([
 
     AsignaturaModel.findAll({ where: { estado: true }, attributes: ['id', 'nombre'] }),
 
@@ -2054,7 +2058,14 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
 
     Contenido.findAll({ where: { estado: true }, attributes: ['id', 'tema_id'] }),
 
-    Ejercicio.findAll({ attributes: ['id', 'contenido_id'] }),
+    Ejercicio.findAll({
+      attributes: ['id', 'contenido_id'],
+      include: [{ model: Actividad, as: 'actividad', attributes: ['titulo'] }]
+    }),
+
+    Miniproyecto.findAll({
+      attributes: ['id', 'asignatura_id'],
+    }),
 
     Evaluacion.findAll({
 
@@ -2068,25 +2079,7 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
 
       where: respuestaWhere,
 
-      include: [
-
-        {
-
-          model: Ejercicio,
-
-          as: 'ejercicio',
-
-          include: [
-
-            { model: Contenido, attributes: ['id', 'titulo', 'tipo', 'tema_id', 'subtema_id'], include: [{ model: Tema, attributes: ['id', 'nombre', 'asignatura_id'] }] },
-
-            { model: Actividad, as: 'actividad' }
-
-          ]
-
-        }
-
-      ]
+      attributes: ['estudiante_id', 'ejercicio_id', 'contador', 'estado']
 
     }),
 
@@ -2094,25 +2087,7 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
 
       where: respuestaWhere,
 
-      include: [
-
-        {
-
-          model: Miniproyecto,
-
-          as: 'miniproyecto',
-
-          include: [
-
-            { model: AsignaturaModel },
-
-            { model: Actividad }
-
-          ]
-
-        }
-
-      ]
+      attributes: ['estudiante_id', 'miniproyecto_id', 'contador', 'estado']
 
     })
 
@@ -2127,8 +2102,7 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
   const contenidoById = new Map(contenidos.map((contenido) => [String(contenido.id), contenido]));
 
   const ejercicioasignaturaIdById = new Map();
-
-
+  const ejercicioTituloById = new Map();
 
   ejercicios.forEach((ejercicio) => {
 
@@ -2141,7 +2115,23 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
     if (!tema || !Number.isFinite(Number(tema.asignatura_id))) return;
 
     ejercicioasignaturaIdById.set(String(ejercicio.id), Number(tema.asignatura_id));
+    ejercicioTituloById.set(String(ejercicio.id), ejercicio.actividad?.titulo || `Ejercicio ${ejercicio.id}`);
 
+  });
+
+  // Miniproyecto comparte id con Actividad (herencia de tabla) — buscar títulos por id
+  const miniproyectoIds = miniproyectos.map(mp => mp.id);
+  const actividadesMini = miniproyectoIds.length > 0
+    ? await Actividad.findAll({ where: { id: { [Op.in]: miniproyectoIds } }, attributes: ['id', 'titulo'] })
+    : [];
+  const actividadMiniTituloById = new Map(actividadesMini.map(a => [String(a.id), a.titulo]));
+
+  const miniproyectoById = new Map();
+  miniproyectos.forEach((mp) => {
+    miniproyectoById.set(String(mp.id), {
+      asignatura_id: mp.asignatura_id,
+      titulo: actividadMiniTituloById.get(String(mp.id)) || `Miniproyecto ${mp.id}`
+    });
   });
 
 
@@ -2178,23 +2168,11 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
 
   respuestasEjercicio.forEach((respuesta) => {
 
-    const ejercicio = respuesta.ejercicio;
-
-    const contenido = ejercicio?.Contenido || ejercicio?.contenido;
-
-    const tema = contenido?.Tema || contenido?.tema;
-
-    const mappedasignaturaId = ejercicioasignaturaIdById.get(String(respuesta.ejercicio_id));
-
-    const asignaturaId = Number.isFinite(mappedasignaturaId)
-
-      ? mappedasignaturaId
-
-      : (tema?.asignatura_id ?? null);
+    const asignaturaId = ejercicioasignaturaIdById.get(String(respuesta.ejercicio_id)) ?? null;
 
     const asignaturaName = asignaturaId ? (AsignaturaMap.get(String(asignaturaId)) || `Asignatura ${asignaturaId}`) : 'Sin Asignatura';
 
-    const titulo = ejercicio?.actividad?.titulo || ejercicio?.Actividad?.titulo || `Ejercicio ${ejercicio?.id ?? respuesta.ejercicio_id}`;
+    const titulo = ejercicioTituloById.get(String(respuesta.ejercicio_id)) || `Ejercicio ${respuesta.ejercicio_id}`;
 
     const key = `${respuesta.estudiante_id}:${respuesta.ejercicio_id}`;
 
@@ -2236,13 +2214,13 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
 
   respuestasMiniproyecto.forEach((respuesta) => {
 
-    const miniproyecto = respuesta.miniproyecto;
+    const mpData = miniproyectoById.get(String(respuesta.miniproyecto_id));
 
-    const asignaturaId = miniproyecto?.asignatura_id ?? null;
+    const asignaturaId = mpData?.asignatura_id ?? null;
 
     const asignaturaName = asignaturaId ? (AsignaturaMap.get(String(asignaturaId)) || `Asignatura ${asignaturaId}`) : 'Sin Asignatura';
 
-    const titulo = miniproyecto?.Actividad?.titulo || miniproyecto?.actividad?.titulo || `Miniproyecto ${miniproyecto?.id ?? respuesta.miniproyecto_id}`;
+    const titulo = mpData?.titulo || `Miniproyecto ${respuesta.miniproyecto_id}`;
 
     const key = `${respuesta.estudiante_id}:${respuesta.miniproyecto_id}`;
 
@@ -2287,6 +2265,22 @@ const buildFailuresReportData = async ({ estudianteId, asignaturaIds } = {}) => 
     items = items.filter((item) => item.asignatura_id !== null && AsignaturaFilterSet.has(String(item.asignatura_id)));
 
   }
+
+  // Agrupar por estudiante+actividad para evitar duplicados cuando hay registros en varios periodos
+  const itemsMap = new Map();
+  items.forEach((item) => {
+    const key = `${item.tipo}:${item.estudiante_id}:${item.actividad_id}`;
+    const existing = itemsMap.get(key);
+    if (existing) {
+      existing.intentos += item.intentos;
+      existing.fallos += item.fallos;
+      existing.aciertos += item.aciertos;
+      existing.aprobado = existing.aprobado || item.aprobado;
+    } else {
+      itemsMap.set(key, { ...item });
+    }
+  });
+  items = [...itemsMap.values()];
 
 
 
@@ -2564,15 +2558,9 @@ const incrementNestedCount = (store, keyA, keyB, delta = 1) => {
 
 
 
-const applyStudentFilters = (students, { semester, dateFrom, dateTo } = {}) => {
+const applyStudentFilters = (students, { dateFrom, dateTo } = {}) => {
 
   let filtered = [...students];
-
-  if (semester && String(semester) !== 'all') {
-
-    filtered = filtered.filter(student => String(student.semester ?? '') === String(semester));
-
-  }
 
   if (dateFrom || dateTo) {
 
@@ -2604,7 +2592,7 @@ const applyStudentFilters = (students, { semester, dateFrom, dateTo } = {}) => {
 
 
 
-const getResumenGeneralData = async ({ semester, dateFrom, dateTo, asignaturaIds } = {}) => {
+const getResumenGeneralData = async ({ dateFrom, dateTo, asignaturaIds } = {}) => {
 
   const [asignaturas, temas, subtemas, contenidos, secuencias, estudiantes, ejercicios, miniproyectos] = await Promise.all([
 
@@ -2620,7 +2608,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo, asignaturaIds
 
     Estudiante.findAll({
 
-      attributes: ['id', 'createdAt', 'semestre', 'codigoEstudiantil'],
+      attributes: ['id', 'createdAt', 'periodo_academico', 'codigoEstudiantil'],
 
       include: [{ model: Persona, as: 'persona', attributes: ['nombre', 'email'] }]
 
@@ -3066,7 +3054,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo, asignaturaIds
 
       createdDate: student.createdAt ? new Date(student.createdAt).toISOString().split('T')[0] : '',
 
-      semester: student.semestre ?? '',
+      periodo_academico: student.periodo_academico ?? '',
 
       codigo: student.codigoEstudiantil ?? '',
 
@@ -3078,7 +3066,7 @@ const getResumenGeneralData = async ({ semester, dateFrom, dateTo, asignaturaIds
 
 
 
-  const filteredStudents = applyStudentFilters(students, { semester, dateFrom, dateTo });
+  const filteredStudents = applyStudentFilters(students, { dateFrom, dateTo });
 
 
 
@@ -3138,7 +3126,6 @@ exports.obtenerResumenGeneralEstudiantes = async (req, res) => {
 
     const data = await getResumenGeneralData({
 
-      semester: req.query.semester,
 
       dateFrom: req.query.dateFrom,
 
@@ -3178,7 +3165,6 @@ exports.obtenerResumenGeneralDocente = async (req, res) => {
 
     const data = await getResumenGeneralData({
 
-      semester: req.query.semester,
 
       dateFrom: req.query.dateFrom,
 
@@ -3706,6 +3692,10 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
 
 
 
+    // Obtener periodo actual del estudiante para filtrar solo el periodo vigente
+    const estudianteObj = await Estudiante.findByPk(esId, { attributes: ['id', 'periodo_academico'] });
+    const periodoEstudiante = estudianteObj ? estudianteObj.periodo_academico : null;
+
     // Conteos
 
     const totalContenidos = contenidoIds.length;
@@ -3716,7 +3706,7 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
 
     const totalEjercicios = ejercicioIds.length;
 
-    const ejerciciosCompletados = totalEjercicios > 0 ? await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: esId, ejercicio_id: { [Op.in]: ejercicioIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } } }) : 0;
+    const ejerciciosCompletados = totalEjercicios > 0 ? await RespuestaEstudianteEjercicio.count({ where: { estudiante_id: esId, ejercicio_id: { [Op.in]: ejercicioIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] }, ...(periodoEstudiante ? { periodo_academico: periodoEstudiante } : {}) } }) : 0;
 
 
 
@@ -3728,7 +3718,7 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
 
       const respuestasMiniproyectos = await RespuestaEstudianteMiniproyecto.findAll({
 
-        where: { estudiante_id: esId, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } },
+        where: { estudiante_id: esId, estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] }, ...(periodoEstudiante ? { periodo_academico: periodoEstudiante } : {}) },
 
         include: [{ model: Miniproyecto, as: 'miniproyecto', where: { asignatura_id: asignaturaId }, attributes: ['id'] }]
 
@@ -3830,7 +3820,7 @@ exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
     // Ronda 1 — validación + conteos + temas, todo en paralelo (solo necesitan aId/esId)
     const [Asignatura, estudiante, totalMiniproyectos, miniproyectosAprobados, miniproyectosDesaprobados, temas] = await Promise.all([
       AsignaturaModel.findOne({ where: { id: aId, estado: true } }),
-      Estudiante.findByPk(esId, { attributes: ['id'] }),
+      Estudiante.findByPk(esId, { attributes: ['id', 'periodo_academico'] }),
       Miniproyecto.count({ where: { asignatura_id: aId } }),
       Evaluacion.count({
         where: { estudiante_id: esId, estado: 'APROBADO', miniproyecto_id: { [Op.ne]: null } },
@@ -3911,10 +3901,11 @@ exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
     const contenidosVisualizados = progresoRows.length;
     const totalContenidos = contenidoIds.length;
 
-    // Ronda 6 — respuestas de ejercicios (solo si hay ejercicios)
+    // Ronda 6 — respuestas de ejercicios (solo si hay ejercicios, filtradas por periodo actual)
+    const periodoEstudiante = estudiante.periodo_academico;
     const respuestasRows = ejercicioIds.length > 0
       ? await RespuestaEstudianteEjercicio.findAll({
-          where: { estudiante_id: esId, ejercicio_id: { [Op.in]: ejercicioIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } },
+          where: { estudiante_id: esId, ejercicio_id: { [Op.in]: ejercicioIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] }, ...(periodoEstudiante ? { periodo_academico: periodoEstudiante } : {}) },
           attributes: ['ejercicio_id', 'estado'],
         })
       : [];
@@ -4142,9 +4133,11 @@ exports.obtenerReporteFallos = async (req, res) => {
 
     }
 
+    const periodoAcademico = req.query.periodo_academico && req.query.periodo_academico !== 'all'
+      ? req.query.periodo_academico
+      : null;
 
-
-    const data = await buildFailuresReportData({ estudianteId });
+    const data = await buildFailuresReportData({ estudianteId, periodoAcademico });
 
     res.json({
 
@@ -4262,7 +4255,6 @@ exports.generarPdfReporte = async (req, res) => {
 
     const filters = {
 
-      semester: req.query.semester,
 
       dateFrom: req.query.dateFrom,
 
@@ -4434,7 +4426,7 @@ exports.generarPdfReporte = async (req, res) => {
 
                   <div class="meta-item">Correo<strong>${escapeHtml(estudianteEmail)}</strong></div>
 
-                  <div class="meta-item">Semestre<strong>${escapeHtml(estudiante.semester || '-')}</strong></div>
+                  <div class="meta-item">Periodo Académico<strong>${escapeHtml(estudiante.periodo_academico || '-')}</strong></div>
 
                   <div class="meta-item">Promedio general<strong>${formatPercentValue(averageProgress)}%</strong></div>
 
@@ -4636,7 +4628,7 @@ exports.generarPdfReporte = async (req, res) => {
 
               <td>${escapeHtml(student.email || '-')}</td>
 
-              <td>${escapeHtml(student.semester || '-')}</td>
+              <td>${escapeHtml(student.periodo_academico || '-')}</td>
 
               <td>${progress}%</td>
 
@@ -4692,7 +4684,7 @@ exports.generarPdfReporte = async (req, res) => {
 
                 <th>Correo</th>
 
-                <th>Semestre</th>
+                <th>Periodo Académico</th>
 
                 <th>Promedio</th>
 
@@ -4900,19 +4892,19 @@ exports.generarPdfReporte = async (req, res) => {
 
       students.forEach((student) => {
 
-        const date = student.createdDate || 'unknown';
+        const periodo = student.periodo_academico || 'Sin periodo';
 
-        groups[date] = groups[date] || [];
+        groups[periodo] = groups[periodo] || [];
 
-        groups[date].push(student);
+        groups[periodo].push(student);
 
       });
 
 
 
-      const allCohorts = Object.keys(groups).sort().map((date) => {
+      const allCohorts = Object.keys(groups).sort().map((periodo) => {
 
-        const list = [...groups[date]].sort((a, b) => {
+        const list = [...groups[periodo]].sort((a, b) => {
 
           const avgA = getStudentAverageProgress(a);
 
@@ -4930,9 +4922,9 @@ exports.generarPdfReporte = async (req, res) => {
 
         return {
 
-          date,
+          date: periodo,
 
-          cohortLabel: formatDate(date),
+          cohortLabel: periodo,
 
           avgProgress: parseFloat(avgCohorte.toFixed(1)),
 
@@ -4982,13 +4974,13 @@ exports.generarPdfReporte = async (req, res) => {
 
         stats: [
 
-          { label: 'Cohortes analizadas', value: Object.keys(groups).length, sub: 'Fechas de creación' },
+          { label: 'Periodos analizados', value: Object.keys(groups).length, sub: 'Periodos académicos' },
 
-          { label: 'Cohortes visibles', value: visibleCohorts.length, sub: 'Top 8 por avance' },
+          { label: 'Periodos visibles', value: visibleCohorts.length, sub: 'Top 8 por avance' },
 
-          { label: 'Total de estudiantes', value: totalEstudiantes, sub: 'Todas las cohortes' },
+          { label: 'Total de estudiantes', value: totalEstudiantes, sub: 'Todos los periodos' },
 
-          { label: 'Promedio general', value: `${formatPercentValue(Object.keys(groups).length ? (totalPromedios / Object.keys(groups).length) : 0)}%`, sub: 'Porcentaje promedio simple entre cohortes' }
+          { label: 'Promedio general', value: `${formatPercentValue(Object.keys(groups).length ? (totalPromedios / Object.keys(groups).length) : 0)}%`, sub: 'Porcentaje promedio simple entre periodos' }
 
         ],
 
@@ -4998,17 +4990,17 @@ exports.generarPdfReporte = async (req, res) => {
 
             title: 'Notas del Informe',
 
-            subtitle: 'Contexto del comparativo por cohorte',
+            subtitle: 'Contexto del comparativo por periodo académico',
 
             body: `
 
               <div class="meta">
 
-                <div class="meta-item">Criterio de orden<strong>Las cohortes se muestran por mayor progreso promedio.</strong></div>
+                <div class="meta-item">Criterio de orden<strong>Los periodos se muestran por mayor progreso promedio.</strong></div>
 
-                <div class="meta-item">Detalle visible<strong>Hasta 8 cohortes para conservar legibilidad.</strong></div>
+                <div class="meta-item">Detalle visible<strong>Hasta 8 periodos para conservar legibilidad.</strong></div>
 
-                <div class="meta-item">Cohortes ocultas<strong>${hiddenCohortsCount}</strong></div>
+                <div class="meta-item">Periodos ocultos<strong>${hiddenCohortsCount}</strong></div>
 
                 <div class="meta-item">Fuente<strong>Promedio por asignaturas y estado actual de estudiantes.</strong></div>
 
@@ -5020,21 +5012,21 @@ exports.generarPdfReporte = async (req, res) => {
 
           {
 
-            title: 'Análisis por Fecha de Creación',
+            title: 'Análisis por Periodo Académico',
 
-            subtitle: 'Comparación de cohortes y estudiantes rezagados como en la aplicación.',
+            subtitle: 'Comparación del rendimiento de estudiantes por periodo académico.',
 
-            body: cohortDetailsHtml || '<div class="subtopic-empty-row">Sin cohortes para mostrar</div>'
+            body: cohortDetailsHtml || '<div class="subtopic-empty-row">Sin periodos para mostrar</div>'
 
           }
 
         ],
 
-        tableTitle: 'Comparativo por Cohorte',
+        tableTitle: 'Comparativo por Periodo Académico',
 
-        tableSubtitle: 'Top 8 cohortes ordenadas por progreso promedio',
+        tableSubtitle: 'Periodos ordenados por progreso promedio',
 
-        tableHeaders: ['Fecha', 'Estudiantes', 'Promedio'],
+        tableHeaders: ['Periodo', 'Estudiantes', 'Promedio'],
 
         tableRows,
 
@@ -5046,9 +5038,9 @@ exports.generarPdfReporte = async (req, res) => {
 
             type: 'bar',
 
-            title: 'Progreso Promedio por Cohorte',
+            title: 'Progreso Promedio por Periodo Académico',
 
-            subtitle: 'Promedio simple del avance acumulado por fecha de creación.',
+            subtitle: 'Promedio simple del avance acumulado por periodo académico.',
 
             labels: cohortLabels,
 
@@ -5072,9 +5064,9 @@ exports.generarPdfReporte = async (req, res) => {
 
             type: 'doughnut',
 
-            title: 'Distribución de Estudiantes',
+            title: 'Distribución de Estudiantes por Periodo',
 
-            subtitle: 'Cantidad de estudiantes por cohorte visible.',
+            subtitle: 'Cantidad de estudiantes por periodo académico.',
 
             labels: cohortLabels,
 

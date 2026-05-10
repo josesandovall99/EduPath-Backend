@@ -49,6 +49,9 @@ async function guardarIntentoYEvaluacion({ estudiante_id, ejercicio_id, codigo, 
   try {
     if (!estudiante_id) return null;
 
+    const estudianteObj = await Estudiante.findByPk(estudiante_id, { attributes: ['id', 'periodo_academico'] });
+    const periodoAcademico = estudianteObj?.periodo_academico || '2026-A';
+
     const erroresCount = Array.isArray(resultadoEvaluacion?.resultados)
       ? resultadoEvaluacion.resultados.filter((r) => r.ejecutado && !r.paso).length
       : 0;
@@ -63,7 +66,7 @@ async function guardarIntentoYEvaluacion({ estudiante_id, ejercicio_id, codigo, 
       errores: erroresCount
     };
 
-    const existenteRespuesta = await RespuestaEstudianteEjercicio.findOne({ where: { estudiante_id, ejercicio_id } });
+    const existenteRespuesta = await RespuestaEstudianteEjercicio.findOne({ where: { estudiante_id, ejercicio_id, periodo_academico: periodoAcademico } });
     if (existenteRespuesta) {
       const nuevoContador = (existenteRespuesta.contador || 0) + 1;
       await existenteRespuesta.update({
@@ -77,7 +80,8 @@ async function guardarIntentoYEvaluacion({ estudiante_id, ejercicio_id, codigo, 
         estudiante_id,
         ejercicio_id,
         estado: estadoIntentoOverride || (resultadoEvaluacion?.aprobado ? 'APROBADO' : 'REPROBADO'),
-        contador: 1
+        contador: 1,
+        periodo_academico: periodoAcademico
       });
     }
 
@@ -87,10 +91,11 @@ async function guardarIntentoYEvaluacion({ estudiante_id, ejercicio_id, codigo, 
       retroalimentacion: resultadoEvaluacion?.resumen || '',
       estudiante_id,
       ejercicio_id,
-      estado: resultadoEvaluacion?.aprobado ? 'Aprobado' : 'Reprobado'
+      estado: resultadoEvaluacion?.aprobado ? 'Aprobado' : 'Reprobado',
+      periodo_academico: periodoAcademico
     };
 
-    const existenteEval = await Evaluacion.findOne({ where: { estudiante_id, ejercicio_id } });
+    const existenteEval = await Evaluacion.findOne({ where: { estudiante_id, ejercicio_id, periodo_academico: periodoAcademico } });
     if (existenteEval) {
       await existenteEval.update(payloadEval);
     } else {
@@ -223,17 +228,27 @@ exports.findBy = async (req, res) => {
   try {
     const { estudiante_id, ejercicio_id, miniproyecto_id } = req.query;
     const where = {};
+    let resolvedEstudianteId = null;
     if (req.tipoUsuario === 'ESTUDIANTE') {
       const authenticatedStudentId = Number(req.estudianteId);
       if (!Number.isFinite(authenticatedStudentId)) {
         return res.status(403).json({ error: 'Solo los estudiantes autenticados pueden consultar sus evaluaciones.' });
       }
       where.estudiante_id = authenticatedStudentId;
+      resolvedEstudianteId = authenticatedStudentId;
     } else if (estudiante_id) {
       where.estudiante_id = parseInt(estudiante_id, 10);
+      resolvedEstudianteId = parseInt(estudiante_id, 10);
     }
     if (ejercicio_id) where.ejercicio_id = parseInt(ejercicio_id, 10);
     if (miniproyecto_id) where.miniproyecto_id = parseInt(miniproyecto_id, 10);
+
+    if (resolvedEstudianteId) {
+      const estudianteObj = await Estudiante.findByPk(resolvedEstudianteId, { attributes: ['id', 'periodo_academico'] });
+      if (estudianteObj?.periodo_academico) {
+        where.periodo_academico = estudianteObj.periodo_academico;
+      }
+    }
 
     const data = await Evaluacion.findAll({
       where,
@@ -730,6 +745,11 @@ exports.evaluarCompilador = async (req, res) => {
 
     const codigo = normalizarCodigoJavaEstudiante(codigoOriginal, configuracion.metodo);
 
+    const estudianteObjComp2 = estudiante_id
+      ? await Estudiante.findByPk(estudiante_id, { attributes: ['id', 'periodo_academico'] })
+      : null;
+    const periodoComp2 = estudianteObjComp2?.periodo_academico || '2026-A';
+
     const registrarIntentoEjercicio = async ({ estadoIntento, meta = {} }) => {
       if (!estudiante_id) return null;
 
@@ -741,7 +761,7 @@ exports.evaluarCompilador = async (req, res) => {
       };
 
       const existenteRespuesta = await RespuestaEstudianteEjercicio.findOne({
-        where: { estudiante_id, ejercicio_id }
+        where: { estudiante_id, ejercicio_id, periodo_academico: periodoComp2 }
       });
 
       if (existenteRespuesta) {
@@ -759,7 +779,8 @@ exports.evaluarCompilador = async (req, res) => {
         estudiante_id,
         ejercicio_id,
         estado: estadoIntento,
-        contador: 1
+        contador: 1,
+        periodo_academico: periodoComp2
       });
 
       return { id: creado.id, contador: 1 };
@@ -913,13 +934,16 @@ exports.evaluarCompilador = async (req, res) => {
 
     if (resultadoEvaluacion.aprobado) {
       if (estudiante_id) {
-        const evalWhere = { estudiante_id, ejercicio_id };
+        const estudianteObjComp = await Estudiante.findByPk(estudiante_id, { attributes: ['id', 'periodo_academico'] });
+        const periodoComp = estudianteObjComp?.periodo_academico || '2026-A';
+        const evalWhere = { estudiante_id, ejercicio_id, periodo_academico: periodoComp };
         const payloadEval = {
           calificacion: ejercicio.puntos,
           retroalimentacion: resultadoEvaluacion.resumen,
           estudiante_id,
           ejercicio_id,
-          estado: 'Aprobado'
+          estado: 'Aprobado',
+          periodo_academico: periodoComp
         };
         const existenteEval = await Evaluacion.findOne({ where: evalWhere });
         if (existenteEval) {

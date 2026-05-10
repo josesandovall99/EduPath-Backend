@@ -19,9 +19,10 @@ module.exports = (sequelize, DataTypes) => {
         unique: true,
       },
 
-      semestre: {
-        type: DataTypes.INTEGER,
+      periodo_academico: {
+        type: DataTypes.STRING,
         allowNull: false,
+        defaultValue: "2026-A",
       },
 
       programa: {

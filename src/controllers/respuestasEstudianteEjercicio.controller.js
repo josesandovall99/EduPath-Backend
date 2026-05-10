@@ -16,6 +16,9 @@ const crearRespuestaEjercicio = async (req, res) => {
             return res.status(404).json({ error: "El ejercicio no existe" });
         }
 
+        const estudiante = await Estudiante.findByPk(estudiante_id);
+        const periodo_academico = estudiante?.periodo_academico || "2026-A";
+
         // Normalizar respuesta: admitir string/objeto/arreglo
         let respuestaPayload = respuesta;
         if (typeof respuesta === 'string') {
@@ -23,9 +26,9 @@ const crearRespuestaEjercicio = async (req, res) => {
         }
         // Nota: si a futuro se reciben archivos, se pueden anexar en respuestaPayload.archivos
 
-        // Registrar todos los intentos en un único registro por estudiante+ejercicio
+        // Un registro por estudiante+ejercicio+periodo; cada periodo inicia desde cero
         const existente = await RespuestaEstudianteEjercicio.findOne({
-            where: { estudiante_id, ejercicio_id }
+            where: { estudiante_id, ejercicio_id, periodo_academico }
         });
 
         if (existente) {
@@ -33,7 +36,8 @@ const crearRespuestaEjercicio = async (req, res) => {
             await existente.update({
                 respuesta: respuestaPayload,
                 estado: estado || 'ENVIADO',
-                contador: nuevoContador
+                contador: nuevoContador,
+                periodo_academico
             });
 
             return res.status(200).json({
@@ -48,7 +52,8 @@ const crearRespuestaEjercicio = async (req, res) => {
             estudiante_id,
             ejercicio_id,
             estado: estado || 'ENVIADO',
-            contador: 1
+            contador: 1,
+            periodo_academico
         });
 
         res.status(201).json({
@@ -147,14 +152,14 @@ const verificarEjercicioCompletado = async (req, res) => {
             });
         }
 
-        // Buscar evaluación aprobada para este estudiante y ejercicio
-        const evaluacion = await Evaluacion.findOne({
-            where: {
-                estudiante_id: esId,
-                ejercicio_id: eId,
-                estado: 'Aprobado'
-            }
-        });
+        // Buscar periodo del estudiante
+        const estudianteObj = await Estudiante.findByPk(esId, { attributes: ['id', 'periodo_academico'] });
+        const periodoAcademico = estudianteObj?.periodo_academico || null;
+
+        // Buscar evaluación aprobada para este estudiante y ejercicio en el período actual
+        const evalWhere = { estudiante_id: esId, ejercicio_id: eId, estado: 'Aprobado' };
+        if (periodoAcademico) evalWhere.periodo_academico = periodoAcademico;
+        const evaluacion = await Evaluacion.findOne({ where: evalWhere });
 
         if (evaluacion) {
             return res.json({

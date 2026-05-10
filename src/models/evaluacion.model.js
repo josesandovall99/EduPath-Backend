@@ -30,8 +30,13 @@ module.exports = (sequelize, DataTypes) => {
       allowNull: false
     },
     fecha_evaluacion: {
-      type: DataTypes.DATE, // En Sequelize, DATE maneja TIMESTAMP
+      type: DataTypes.DATE,
       defaultValue: DataTypes.NOW
+    },
+    periodo_academico: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: '2026-A'
     }
   }, {
     tableName: 'evaluacion',
@@ -39,13 +44,13 @@ module.exports = (sequelize, DataTypes) => {
     indexes: [
       {
         unique: true,
-        fields: ['estudiante_id', 'ejercicio_id'],
-        name: 'ux_eval_estudiante_ejercicio'
+        fields: ['estudiante_id', 'ejercicio_id', 'periodo_academico'],
+        name: 'ux_eval_estudiante_ejercicio_periodo'
       },
       {
         unique: true,
-        fields: ['estudiante_id', 'miniproyecto_id'],
-        name: 'ux_eval_estudiante_miniproyecto'
+        fields: ['estudiante_id', 'miniproyecto_id', 'periodo_academico'],
+        name: 'ux_eval_estudiante_miniproyecto_periodo'
       }
     ]
   });

@@ -674,66 +674,23 @@ exports.getContenidosPorasignaturaNombre = async (req, res) => {
   }
 };
 
-// Obtener contenidos adaptados al perfil del estudiante según su semestre
+// Obtener contenidos adaptados al perfil del estudiante (todos ven todas las asignaturas)
 exports.adaptarContenidoPorPerfil = async (req, res) => {
   try {
     const { estudianteId } = req.params;
 
-    // Buscar al estudiante
     const estudiante = await Estudiante.findByPk(estudianteId);
     if (!estudiante) {
       return res.status(404).json({ message: "Estudiante no encontrado" });
     }
 
-    const semestre = estudiante.semestre;
-
-    // Determinar asignaturas base permitidas según el semestre.
-    // Cualquier asignatura nueva activa queda disponible para todos los estudiantes.
-    let nombresasignaturasBase = [];
-
-    if (semestre >= 1 && semestre <= 4) {
-      nombresasignaturasBase = ["Fundamentos de programación"];
-    } else if (semestre >= 5 && semestre <= 6) {
-      nombresasignaturasBase = ["Fundamentos de programación", "Análisis de sistemas"];
-    } else if (semestre >= 7 && semestre <= 10) {
-      nombresasignaturasBase = ["Fundamentos de programación", "Análisis de sistemas", "ATC"];
-    } else {
-      return res.status(400).json({ message: "Semestre fuera de rango válido (1-10)" });
-    }
-
-    const asignaturasActivas = await AsignaturaModel.findAll({
+    const asignaturas = await AsignaturaModel.findAll({
       where: { estado: true }
-    });
-
-    const nombresasignaturasBaseNormalizados = new Set(
-      nombresasignaturasBase.map((nombre) => nombre.trim().toLowerCase())
-    );
-
-    const asignaturasBaseRestringidas = new Set([
-      "fundamentos de programación",
-      "análisis de sistemas",
-      "atc"
-    ].map((nombre) => nombre.trim().toLowerCase()));
-
-    const asignaturas = asignaturasActivas.filter((asignatura) => {
-      const nombreAsignatura = String(asignatura.nombre || '').trim();
-      const nombreNormalizado = nombreAsignatura.toLowerCase();
-
-      if (!nombreAsignatura) {
-        return false;
-      }
-
-      if (!asignaturasBaseRestringidas.has(nombreNormalizado)) {
-        return true;
-      }
-
-      return nombresasignaturasBaseNormalizados.has(nombreNormalizado);
     });
 
     const asignaturaIds = asignaturas.map((asignatura) => asignatura.id);
     const nombresasignaturas = asignaturas.map((asignatura) => asignatura.nombre);
 
-    // Buscar los temas de esas asignaturas
     const temas = await Tema.findAll({
       where: { asignatura_id: asignaturaIds, estado: true }
     });
@@ -750,7 +707,7 @@ exports.adaptarContenidoPorPerfil = async (req, res) => {
 
     res.json({
       estudianteId,
-      semestre,
+      periodo_academico: estudiante.periodo_academico,
       asignaturas: nombresasignaturas,
       totalContenidos: contenidos.length,
       contenidos

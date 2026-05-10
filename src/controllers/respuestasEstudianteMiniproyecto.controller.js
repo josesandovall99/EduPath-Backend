@@ -917,22 +917,24 @@ const evaluateResponse = (studentResponseValue = '', expectedResponseValue = '')
   };
 };
 
-const upsertEvaluacionMiniproyecto = async ({ estudianteId, miniproyectoId, evaluacion, estadoSolicitud }) => {
+const upsertEvaluacionMiniproyecto = async ({ estudianteId, miniproyectoId, evaluacion, estadoSolicitud, periodoAcademico }) => {
   if (!evaluacion || !estudianteId || !miniproyectoId) return;
   if (estadoSolicitud !== 'COMPLETADO') return;
 
+  const periodo = periodoAcademico || '2026-A';
   const calificacion = Number.isFinite(evaluacion.puntaje) ? evaluacion.puntaje : 0;
   const estadoEvaluacion = calificacion >= 70 ? 'APROBADO' : 'REPROBADO';
 
   const existing = await Evaluacion.findOne({
-    where: { estudiante_id: estudianteId, miniproyecto_id: miniproyectoId }
+    where: { estudiante_id: estudianteId, miniproyecto_id: miniproyectoId, periodo_academico: periodo }
   });
 
   if (existing) {
     await existing.update({
       calificacion,
       estado: estadoEvaluacion,
-      fecha_evaluacion: new Date()
+      fecha_evaluacion: new Date(),
+      periodo_academico: periodo
     });
     return;
   }
@@ -941,7 +943,8 @@ const upsertEvaluacionMiniproyecto = async ({ estudianteId, miniproyectoId, eval
     calificacion,
     estado: estadoEvaluacion,
     estudiante_id: estudianteId,
-    miniproyecto_id: miniproyectoId
+    miniproyecto_id: miniproyectoId,
+    periodo_academico: periodo
   });
 };
 
@@ -977,21 +980,25 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       });
     }
 
-    const evalExistente = await Evaluacion.findOne({
-      where: { estudiante_id, miniproyecto_id, estado: 'APROBADO' }
+    const periodoActual = estudiante.periodo_academico || "2026-A";
+
+    // Verificar aprobación solo en el periodo actual (Evaluacion no tiene periodo_academico,
+    // por eso filtramos por la respuesta del periodo actual que sí lo tiene)
+    const respuestaPeriodoActual = await RespuestaEstudianteMiniproyecto.findOne({
+      where: { estudiante_id, miniproyecto_id, periodo_academico: periodoActual }
     });
-    if (evalExistente) {
-      return res.status(409).json({
-        mensaje: 'Miniproyecto ya aprobado para el estudiante'
+    if (respuestaPeriodoActual) {
+      const evalExistente = await Evaluacion.findOne({
+        where: { estudiante_id, miniproyecto_id, estado: 'APROBADO', periodo_academico: periodoActual }
       });
+      if (evalExistente && respuestaPeriodoActual.estado === 'COMPLETADO') {
+        return res.status(409).json({
+          mensaje: 'Miniproyecto ya aprobado para el estudiante en este periodo'
+        });
+      }
     }
 
-    const respuestaExistente = await RespuestaEstudianteMiniproyecto.findOne({
-      where: {
-        estudiante_id,
-        miniproyecto_id,
-      }
-    });
+    const respuestaExistente = respuestaPeriodoActual || null;
 
     let studentResponseText = '';
     let studentResponseValue = '';
@@ -1026,7 +1033,8 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       estudianteId: estudiante_id,
       miniproyectoId: miniproyecto_id,
       evaluacion,
-      estadoSolicitud: estado
+      estadoSolicitud: estado,
+      periodoAcademico: estudiante.periodo_academico
     });
     const respuestaPayload = JSON.stringify({
       respuestaEstudiante: studentResponseValue,
@@ -1041,7 +1049,8 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       await respuestaExistente.update({
         respuesta: respuestaPayload,
         estado,
-        contador: contadorActual + 1
+        contador: contadorActual + 1,
+        periodo_academico: estudiante.periodo_academico || "2026-A"
       });
       return res.status(200).json(respuestaExistente);
     }
@@ -1052,6 +1061,7 @@ const crearRespuestaMiniproyecto = async (req, res) => {
       miniproyecto_id,
       estado,
       contador: 1,
+      periodo_academico: estudiante.periodo_academico || "2026-A",
     });
 
     res.status(201).json(nuevaRespuesta);
@@ -1210,7 +1220,8 @@ const actualizarRespuestaMiniproyecto = async (req, res) => {
         estudianteId: targetEstudianteId,
         miniproyectoId: targetMiniproyectoId,
         evaluacion,
-        estadoSolicitud
+        estadoSolicitud,
+        periodoAcademico: estudiante.periodo_academico
       });
       respuestaPayload = JSON.stringify({
         respuestaEstudiante: studentResponseValue,
