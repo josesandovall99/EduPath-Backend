@@ -1,5 +1,5 @@
 // Servicio de validación de Diagramas UML
-// Entrada esperada: { cells: [...] } con elementos tipo 'standard.Rectangle' (clases) y 'standard.Link' (relaciones)
+// Entrada esperada: { cells: [...] } con elementos clase ('standard.Rectangle' | 'standard.UmlClass') y 'standard.Link' (relaciones)
 
 function validate(diagram, options = {}) {
   const opts = {
@@ -21,7 +21,7 @@ function validate(diagram, options = {}) {
     const errors = [];
     const warnings = [];
 
-    const classes = diagram.cells?.filter(cell => cell.type === 'standard.Rectangle') || [];
+    const classes = diagram.cells?.filter(cell => cell.type === 'standard.Rectangle' || cell.type === 'standard.UmlClass') || [];
     const links = diagram.cells?.filter(cell => cell.type === 'standard.Link') || [];
 
     // Reglas básicas
