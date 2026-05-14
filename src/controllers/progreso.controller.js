@@ -6655,9 +6655,13 @@ exports.obtenerRankingVisualizaciones = async (req, res) => {
 
   try {
 
-    const { asignatura_id, limit = 10 } = req.query;
+    const { asignatura_id, limit = 5, order = 'desc' } = req.query;
 
-    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 10, 1), 100);
+    const limitNum = Math.min(Math.max(parseInt(limit, 10) || 5, 1), 100);
+    // order=asc → menos vistos (solo ítems con al menos 1 vista real)
+    const orderDir = order === 'asc' ? 'ASC' : 'DESC';
+    // Para "menos vistos" filtramos solo ítems con vistas > 0
+    const havingClause = order === 'asc' ? 'HAVING COUNT(DISTINCT p.estudiante_id) > 0' : '';
 
     const sequelize = Progreso.sequelize;
 
@@ -6681,15 +6685,16 @@ exports.obtenerRankingVisualizaciones = async (req, res) => {
 
     }
 
+    /* Lógica igual a progresoCuentaContenidoVisto:
+       cuenta una vista si completado=true O estado='Visualizado' (case-insensitive) */
     const base = `
       FROM progreso p
       INNER JOIN contenidos  c ON p.contenido_id  = c.id
       INNER JOIN subtemas    s ON c.subtema_id    = s.id
       INNER JOIN temas       t ON c.tema_id       = t.id
       INNER JOIN asignaturas a ON t.asignatura_id = a.id
-      WHERE p.estado = 'Visualizado'
-        AND p.completado = true
-        AND p.contenido_id IS NOT NULL
+      WHERE p.contenido_id IS NOT NULL
+        AND (p.completado = true OR LOWER(TRIM(p.estado)) = 'visualizado')
         ${filtro}
     `;
 
@@ -6701,7 +6706,8 @@ exports.obtenerRankingVisualizaciones = async (req, res) => {
                 COUNT(DISTINCT p.estudiante_id)::int AS vistas
          ${base}
          GROUP BY c.id, c.titulo, c.tipo, a.nombre, t.nombre, s.nombre
-         ORDER BY vistas DESC LIMIT :limit`,
+         ${havingClause}
+         ORDER BY vistas ${orderDir} LIMIT :limit`,
         { replacements, type: sequelize.QueryTypes.SELECT }
       ),
 
@@ -6711,7 +6717,8 @@ exports.obtenerRankingVisualizaciones = async (req, res) => {
                 COUNT(DISTINCT p.estudiante_id)::int AS vistas
          ${base}
          GROUP BY s.id, s.nombre, t.nombre, a.nombre
-         ORDER BY vistas DESC LIMIT :limit`,
+         ${havingClause}
+         ORDER BY vistas ${orderDir} LIMIT :limit`,
         { replacements, type: sequelize.QueryTypes.SELECT }
       ),
 
@@ -6721,7 +6728,8 @@ exports.obtenerRankingVisualizaciones = async (req, res) => {
                 COUNT(DISTINCT p.estudiante_id)::int AS vistas
          ${base}
          GROUP BY t.id, t.nombre, a.nombre
-         ORDER BY vistas DESC LIMIT :limit`,
+         ${havingClause}
+         ORDER BY vistas ${orderDir} LIMIT :limit`,
         { replacements, type: sequelize.QueryTypes.SELECT }
       ),
 
@@ -6730,7 +6738,8 @@ exports.obtenerRankingVisualizaciones = async (req, res) => {
                 COUNT(DISTINCT p.estudiante_id)::int AS vistas
          ${base}
          GROUP BY a.id, a.nombre
-         ORDER BY vistas DESC LIMIT :limit`,
+         ${havingClause}
+         ORDER BY vistas ${orderDir} LIMIT :limit`,
         { replacements, type: sequelize.QueryTypes.SELECT }
       )
 
