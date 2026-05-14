@@ -2873,11 +2873,15 @@ const getResumenGeneralData = async ({ dateFrom, dateTo, asignaturaIds } = {}) =
 
 
 
+  // Mapa periodo actual por estudiante (para filtrar progreso solo del periodo vigente)
+  const studentPeriodoMap = {};
+  estudiantes.forEach(est => { studentPeriodoMap[String(est.id)] = est.periodo_academico || null; });
+
   const progresoRows = activeContentIds.size
 
     ? await Progreso.findAll({
 
-        attributes: ['estudiante_id', 'contenido_id'],
+        attributes: ['estudiante_id', 'contenido_id', 'periodo_academico'],
 
         where: {
 
@@ -2906,6 +2910,10 @@ const getResumenGeneralData = async ({ dateFrom, dateTo, asignaturaIds } = {}) =
   progresoRows.forEach((row) => {
 
     const studentId = String(row.estudiante_id);
+
+    // Solo contar registros del periodo actual del estudiante
+    const periodoEstudiante = studentPeriodoMap[studentId];
+    if (periodoEstudiante && row.periodo_academico !== periodoEstudiante) return;
 
     const contentId = String(row.contenido_id);
 
@@ -2961,7 +2969,7 @@ const getResumenGeneralData = async ({ dateFrom, dateTo, asignaturaIds } = {}) =
 
   const respuestasEjercicio = await RespuestaEstudianteEjercicio.findAll({
 
-    attributes: ['estudiante_id', 'ejercicio_id'],
+    attributes: ['estudiante_id', 'ejercicio_id', 'periodo_academico'],
 
     where: { estado: { [Op.in]: ['ENVIADO', 'APROBADO'] } }
 
@@ -2973,11 +2981,16 @@ const getResumenGeneralData = async ({ dateFrom, dateTo, asignaturaIds } = {}) =
 
   respuestasEjercicio.forEach((respuesta) => {
 
+    const studentId = String(respuesta.estudiante_id);
+
+    const periodoEstudiante = studentPeriodoMap[studentId];
+    if (periodoEstudiante && respuesta.periodo_academico !== periodoEstudiante) return;
+
     const asignaturaId = exerciseToAsignatura.get(String(respuesta.ejercicio_id));
 
     if (!asignaturaId) return;
 
-    incrementNestedCount(completedExercisesByAsignatura, respuesta.estudiante_id, asignaturaId, 1);
+    incrementNestedCount(completedExercisesByAsignatura, studentId, asignaturaId, 1);
 
   });
 
@@ -3001,7 +3014,7 @@ const getResumenGeneralData = async ({ dateFrom, dateTo, asignaturaIds } = {}) =
 
   const respuestasMiniproyecto = await RespuestaEstudianteMiniproyecto.findAll({
 
-    attributes: ['estudiante_id', 'miniproyecto_id'],
+    attributes: ['estudiante_id', 'miniproyecto_id', 'periodo_academico'],
 
     where: { estado: { [Op.in]: ['ENVIADO', 'COMPLETADO'] } }
 
@@ -3013,11 +3026,16 @@ const getResumenGeneralData = async ({ dateFrom, dateTo, asignaturaIds } = {}) =
 
   respuestasMiniproyecto.forEach((respuesta) => {
 
+    const studentId = String(respuesta.estudiante_id);
+
+    const periodoEstudiante = studentPeriodoMap[studentId];
+    if (periodoEstudiante && respuesta.periodo_academico !== periodoEstudiante) return;
+
     const asignaturaId = miniproyectoToAsignatura.get(String(respuesta.miniproyecto_id));
 
     if (!asignaturaId) return;
 
-    incrementNestedCount(completedMinisByAsignatura, respuesta.estudiante_id, asignaturaId, 1);
+    incrementNestedCount(completedMinisByAsignatura, studentId, asignaturaId, 1);
 
   });
 
@@ -3901,7 +3919,7 @@ exports.delete = async (req, res) => {
 
 exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
   try {
-    const { asignatura_id, estudiante_id } = req.query;
+    const { asignatura_id, estudiante_id, periodo } = req.query;
 
     if (!asignatura_id || !estudiante_id) {
       return res.status(400).json({ message: 'asignatura_id y estudiante_id son requeridos como parámetros de query' });
@@ -3914,17 +3932,20 @@ exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
       return res.status(400).json({ message: 'asignatura_id y estudiante_id deben ser números válidos' });
     }
 
+    // Si se pasa ?periodo=2026-A filtra evaluaciones y contenidos de ese periodo específico (para el informe de cohortes)
+    const periodoWhere = periodo ? { periodo_academico: periodo } : {};
+
     // Ronda 1 — validación + conteos + temas, todo en paralelo (solo necesitan aId/esId)
     const [Asignatura, estudiante, totalMiniproyectos, miniproyectosAprobados, miniproyectosDesaprobados, temas] = await Promise.all([
       AsignaturaModel.findOne({ where: { id: aId, estado: true } }),
       Estudiante.findByPk(esId, { attributes: ['id', 'periodo_academico'] }),
       Miniproyecto.count({ where: { asignatura_id: aId } }),
       Evaluacion.count({
-        where: { estudiante_id: esId, estado: 'APROBADO', miniproyecto_id: { [Op.ne]: null } },
+        where: { estudiante_id: esId, estado: 'APROBADO', miniproyecto_id: { [Op.ne]: null }, ...periodoWhere },
         include: [{ model: Miniproyecto, where: { asignatura_id: aId }, required: true }],
       }),
       Evaluacion.count({
-        where: { estudiante_id: esId, estado: 'REPROBADO', miniproyecto_id: { [Op.ne]: null } },
+        where: { estudiante_id: esId, estado: 'REPROBADO', miniproyecto_id: { [Op.ne]: null }, ...periodoWhere },
         include: [{ model: Miniproyecto, where: { asignatura_id: aId }, required: true }],
       }),
       Tema.findAll({
@@ -3980,11 +4001,12 @@ exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
     const contenidoIdsParaEj = contenidosParaEj.map(c => c.id);
 
     // Ronda 5 — progreso, ejercicios y respuestas en paralelo
+    // Siempre traemos periodo_academico para poder calcular periodos_activos y filtrar en JS
     const [progresoRows, ejercicios] = await Promise.all([
       contenidoIds.length > 0
         ? Progreso.findAll({
             where: { estudiante_id: esId, contenido_id: { [Op.in]: contenidoIds }, completado: true, estado: 'Visualizado' },
-            attributes: ['contenido_id'],
+            attributes: ['contenido_id', 'periodo_academico'],
           })
         : Promise.resolve([]),
       contenidoIdsParaEj.length > 0
@@ -3992,14 +4014,24 @@ exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
         : Promise.resolve([]),
     ]);
 
-    const visualizadosSet = new Set(progresoRows.map(r => Number(r.contenido_id)));
+    // Periodos distintos en los que el estudiante tuvo actividad de contenidos en esta asignatura
+    const periodosActivos = [...new Set(progresoRows.map(r => r.periodo_academico).filter(Boolean))];
+
+    // Si se solicitó un periodo específico, filtrar contenidos de ese periodo; si no, usar todos
+    const progresoFiltrados = periodo
+      ? progresoRows.filter(r => r.periodo_academico === periodo)
+      : progresoRows;
+
+    // Usamos Set.size para contar contenidos ÚNICOS visualizados (evita doble conteo si hay
+    // registros de múltiples periodos para el mismo contenido cuando no se filtra por periodo)
+    const visualizadosSet = new Set(progresoFiltrados.map(r => Number(r.contenido_id)));
     const ejercicioIds = ejercicios.map(e => e.id);
     const totalEjercicios = ejercicioIds.length;
-    const contenidosVisualizados = progresoRows.length;
+    const contenidosVisualizados = visualizadosSet.size;
     const totalContenidos = contenidoIds.length;
 
-    // Ronda 6 — respuestas de ejercicios (solo si hay ejercicios, filtradas por periodo actual)
-    const periodoEstudiante = estudiante.periodo_academico;
+    // Ronda 6 — respuestas de ejercicios (filtradas por el periodo solicitado o el periodo actual del estudiante)
+    const periodoEstudiante = periodo || estudiante.periodo_academico;
     const respuestasRows = ejercicioIds.length > 0
       ? await RespuestaEstudianteEjercicio.findAll({
           where: { estudiante_id: esId, ejercicio_id: { [Op.in]: ejercicioIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] }, ...(periodoEstudiante ? { periodo_academico: periodoEstudiante } : {}) },
@@ -4069,11 +4101,40 @@ exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
         porcentajeTotalAsignatura: porcentajeProgreso,
         estado: porcentajeProgreso === 100 ? 'Completado' : porcentajeProgreso >= 50 ? 'En progreso' : 'Iniciado',
       },
+      // Lista de periodos académicos en los que el estudiante tiene actividad de contenidos en esta asignatura
+      // Útil para el informe de cohortes: permite saber si el estudiante debe aparecer en más de un cohorte
+      periodos_activos: periodosActivos,
     });
 
   } catch (error) {
     console.error('Error en obtenerProgresoEstudiantePorAsignatura:', error);
     res.status(500).json({ message: 'Error al obtener progreso del estudiante por asignatura', error: error.message || error });
+  }
+};
+
+
+// Devuelve { [estudiante_id]: string[] } con los periodos distintos en que cada estudiante
+// tiene registros de progreso completados. Una sola query SQL para todos los estudiantes.
+exports.obtenerPeriodosPorEstudiante = async (req, res) => {
+  try {
+    const rows = await Progreso.findAll({
+      where: { completado: true, estado: 'Visualizado' },
+      attributes: ['estudiante_id', 'periodo_academico'],
+    });
+
+    const result = {};
+    for (const row of rows) {
+      const esId = String(row.estudiante_id);
+      const periodo = row.periodo_academico;
+      if (!periodo) continue;
+      if (!result[esId]) result[esId] = [];
+      if (!result[esId].includes(periodo)) result[esId].push(periodo);
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('Error en obtenerPeriodosPorEstudiante:', error);
+    res.status(500).json({ message: 'Error al obtener periodos por estudiante', error: error.message });
   }
 };
 

@@ -7,6 +7,7 @@ const requiereAdminODocente = require('../middlewares/requiereAdminODocente');
 router.post('/', autenticacionUsuario, controller.create);
 router.get('/calificacion-estimada', autenticacionUsuario, controller.getCalificacionEstimada);
 router.get('/resumen-general', autenticacionUsuario, requiereAdminODocente, controller.obtenerResumenGeneralEstudiantes);
+router.get('/periodos-por-estudiante', autenticacionUsuario, requiereAdminODocente, controller.obtenerPeriodosPorEstudiante);
 router.get('/contenidos-mas-vistos', autenticacionUsuario, requiereAdminODocente, controller.obtenerContenidosMasVistosPorArea);
 router.get('/ranking-visualizaciones', autenticacionUsuario, requiereAdminODocente, controller.obtenerRankingVisualizaciones);
 router.get('/reporte-fallos', autenticacionUsuario, requiereAdminODocente, controller.obtenerReporteFallos);

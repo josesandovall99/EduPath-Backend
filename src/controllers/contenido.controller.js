@@ -759,14 +759,19 @@ exports.marcarContenidoVisualizado = async (req, res) => {
     await contenido.update({ visualizado: true });
 
     // Buscar o crear el registro de progreso para este estudiante y contenido
+    // Se incluye periodo_academico en el where para que cada periodo genere un registro propio
+    // (el historial de periodos anteriores se conserva y la vista del estudiante lo sigue mostrando como visto)
+    const periodoActual = estudiante.periodo_academico || '2026-A';
     const [progreso, created] = await Progreso.findOrCreate({
       where: {
         estudiante_id: estudiante_id,
-        contenido_id: contenido_id
+        contenido_id: contenido_id,
+        periodo_academico: periodoActual
       },
       defaults: {
         estudiante_id: estudiante_id,
         contenido_id: contenido_id,
+        periodo_academico: periodoActual,
         completado: true,
         estado: 'Visualizado',
         fecha_inicio: new Date(),

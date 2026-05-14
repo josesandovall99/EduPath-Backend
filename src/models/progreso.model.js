@@ -12,7 +12,12 @@ module.exports = (sequelize, DataTypes) => {
     completado: DataTypes.BOOLEAN,
     estado: DataTypes.TEXT,
     fecha_inicio: DataTypes.DATE,
-    fecha_fin: DataTypes.DATE
+    fecha_fin: DataTypes.DATE,
+    periodo_academico: {
+      type: DataTypes.STRING,
+      allowNull: true,
+      defaultValue: '2026-A'
+    }
   }, {
     tableName: 'progreso',
     timestamps: false,
