@@ -70,6 +70,13 @@ function normalizeType(rawType) {
   return VALID_TYPES.has(normalized) ? normalized : null;
 }
 
+/** IDs opcionales desde query/body: evita Number(null)===0 que rompe la resolución sin asignatura (p. ej. estudiante). */
+function parseOptionalPositiveId(value) {
+  if (value === undefined || value === null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 function isRoleScopedGeneralType(type) {
   return ROLE_SCOPED_GENERAL_TYPES.has(type);
 }
@@ -129,7 +136,7 @@ function attachmentContentDisposition(filename) {
 }
 
 async function ensureSingleActiveGlobalGeneralChatbot({ type, asignaturaId, estado, currentChatbotId = null }) {
-  if (type !== 'GENERAL' || Number.isFinite(Number(asignaturaId)) || estado === false) {
+  if (type !== 'GENERAL' || parseOptionalPositiveId(asignaturaId) !== null || estado === false) {
     return null;
   }
 
@@ -248,17 +255,17 @@ async function findManagedChatbot(req, chatbotId) {
 
 async function findResolvedActiveChatbot({ tipo = 'GENERAL', asignaturaId = null, miniproyectoId = null, allowFallback = true }) {
   const normalizedType = normalizeType(tipo) || 'GENERAL';
-  const parsedasignaturaId = Number.isFinite(Number(asignaturaId)) ? Number(asignaturaId) : null;
-  const parsedMiniproyectoId = Number.isFinite(Number(miniproyectoId)) ? Number(miniproyectoId) : null;
+  const parsedasignaturaId = parseOptionalPositiveId(asignaturaId);
+  const parsedMiniproyectoId = parseOptionalPositiveId(miniproyectoId);
   const include = chatbotResolveIncludes();
 
-  if (normalizedType === 'MINIPROYECTO' && Number.isFinite(parsedMiniproyectoId)) {
+  if (normalizedType === 'MINIPROYECTO' && parsedMiniproyectoId !== null) {
     const miniproyectoChatbot = await Chatbot.findOne({
       where: {
         estado: true,
         tipo: 'MINIPROYECTO',
         miniproyecto_id: parsedMiniproyectoId,
-        ...(Number.isFinite(parsedasignaturaId) ? { asignatura_id: parsedasignaturaId } : {}),
+        ...(parsedasignaturaId !== null ? { asignatura_id: parsedasignaturaId } : {}),
       },
       include,
       order: [['updatedAt', 'DESC'], ['id', 'DESC']],
@@ -293,7 +300,7 @@ async function findResolvedActiveChatbot({ tipo = 'GENERAL', asignaturaId = null
     }
   }
 
-  if (Number.isFinite(parsedasignaturaId)) {
+  if (parsedasignaturaId !== null) {
     const AsignaturaGeneralChatbot = await Chatbot.findOne({
       where: {
         estado: true,
@@ -331,11 +338,11 @@ exports.resolveActiveChatbot = async (req, res) => {
       return res.status(400).json({ mensaje: 'tipo debe ser GENERAL, GENERAL_ADMINISTRADOR, GENERAL_DOCENTE o MINIPROYECTO' });
     }
 
-    const asignaturaId = req.query.asignatura_id !== undefined ? Number(req.query.asignatura_id) : null;
-    const miniproyectoId = req.query.miniproyecto_id !== undefined ? Number(req.query.miniproyecto_id) : null;
+    const asignaturaId = parseOptionalPositiveId(req.query.asignatura_id);
+    const miniproyectoId = parseOptionalPositiveId(req.query.miniproyecto_id);
     const allowFallback = String(req.query.allow_fallback ?? 'true').toLowerCase() !== 'false';
 
-    if (tipo === 'MINIPROYECTO' && !Number.isFinite(miniproyectoId)) {
+    if (tipo === 'MINIPROYECTO' && miniproyectoId === null) {
       return res.status(400).json({ mensaje: 'miniproyecto_id es obligatorio para resolver un chatbot de miniproyecto' });
     }
 
