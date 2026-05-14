@@ -27,6 +27,7 @@ router.get('/:id', autenticacionUsuario, requiereAdminODocente, chatbotControlle
 router.put('/:id', autenticacionUsuario, requiereAdminODocente, chatbotController.updateChatbot);
 router.delete('/:id', autenticacionUsuario, requiereAdminODocente, chatbotController.deleteChatbot);
 
+router.get('/:id/documents/:documentId/download', autenticacionUsuario, requiereAdminODocente, chatbotController.downloadChatbotDocument);
 router.get('/:id/documents', autenticacionUsuario, requiereAdminODocente, chatbotController.getChatbotDocuments);
 router.post('/:id/documents', autenticacionUsuario, requiereAdminODocente, upload.single('pdf'), chatbotController.uploadChatbotDocument);
 router.delete('/:id/documents/:documentId', autenticacionUsuario, requiereAdminODocente, chatbotController.deleteChatbotDocument);

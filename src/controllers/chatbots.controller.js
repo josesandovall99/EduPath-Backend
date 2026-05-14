@@ -1,5 +1,7 @@
 const sequelize = require('../config/database');
 const { Op } = require('sequelize');
+const fsPromises = require('fs').promises;
+const path = require('path');
 const { Chatbot, ChatbotDocumento, Asignatura: AsignaturaModel, Miniproyecto } = require('../models');
 
 /** Includes vía association evitan referencias a Model undefined (p. ej. require circular). */
@@ -97,12 +99,33 @@ function mapChatbotPayload(body) {
   };
 }
 
+function stripDocumentoPdfField(doc) {
+  if (!doc) return doc;
+  const plain = typeof doc.toJSON === 'function' ? doc.toJSON() : { ...doc };
+  delete plain.contenido_pdf;
+  return plain;
+}
+
 function serializeChatbot(chatbot) {
   const plain = typeof chatbot.toJSON === 'function' ? chatbot.toJSON() : chatbot;
   if (plain.creador) {
     plain.creador = removePersonaSensitiveFields(plain.creador);
   }
+  if (Array.isArray(plain.documentos)) {
+    plain.documentos = plain.documentos.map(stripDocumentoPdfField);
+  }
   return plain;
+}
+
+function sanitizeDownloadFilename(name) {
+  const base = String(name || 'documento.pdf').trim() || 'documento.pdf';
+  return base.replace(/[^\w.\-()\s\u00C0-\u024F]/g, '_').slice(0, 200);
+}
+
+function attachmentContentDisposition(filename) {
+  const safe = sanitizeDownloadFilename(filename);
+  const ascii = safe.replace(/[^\x20-\x7E]/g, '_');
+  return `attachment; filename="${ascii.replace(/"/g, '')}"; filename*=UTF-8''${encodeURIComponent(safe)}`;
 }
 
 async function ensureSingleActiveGlobalGeneralChatbot({ type, asignaturaId, estado, currentChatbotId = null }) {
@@ -541,9 +564,56 @@ exports.getChatbotDocuments = async (req, res) => {
     if (error) {
       return res.status(error.status).json(error.payload);
     }
-    return res.json(chatbot.documentos || []);
+    const safeDocs = (chatbot.documentos || []).map(stripDocumentoPdfField);
+    return res.json(safeDocs);
   } catch (error) {
     return res.status(500).json({ mensaje: 'Error al obtener documentos', error: error.message });
+  }
+};
+
+exports.downloadChatbotDocument = async (req, res) => {
+  try {
+    const { chatbot, error } = await findManagedChatbot(req, req.params.id);
+    if (error) {
+      return res.status(error.status).json(error.payload);
+    }
+    const documentId = Number(req.params.documentId);
+    if (!Number.isFinite(documentId)) {
+      return res.status(400).json({ mensaje: 'Identificador de documento inválido' });
+    }
+
+    const documento = await ChatbotDocumento.findOne({
+      where: { id: documentId, chatbot_id: chatbot.id },
+    });
+    if (!documento) {
+      return res.status(404).json({ mensaje: 'Documento no encontrado' });
+    }
+
+    const plain = typeof documento.toJSON === 'function' ? documento.toJSON() : documento;
+    const filename = sanitizeDownloadFilename(plain.nombre_original || plain.nombre_archivo || 'documento.pdf');
+
+    if (plain.contenido_pdf && Buffer.byteLength(Buffer.from(plain.contenido_pdf)) > 0) {
+      const buf = Buffer.isBuffer(plain.contenido_pdf) ? plain.contenido_pdf : Buffer.from(plain.contenido_pdf);
+      res.setHeader('Content-Type', plain.mime_type || 'application/pdf');
+      res.setHeader('Content-Length', buf.length);
+      res.setHeader('Content-Disposition', attachmentContentDisposition(filename));
+      return res.send(buf);
+    }
+
+    if (plain.ruta_archivo) {
+      const abs = path.isAbsolute(plain.ruta_archivo)
+        ? plain.ruta_archivo
+        : path.join(__dirname, '../..', plain.ruta_archivo);
+      const data = await fsPromises.readFile(abs);
+      res.setHeader('Content-Type', plain.mime_type || 'application/pdf');
+      res.setHeader('Content-Length', data.length);
+      res.setHeader('Content-Disposition', attachmentContentDisposition(filename));
+      return res.send(data);
+    }
+
+    return res.status(404).json({ mensaje: 'El documento no tiene archivo disponible para descarga' });
+  } catch (err) {
+    return res.status(500).json({ mensaje: 'Error al descargar documento', error: err.message });
   }
 };
 
