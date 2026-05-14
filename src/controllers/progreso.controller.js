@@ -424,6 +424,21 @@ const computeFallos = (contador, aprobado) => {
 
 
 
+const abbreviateSubject = (name) => {
+  if (!name || name.length <= 14) return name;
+  const stops = new Set(['de','del','y','e','en','a','la','el','los','las','por','al','con','que','un','una']);
+  const words = String(name).split(/[\s\-]+/).filter(w => w.length > 1 && !stops.has(w.toLowerCase()));
+  if (words.length === 0) return name.substring(0, 12);
+  if (words.length === 1) return words[0].substring(0, 12);
+  if (words.length === 2) return (words[0][0] + '.' + words[1]).substring(0, 14);
+  const initials = words.slice(0, -1).map(w => w[0].toUpperCase()).join('');
+  const last = words[words.length - 1];
+  const short = initials.length <= 4
+    ? initials + '. ' + last.substring(0, 10)
+    : words.slice(0, 3).map(w => w[0].toUpperCase()).join('') + '. ' + last.substring(0, 8);
+  return short.substring(0, 16);
+};
+
 const buildReportHtml = ({ type, data }) => {
 
   const headerTitle = type === 'student'
@@ -436,7 +451,7 @@ const buildReportHtml = ({ type, data }) => {
 
       : type === 'activity'
 
-        ? 'Desempeño por Actividad'
+        ? 'Desempeño por Asignatura'
 
         : type === 'content-views'
 
@@ -480,27 +495,23 @@ const buildReportHtml = ({ type, data }) => {
 
 
 
-  const sections = (data.sections || []).map((section) => `
-
+  const renderSection = (section) => `
     <div class="section">
-
       <div class="section-header">
-
         <div>
-
           <div class="section-title">${escapeHtml(section.title)}</div>
-
           ${section.subtitle ? `<div class="section-sub">${escapeHtml(section.subtitle)}</div>` : ''}
-
         </div>
-
       </div>
-
       <div class="section-body">${section.body || ''}</div>
-
     </div>
+  `;
 
-  `).join('');
+  const sectionsList = data.sections || [];
+  const firstSectionHtml  = sectionsList.slice(0, 1).map(renderSection).join('');
+  const restSectionsHtml  = sectionsList.slice(1).map(renderSection).join('');
+  // Keep backward-compat alias
+  const sections = sectionsList.map(renderSection).join('');
 
 
 
@@ -568,25 +579,33 @@ const buildReportHtml = ({ type, data }) => {
 
           if (!ctx) return;
 
-          const colors = chart.colors && chart.colors.length
+          const isMultiColor = chart.multiColor || chart.type === 'pie' || chart.type === 'doughnut';
+
+          const baseColors = chart.colors && chart.colors.length
 
             ? chart.colors
 
-            : (chart.type === 'pie' || chart.type === 'doughnut')
+            : isMultiColor
 
-              ? chart.data.map((_, i) => palette[i % palette.length])
+              ? (chart.data || []).map((_, i) => palette[i % palette.length])
 
               : [chart.color || palette[index % palette.length]];
+
+          const backgroundColor = isMultiColor
+
+            ? (chart.data || []).map((_, i) => baseColors[i % baseColors.length])
+
+            : baseColors;
 
           const dataset = {
 
             data: chart.data || [],
 
-            backgroundColor: colors,
+            backgroundColor,
 
             borderWidth: 0,
 
-            borderRadius: chart.type === 'bar' ? 8 : 0
+            borderRadius: chart.type === 'bar' ? 6 : 0
 
           };
 
@@ -661,6 +680,8 @@ const buildReportHtml = ({ type, data }) => {
                           ticks: {
 
                             precision: 0,
+
+                            stepSize: chart.tickStep || undefined,
 
                             callback: (value) => chart.percentScale ? String(value) + '%' : value,
 
@@ -782,17 +803,21 @@ const buildReportHtml = ({ type, data }) => {
 
       :root {
 
-        --blue: #4A90E2;
+        --blue:   #1a56db;
 
-        --green: #7ED6A7;
+        --blue2:  #2563eb;
+
+        --blue-l: #dbeafe;
+
+        --green:  #7ED6A7;
 
         --orange: #F5A97F;
 
-        --text: #3A4A5B;
+        --text:   #1e293b;
 
-        --muted: #6B7280;
+        --muted:  #64748b;
 
-        --bg: #F2F2F2;
+        --bg:     #F8FAFC;
 
       }
 
@@ -870,7 +895,7 @@ const buildReportHtml = ({ type, data }) => {
 
         border-radius: 999px;
 
-        background: linear-gradient(90deg, var(--blue), #5B9FED);
+        background: linear-gradient(90deg, var(--blue), var(--blue2));
 
         color: #fff;
 
@@ -886,9 +911,9 @@ const buildReportHtml = ({ type, data }) => {
 
         display: grid;
 
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
 
-        gap: 16px;
+        gap: 10px;
 
       }
 
@@ -896,9 +921,9 @@ const buildReportHtml = ({ type, data }) => {
 
         background: #fff;
 
-        border-radius: 16px;
+        border-radius: 12px;
 
-        padding: 16px 18px;
+        padding: 12px 14px;
 
         box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
 
@@ -906,29 +931,37 @@ const buildReportHtml = ({ type, data }) => {
 
       .card-title {
 
-        font-size: 12px;
+        font-size: 10px;
 
         color: var(--muted);
+
+        font-weight: 500;
+
+        text-transform: uppercase;
+
+        letter-spacing: 0.03em;
 
       }
 
       .card-value {
 
-        font-size: 24px;
+        font-size: 20px;
 
         font-weight: 700;
 
-        margin-top: 8px;
+        color: var(--blue);
+
+        margin-top: 6px;
 
       }
 
       .card-sub {
 
-        margin-top: 4px;
+        margin-top: 2px;
 
-        font-size: 11px;
+        font-size: 10px;
 
-        color: #9CA3AF;
+        color: var(--muted);
 
       }
 
@@ -952,7 +985,7 @@ const buildReportHtml = ({ type, data }) => {
 
         padding: 18px 22px;
 
-        background: linear-gradient(90deg, var(--blue), #5B9FED);
+        background: linear-gradient(90deg, var(--blue), var(--blue2));
 
         color: #fff;
 
@@ -1116,7 +1149,7 @@ const buildReportHtml = ({ type, data }) => {
 
         gap: 16px;
 
-        align-items: start;
+        align-items: stretch;
 
       }
 
@@ -1124,13 +1157,29 @@ const buildReportHtml = ({ type, data }) => {
 
         background: #fff;
 
-        border-radius: 18px;
+        border-radius: 16px;
 
-        padding: 14px 16px 16px;
+        padding: 18px 20px 20px;
 
-        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.07);
+
+        border: 1px solid #e2e8f0;
 
         page-break-inside: avoid;
+
+        display: flex;
+
+        flex-direction: column;
+
+      }
+
+      .chart-canvas {
+
+        margin-top: 14px;
+
+        flex: 1;
+
+        height: var(--chart-height, 220px);
 
       }
 
@@ -1182,7 +1231,9 @@ const buildReportHtml = ({ type, data }) => {
 
         border-collapse: collapse;
 
-        font-size: 12px;
+        font-size: 10.5px;
+
+        table-layout: fixed;
 
       }
 
@@ -1190,23 +1241,39 @@ const buildReportHtml = ({ type, data }) => {
 
         text-align: left;
 
-        padding: 10px 12px;
+        padding: 8px 8px;
 
-        background: #F9FAFB;
+        background: var(--blue-l);
 
-        border-bottom: 1px solid #E5E7EB;
+        border-bottom: 2px solid var(--blue);
 
         color: var(--text);
+
+        font-weight: 600;
+
+        font-size: 10px;
+
+        text-transform: uppercase;
+
+        letter-spacing: 0.04em;
+
+        word-break: keep-all;
+
+        white-space: nowrap;
 
       }
 
       .report-table tbody td {
 
-        padding: 10px 12px;
+        padding: 8px 8px;
 
         border-bottom: 1px solid #E5E7EB;
 
         color: var(--muted);
+
+        word-break: break-word;
+
+        overflow-wrap: anywhere;
 
         vertical-align: middle;
 
@@ -1410,11 +1477,13 @@ const buildReportHtml = ({ type, data }) => {
 
       .stat-card {
 
-        background: #F9FAFB;
+        background: var(--blue-l);
 
         border-radius: 12px;
 
         padding: 12px 14px;
+
+        border-left: 3px solid var(--blue);
 
       }
 
@@ -1424,13 +1493,15 @@ const buildReportHtml = ({ type, data }) => {
 
         color: var(--muted);
 
+        font-weight: 500;
+
       }
 
       .stat-card .value {
 
-        font-size: 18px;
+        font-size: 20px;
 
-        color: var(--text);
+        color: var(--blue);
 
         font-weight: 700;
 
@@ -1442,7 +1513,7 @@ const buildReportHtml = ({ type, data }) => {
 
         font-size: 10px;
 
-        color: #9CA3AF;
+        color: var(--muted);
 
         margin-top: 2px;
 
@@ -1980,13 +2051,11 @@ const buildReportHtml = ({ type, data }) => {
 
       ${cards ? `<div class="cards">${cards}</div>` : ''}
 
-
-
-      ${sections}
-
-
+      ${firstSectionHtml}
 
       ${chartsHtml}
+
+      ${restSectionsHtml}
 
 
 
@@ -5116,338 +5185,243 @@ exports.generarPdfReporte = async (req, res) => {
 
     } else if (type === 'activity') {
 
-      const { students, asignaturas } = await getResumenGeneralData(filters);
+      const { students: allStudents, asignaturas: allAsignaturas } = await getResumenGeneralData(filters);
 
-      const studentIds = students.map(student => student.id);
+      // ── Filtro por estudiante ──────────────────────────────────────────────────
+      const rawEstudianteId = req.query.estudiante_id;
+      const estudianteIdFiltro = rawEstudianteId && rawEstudianteId !== 'all'
+        ? parseInt(rawEstudianteId, 10) : null;
+      const students = estudianteIdFiltro
+        ? allStudents.filter(s => String(s.id) === String(estudianteIdFiltro))
+        : allStudents;
 
+      // ── Filtro por asignatura ──────────────────────────────────────────────────
+      const asignaturaNombreFiltro = req.query.asignatura_nombre || null;
+      const asignaturas = asignaturaNombreFiltro
+        ? allAsignaturas.filter(a => (a.nombre || '').trim().toLowerCase() === asignaturaNombreFiltro.trim().toLowerCase())
+        : allAsignaturas;
 
+      // ── Contexto del filtro para el encabezado del informe ────────────────────
+      const contextoFiltro = [];
+      if (estudianteIdFiltro) {
+        const est = students[0];
+        contextoFiltro.push(`Estudiante: ${est ? escapeHtml(est.name) : estudianteIdFiltro}`);
+      }
+      if (asignaturaNombreFiltro) contextoFiltro.push(`Asignatura: ${escapeHtml(asignaturaNombreFiltro)}`);
 
-      const totalContenidos = students.reduce((sum, student) => {
+      // ── Totales (sobre la selección filtrada) ─────────────────────────────────
+      const totalContenidos = students.reduce((sum, student) =>
+        sum + student.subjects.filter(s => !asignaturaNombreFiltro || s.name === asignaturaNombreFiltro)
+          .reduce((acc, subj) => acc + (subj.contentViewed || 0), 0), 0);
 
-        return sum + student.subjects.reduce((acc, subj) => acc + (subj.contentViewed || 0), 0);
+      const totalEjercicios = students.reduce((sum, student) =>
+        sum + student.subjects.filter(s => !asignaturaNombreFiltro || s.name === asignaturaNombreFiltro)
+          .reduce((acc, subj) => acc + (subj.exercisesCompleted || 0), 0), 0);
 
-      }, 0);
+      const totalMinis = students.reduce((sum, student) =>
+        sum + student.subjects.filter(s => !asignaturaNombreFiltro || s.name === asignaturaNombreFiltro)
+          .reduce((acc, subj) => acc + (subj.miniprojectsSubmitted || 0), 0), 0);
 
-      const totalEjercicios = students.reduce((sum, student) => {
-
-        return sum + student.subjects.reduce((acc, subj) => acc + (subj.exercisesCompleted || 0), 0);
-
-      }, 0);
-
-      const totalMinis = students.reduce((sum, student) => {
-
-        return sum + student.subjects.reduce((acc, subj) => acc + (subj.miniprojectsSubmitted || 0), 0);
-
-      }, 0);
-
-
-
+      // ── Resumen por asignatura (para gráfico y stats) ─────────────────────────
       const AsignaturaRows = asignaturas.map((Asignatura) => {
-
         const asignaturaName = Asignatura.nombre || `Asignatura ${Asignatura.id}`;
-
-        const subjectValues = students.map(student => {
-
-          const subject = student.subjects.find(subj => String(subj.asignaturaId ?? '') === String(Asignatura.id) || subj.name === asignaturaName);
-
-          return subject || null;
-
-        }).filter(Boolean);
-
-
-
-        const totalContent = subjectValues.reduce((sum, subj) => sum + (subj.contentViewed || 0), 0);
-
-        const totalExercise = subjectValues.reduce((sum, subj) => sum + (subj.exercisesCompleted || 0), 0);
-
-        const totalMini = subjectValues.reduce((sum, subj) => sum + (subj.miniprojectsSubmitted || 0), 0);
-
-        const avgProgress = subjectValues.length
-
-          ? subjectValues.reduce((sum, subj) => sum + (subj.progress || 0), 0) / subjectValues.length
-
-          : 0;
-
-
+        const subjectValues = students.map(student =>
+          student.subjects.find(subj =>
+            String(subj.asignaturaId ?? '') === String(Asignatura.id) || subj.name === asignaturaName
+          ) || null
+        ).filter(Boolean);
 
         return {
-
           asignaturaName,
-
-          totalContent,
-
-          totalExercise,
-
-          totalMini,
-
-          avgProgress: Math.round(avgProgress)
-
+          totalContent:   subjectValues.reduce((sum, s) => sum + (s.contentViewed || 0), 0),
+          totalExercise:  subjectValues.reduce((sum, s) => sum + (s.exercisesCompleted || 0), 0),
+          totalMini:      subjectValues.reduce((sum, s) => sum + (s.miniprojectsSubmitted || 0), 0),
+          avgProgress: subjectValues.length
+            ? Math.round(subjectValues.reduce((sum, s) => sum + (s.progress || 0), 0) / subjectValues.length)
+            : 0
         };
-
       });
 
-
-
+      // ── Secciones de tabla por asignatura ─────────────────────────────────────
       const activitySections = asignaturas.map((Asignatura) => {
-
         const asignaturaName = Asignatura.nombre || `Asignatura ${Asignatura.id}`;
+        const AsignaturaRow = AsignaturaRows.find(r => r.asignaturaName === asignaturaName);
 
-        const AsignaturaRow = AsignaturaRows.find(row => row.asignaturaName === asignaturaName);
+        // Calcular totales de temas/subtemas de la asignatura (unión de todos los estudiantes)
+        const allTopicNames  = new Set();
+        const allSubtopicKeys = new Set();
+        students.forEach(student => {
+          const subj = student.subjects.find(s =>
+            String(s.asignaturaId ?? '') === String(Asignatura.id) || s.name === asignaturaName
+          );
+          if (subj && Array.isArray(subj.topics)) {
+            subj.topics.forEach(t => {
+              allTopicNames.add(t.name);
+              (t.subtopics || []).forEach(st => allSubtopicKeys.add(`${t.name}::${st.name}`));
+            });
+          }
+        });
+        const totalTemas    = allTopicNames.size;
+        const totalSubtemas = allSubtopicKeys.size;
 
         const studentsWithSubject = students.map((student) => {
-
-          const subject = student.subjects.find(subj => String(subj.asignaturaId ?? '') === String(Asignatura.id) || subj.name === asignaturaName);
-
+          const subject = student.subjects.find(subj =>
+            String(subj.asignaturaId ?? '') === String(Asignatura.id) || subj.name === asignaturaName
+          );
           if (!subject) return null;
 
+          const temasVistos    = Array.isArray(subject.topics)
+            ? subject.topics.filter(t => t.progress > 0).length : 0;
+          const subtemasVistos = Array.isArray(subject.topics)
+            ? subject.topics.reduce((sum, t) =>
+                sum + (t.subtopics || []).filter(st => st.progress > 0).length, 0) : 0;
+
           return {
-
-            name: student.name,
-
-            contentViewed: subject.contentViewed || 0,
-
+            codigo:             student.codigo || '—',
+            name:               student.name,
+            temasVistos,        totalTemas,
+            subtemasVistos,     totalSubtemas,
+            contentViewed:      subject.contentViewed || 0,
             exercisesCompleted: subject.exercisesCompleted || 0,
-
             miniprojectsSubmitted: subject.miniprojectsSubmitted || 0,
-
-            progress: Math.round(subject.progress || 0)
-
+            progress:           Math.round(subject.progress || 0)
           };
-
         }).filter(Boolean);
 
-
-
         const studentRows = studentsWithSubject.map((row) => `
-
           <tr>
-
+            <td style="font-family:monospace;color:#64748b">${escapeHtml(String(row.codigo))}</td>
             <td>${escapeHtml(row.name)}</td>
-
-            <td>${row.contentViewed}</td>
-
-            <td>${row.exercisesCompleted}</td>
-
-            <td>${row.miniprojectsSubmitted}</td>
-
-            <td>${row.progress}%</td>
-
+            <td style="text-align:center">${row.temasVistos}/${row.totalTemas}</td>
+            <td style="text-align:center">${row.subtemasVistos}/${row.totalSubtemas}</td>
+            <td style="text-align:center">${row.contentViewed}</td>
+            <td style="text-align:center">${row.exercisesCompleted}</td>
+            <td style="text-align:center">${row.miniprojectsSubmitted}</td>
+            <td style="text-align:center">${row.progress}%</td>
             <td>
-
               <div class="progress-bar">
-
-                <div class="progress-fill" style="width:${row.progress}%"></div>
-
+                <div class="progress-fill" style="width:${row.progress}%;background:${Asignatura.color || '#4A90E2'}"></div>
               </div>
-
             </td>
-
-
           </tr>
-
         `).join('');
 
-
-
-        const statsHtml = AsignaturaRow
-
-          ? `
-
-            <div class="stat-grid">
-
-              <div class="stat-card">
-
-                <div class="label">Progreso promedio</div>
-
-                <div class="value">${AsignaturaRow.avgProgress}%</div>
-
-                <div class="sub">En el asignatura</div>
-
-              </div>
-
-              <div class="stat-card">
-
-                <div class="label">Contenidos visualizados</div>
-
-                <div class="value">${AsignaturaRow.totalContent}</div>
-
-                <div class="sub">Total agregado</div>
-
-              </div>
-
-              <div class="stat-card">
-
-                <div class="label">Ejercicios completados</div>
-
-                <div class="value">${AsignaturaRow.totalExercise}</div>
-
-                <div class="sub">Total agregado</div>
-
-              </div>
-
+        const statsHtml = AsignaturaRow ? `
+          <div class="stat-grid">
+            <div class="stat-card">
+              <div class="label">Progreso promedio</div>
+              <div class="value">${AsignaturaRow.avgProgress}%</div>
             </div>
-
-          `
-
-          : '';
-
-
+            <div class="stat-card">
+              <div class="label">Temas en la asignatura</div>
+              <div class="value">${totalTemas}</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">Subtemas</div>
+              <div class="value">${totalSubtemas}</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">Contenidos visualizados</div>
+              <div class="value">${AsignaturaRow.totalContent}</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">Ejercicios completados</div>
+              <div class="value">${AsignaturaRow.totalExercise}</div>
+            </div>
+            <div class="stat-card">
+              <div class="label">Miniproyectos entregados</div>
+              <div class="value">${AsignaturaRow.totalMini}</div>
+            </div>
+          </div>
+        ` : '';
 
         const tableHtml = `
-
           ${statsHtml}
-
           <table class="report-table">
-
             <thead>
-
               <tr>
-
+                <th>Código</th>
                 <th>Estudiante</th>
-
-                <th>Contenidos</th>
-
-                <th>Ejercicios</th>
-
-                <th>Miniproyectos</th>
-
-                <th>Progreso</th>
-
+                <th style="text-align:center">Temas</th>
+                <th style="text-align:center">Subtemas</th>
+                <th style="text-align:center">Contenidos</th>
+                <th style="text-align:center">Ejercicios</th>
+                <th style="text-align:center">Miniproyectos</th>
+                <th style="text-align:center">Progreso</th>
                 <th></th>
-
-
               </tr>
-
             </thead>
-
             <tbody>
-
-              ${studentRows || '<tr><td colspan="6">Sin datos</td></tr>'}
-
+              ${studentRows || '<tr><td colspan="9">Sin datos</td></tr>'}
             </tbody>
-
           </table>
-
         `;
 
-
-
         return {
-
-          title: `Desempeño Detallado: ${asignaturaName}`,
-
-          subtitle: 'Análisis de completitud y calificaciones',
-
+          title: `Desempeño: ${asignaturaName}`,
+          subtitle: `${studentsWithSubject.length} estudiante(s) · Temas: ${totalTemas} · Subtemas: ${totalSubtemas}`,
           body: tableHtml
-
         };
-
       });
 
-
-
-      const AsignaturaLabels = AsignaturaRows.map(row => row.asignaturaName);
-
-      const AsignaturaValues = AsignaturaRows.map(row => row.avgProgress);
-
-
+      const AsignaturaLabels = AsignaturaRows.map(r => r.asignaturaName);
+      const AsignaturaValues = AsignaturaRows.map(r => r.avgProgress);
 
       reportData = {
-
         ...reportData,
-
+        subtitle: contextoFiltro.length
+          ? `${contextoFiltro.join(' · ')} · Generado el ${formatDate(new Date())}`
+          : `Reporte generado el ${formatDate(new Date())}`,
         stats: [
-
-          { label: 'Contenidos visualizados', value: totalContenidos, sub: 'Total sistema' },
-
-          { label: 'Ejercicios completados', value: totalEjercicios, sub: 'Enviados o aprobados' },
-
-          { label: 'Miniproyectos entregados', value: totalMinis, sub: 'Enviados o completados' }
-
+          { label: 'Estudiantes', value: students.length, sub: estudianteIdFiltro ? 'Filtrado' : 'Total' },
+          { label: 'Contenidos visualizados', value: totalContenidos, sub: 'En la selección' },
+          { label: 'Ejercicios completados',  value: totalEjercicios, sub: 'En la selección' },
+          { label: 'Miniproyectos entregados', value: totalMinis,     sub: 'En la selección' }
         ],
-
         sections: [
-
           {
-
             title: 'Notas del Informe',
-
             subtitle: 'Contexto de los datos',
-
             body: `
-
               <div class="meta">
-
-                <div class="meta-item">Nota<strong>Los valores reflejan el agregado de estudiantes filtrados.</strong></div>
-
+                <div class="meta-item">Alcance<strong>${contextoFiltro.length ? contextoFiltro.join(' · ') : 'Todos los estudiantes y asignaturas'}</strong></div>
+                <div class="meta-item">Asignaturas incluidas<strong>${asignaturas.length}</strong></div>
                 <div class="meta-item">Fuente<strong>Registros de contenidos, ejercicios y miniproyectos.</strong></div>
-
               </div>
-
             `
-
           },
-
           ...activitySections
-
         ],
-
         charts: [
-
           {
-
             id: 'activityDistChart',
-
             type: 'doughnut',
-
             title: 'Distribución de Actividades',
-
             subtitle: 'Volumen agregado de contenidos, ejercicios y miniproyectos.',
-
             labels: ['Contenidos Visualizados', 'Ejercicios Completados', 'Miniproyectos Entregados'],
-
             data: [totalContenidos, totalEjercicios, totalMinis],
-
             colors: ['#4A90E2', '#7ED6A7', '#F5A97F'],
-
             showLegend: true,
-
             legendPosition: 'bottom',
-
-            height: 180
-
+            height: 240
           },
-
           {
-
             id: 'AsignaturaProgressChart',
-
             type: 'bar',
-
             title: 'Progreso Promedio por Asignatura',
-
-            subtitle: 'Vista compacta por materia para evitar expansión innecesaria.',
-
-            labels: AsignaturaLabels,
-
+            subtitle: 'Vista compacta por materia.',
+            labels: AsignaturaLabels.map(abbreviateSubject),
             data: AsignaturaValues,
-
-            color: '#4A90E2',
-
+            colors: ['#1a56db', '#7ED6A7', '#F5A97F', '#A78BFA', '#FBBF24', '#34D399'],
+            multiColor: true,
             showLegend: false,
-
             orientation: 'horizontal',
-
             percentScale: true,
-
-            labelMaxLength: 26,
-
-            height: 180
-
+            tickStep: 15,
+            labelMaxLength: 16,
+            height: Math.max(240, AsignaturaValues.length * 52)
           }
-
         ]
-
       };
 
     } else if (type === 'failures') {
