@@ -12,7 +12,13 @@ const CONTENIDO_TYPE_MAP = {
   actividad: 'activity',
   explicacion: 'explicacion',
   'explicación': 'explicacion',
+<<<<<<< Updated upstream
   simulacion_ruta_critica: 'simulacion_ruta_critica',
+=======
+  simulador_curva_s: 'simulador_curva_s',
+  'simulador-curva-s': 'simulador_curva_s',
+  simulador_evm_curva_s: 'simulador_curva_s',
+>>>>>>> Stashed changes
 };
 
 const parsePositiveInteger = (value) => {
@@ -39,16 +45,36 @@ async function validateContenidoPayload(req, rawPayload) {
   const tipo = CONTENIDO_TYPE_MAP[String(rawPayload.tipo || '').trim().toLowerCase()];
   const descripcion = String(rawPayload.descripcion || '').trim();
   const descripcionTexto = stripRichText(descripcion);
-  const url = String(rawPayload.url || '').trim();
+  let url = String(rawPayload.url || '').trim();
   const temaId = parsePositiveInteger(rawPayload.tema_id);
   const subtemaId = parsePositiveInteger(rawPayload.subtema_id);
+  const isSimuladorCurvaS = tipo === 'simulador_curva_s';
 
+<<<<<<< Updated upstream
   const isCPMSimulation = tipo === 'simulacion_ruta_critica';
   // Para simulaciones CPM: descripción es opcional y la URL es un JSON (no una URL HTTP)
   const needsDescription = !isCPMSimulation;
   const needsHttpUrl = !isCPMSimulation;
 
   if (!titulo || !tipo || (needsDescription && !descripcionTexto) || !url || !temaId || !subtemaId || Number.isNaN(temaId) || Number.isNaN(subtemaId)) {
+=======
+  if (!titulo || !tipo || !descripcionTexto || !temaId || !subtemaId || Number.isNaN(temaId) || Number.isNaN(subtemaId)) {
+    return {
+      error: {
+        status: 400,
+        message: 'Completa todos los campos obligatorios del contenido antes de guardar.'
+      }
+    };
+  }
+
+  if (isSimuladorCurvaS) {
+    if (!url) {
+      url = 'https://edupath.app/contenido/simulador-curva-s-evm';
+    }
+  }
+
+  if (!url) {
+>>>>>>> Stashed changes
     return {
       error: {
         status: 400,
