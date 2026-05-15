@@ -11,7 +11,8 @@ const CONTENIDO_TYPE_MAP = {
   activity: 'activity',
   actividad: 'activity',
   explicacion: 'explicacion',
-  'explicación': 'explicacion'
+  'explicación': 'explicacion',
+  simulacion_ruta_critica: 'simulacion_ruta_critica',
 };
 
 const parsePositiveInteger = (value) => {
@@ -42,7 +43,12 @@ async function validateContenidoPayload(req, rawPayload) {
   const temaId = parsePositiveInteger(rawPayload.tema_id);
   const subtemaId = parsePositiveInteger(rawPayload.subtema_id);
 
-  if (!titulo || !tipo || !descripcionTexto || !url || !temaId || !subtemaId || Number.isNaN(temaId) || Number.isNaN(subtemaId)) {
+  const isCPMSimulation = tipo === 'simulacion_ruta_critica';
+  // Para simulaciones CPM: descripción es opcional y la URL es un JSON (no una URL HTTP)
+  const needsDescription = !isCPMSimulation;
+  const needsHttpUrl = !isCPMSimulation;
+
+  if (!titulo || !tipo || (needsDescription && !descripcionTexto) || !url || !temaId || !subtemaId || Number.isNaN(temaId) || Number.isNaN(subtemaId)) {
     return {
       error: {
         status: 400,
@@ -51,15 +57,17 @@ async function validateContenidoPayload(req, rawPayload) {
     };
   }
 
-  try {
-    new URL(url);
-  } catch (error) {
-    return {
-      error: {
-        status: 400,
-        message: 'La URL del contenido debe ser válida.'
-      }
-    };
+  if (needsHttpUrl) {
+    try {
+      new URL(url);
+    } catch (error) {
+      return {
+        error: {
+          status: 400,
+          message: 'La URL del contenido debe ser válida.'
+        }
+      };
+    }
   }
 
   const temaExistente = await Tema.findByPk(temaId);
