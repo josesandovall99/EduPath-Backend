@@ -3,6 +3,8 @@ const evaluacionController = require('./evaluacion.controller');
 const { normalizarConfiguracionCompilador, validarConfiguracionCompilador } = require('../utils/compilerExercise');
 // Bloqueos en memoria por envío en curso (clave: estudianteId:ejercicioId)
 const submissionLocks = new Map();
+const { evaluateSimulacionGp, extractSimulacionAnswer } = require('../utils/simulacionGp/evaluateSimulacionGp');
+const { defaultConfigForVariante } = require('../utils/simulacionGp/defaults');
 const umlValidator = require('../services/umlValidator');
 
 const createDefaultUmlOptions = () => ({
@@ -66,7 +68,7 @@ exports.createEjercicio = async (req, res) => {
 
     // Crear el ejercicio usando el mismo id de la actividad
     // Validar tipo_ejercicio
-    const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'];
+    const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar', 'Simulación GP'];
     const tipo = ejercicio.tipo_ejercicio || 'Compilador';
     if (!TIPOS_PERMITIDOS.includes(tipo)) {
       await t.rollback();
@@ -86,6 +88,17 @@ exports.createEjercicio = async (req, res) => {
         configuracion = { tipo: 'ordenar', enunciado: '', items: [] };
       } else if (tipo === 'Relacionar') {
         configuracion = { tipo: 'relacionar', enunciado: '', pares: [] };
+      } else if (tipo === 'Simulación GP') {
+        const varianteIn = ejercicio.configuracion && ejercicio.configuracion.variante;
+        const base = defaultConfigForVariante(varianteIn || 'mapa_poder');
+        const incoming = ejercicio.configuracion && typeof ejercicio.configuracion === 'object' ? ejercicio.configuracion : {};
+        configuracion = {
+          ...base,
+          ...incoming,
+          tipo: 'simulacion-gp',
+          variante: base.variante,
+          spec: incoming.spec || base.spec
+        };
       } else {
         configuracion = { tipo: 'cuestionario', preguntas: [] };
       }
@@ -93,6 +106,18 @@ exports.createEjercicio = async (req, res) => {
 
     if (tipo === 'Diagramas UML') {
       configuracion = normalizeUmlConfig(configuracion);
+    }
+
+    if (tipo === 'Simulación GP' && configuracion && typeof configuracion === 'object') {
+      const varianteIn = configuracion.variante;
+      const base = defaultConfigForVariante(varianteIn || 'mapa_poder');
+      configuracion = {
+        ...base,
+        ...configuracion,
+        tipo: 'simulacion-gp',
+        variante: configuracion.variante || base.variante,
+        spec: configuracion.spec || base.spec
+      };
     }
 
     let codigoEstructura = ejercicio.codigoEstructura || null;
@@ -349,7 +374,7 @@ exports.updateEjercicio = async (req, res) => {
     if (req.body.ejercicio) {
       const data = { ...req.body.ejercicio };
       if (data.tipo_ejercicio) {
-        const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar'];
+        const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar', 'Simulación GP'];
         if (!TIPOS_PERMITIDOS.includes(data.tipo_ejercicio)) {
           await t.rollback();
           return res.status(400).json({ message: `tipo_ejercicio inválido. Use uno de: ${TIPOS_PERMITIDOS.join(', ')}` });
@@ -627,6 +652,18 @@ exports.resolverEjercicio = async (req, res) => {
       });
     }
 
+    if (ejercicio.tipo_ejercicio === 'Simulación GP') {
+      const answer = extractSimulacionAnswer(req.body);
+      const result = evaluateSimulacionGp(ejercicio, answer);
+      return res.status(result.esCorrecta ? 200 : 400).json({
+        ejercicioId,
+        esCorrecta: result.esCorrecta,
+        puntosObtenidos: result.puntosObtenidos,
+        retroalimentacion: result.retroalimentacion,
+        detalle: result.detalle,
+      });
+    }
+
     // Evaluación para Preguntas (cuestionario)
     const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
     if (cfg.tipo !== 'cuestionario') {
@@ -832,6 +869,12 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       esCorrecta = ok;
       puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       retroalimentacion = esCorrecta ? 'Relaciones correctas.' : 'Relaciones incorrectas.';
+    } else if (ejercicio.tipo_ejercicio === 'Simulación GP') {
+      const result = evaluateSimulacionGp(ejercicio, respuestaPayload || {});
+      esCorrecta = result.esCorrecta;
+      puntosObtenidos = result.puntosObtenidos;
+      retroalimentacion = result.retroalimentacion;
+      detalle = result.detalle;
     } else {
       // Preguntas (cuestionario)
       const cfg = ejercicio.configuracion || { tipo: 'cuestionario', preguntas: [] };
