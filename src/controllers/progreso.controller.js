@@ -3,8 +3,17 @@ const { Asignatura: AsignaturaModel, Estudiante, Tema, Subtema, Contenido, Ejerc
 const { Op } = require('sequelize');
 
 const puppeteer = require('puppeteer');
+const fs = require('fs');
+const path = require('path');
 
 const desbloqueoService = require('../services/desbloqueo.service');
+
+// Logo UDES en base64 para embeber en PDFs
+let UDES_LOGO_B64 = '';
+try {
+  const logoPath = path.join(__dirname, '../assets/udes-logo.png');
+  UDES_LOGO_B64 = fs.readFileSync(logoPath).toString('base64');
+} catch (_) { /* Logo no disponible, se omite */ }
 
 
 
@@ -457,7 +466,11 @@ const buildReportHtml = ({ type, data }) => {
 
           ? 'Contenidos más vistos'
 
-          : 'Fallos por Actividad';
+          : type === 'activity-detail'
+
+            ? 'Informe de Actividad'
+
+            : 'Fallos por Actividad';
 
 
 
@@ -502,6 +515,7 @@ const buildReportHtml = ({ type, data }) => {
           <div class="section-title">${escapeHtml(section.title)}</div>
           ${section.subtitle ? `<div class="section-sub">${escapeHtml(section.subtitle)}</div>` : ''}
         </div>
+        ${section.badge ? `<div class="section-badge">${escapeHtml(section.badge)}</div>` : ''}
       </div>
       <div class="section-body">${section.body || ''}</div>
     </div>
@@ -554,10 +568,14 @@ const buildReportHtml = ({ type, data }) => {
     ? `
 
       <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+      <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2.2.0/dist/chartjs-plugin-datalabels.min.js"></script>
 
       <script>
 
         window.__chartsReady = false;
+
+        // Registrar el plugin solo para doughnut/pie
+        Chart.register(ChartDataLabels);
 
         const chartsData = ${JSON.stringify(charts)};
 
@@ -579,35 +597,33 @@ const buildReportHtml = ({ type, data }) => {
 
           if (!ctx) return;
 
-          const isMultiColor = chart.multiColor || chart.type === 'pie' || chart.type === 'doughnut';
-
-          const baseColors = chart.colors && chart.colors.length
-
-            ? chart.colors
-
-            : isMultiColor
-
-              ? (chart.data || []).map((_, i) => palette[i % palette.length])
-
-              : [chart.color || palette[index % palette.length]];
-
-          const backgroundColor = isMultiColor
-
-            ? (chart.data || []).map((_, i) => baseColors[i % baseColors.length])
-
-            : baseColors;
-
-          const dataset = {
-
-            data: chart.data || [],
-
-            backgroundColor,
-
-            borderWidth: 0,
-
-            borderRadius: chart.type === 'bar' ? 6 : 0
-
-          };
+          // ── Soporte multi-dataset (ej. barras agrupadas) ──
+          let datasets;
+          if (chart.datasets && chart.datasets.length) {
+            datasets = chart.datasets.map(ds => ({
+              label: ds.label || '',
+              data: ds.data || [],
+              backgroundColor: ds.color || palette[index % palette.length],
+              borderWidth: 0,
+              borderRadius: 4,
+            }));
+          } else {
+            const isMultiColor = chart.multiColor || chart.type === 'pie' || chart.type === 'doughnut';
+            const baseColors = chart.colors && chart.colors.length
+              ? chart.colors
+              : isMultiColor
+                ? (chart.data || []).map((_, i) => palette[i % palette.length])
+                : [chart.color || palette[index % palette.length]];
+            const backgroundColor = isMultiColor
+              ? (chart.data || []).map((_, i) => baseColors[i % baseColors.length])
+              : baseColors;
+            datasets = [{
+              data: chart.data || [],
+              backgroundColor,
+              borderWidth: 0,
+              borderRadius: chart.type === 'bar' ? 6 : 0
+            }];
+          }
 
           new Chart(ctx, {
 
@@ -617,7 +633,7 @@ const buildReportHtml = ({ type, data }) => {
 
               labels: chart.labels || [],
 
-              datasets: [dataset]
+              datasets,
 
             },
 
@@ -664,6 +680,19 @@ const buildReportHtml = ({ type, data }) => {
                 }
 
               },
+
+              datalabels: (chart.type === 'doughnut' || chart.type === 'pie') ? {
+                formatter: (value, ctx) => {
+                  const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
+                  if (!total || value === 0) return '';
+                  const pct = Math.round((value / total) * 100);
+                  return pct > 0 ? pct + '%' : '';
+                },
+                color: '#fff',
+                font: { weight: 'bold', size: 13 },
+                anchor: 'center',
+                align: 'center',
+              } : { display: false },
 
               scales: chart.type === 'bar'
 
@@ -853,291 +882,201 @@ const buildReportHtml = ({ type, data }) => {
 
       }
 
+      /* ── HEADER ── */
       .header {
-
-        background: #fff;
-
-        border-radius: 18px;
-
-        padding: 24px 28px;
-
         display: flex;
-
         justify-content: space-between;
-
-        align-items: center;
-
-        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.08);
-
+        align-items: flex-start;
+        padding-bottom: 14px;
+        margin-bottom: 0;
       }
-
-      .header-title {
-
-        font-size: 20px;
-
-        font-weight: 700;
-
+      .header-left { flex: 1; padding-right: 16px; }
+      .header-logo-float {
+        text-align: center;
+        flex-shrink: 0;
       }
-
-      .header-sub {
-
-        color: var(--muted);
-
-        font-size: 12px;
-
-        margin-top: 4px;
-
-      }
-
-      .badge {
-
-        padding: 6px 14px;
-
-        border-radius: 999px;
-
-        background: linear-gradient(90deg, var(--blue), var(--blue2));
-
-        color: #fff;
-
-        font-weight: 600;
-
-        font-size: 12px;
-
-      }
-
-      .cards {
-
-        margin-top: 20px;
-
-        display: grid;
-
-        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
-
-        gap: 10px;
-
-      }
-
-      .card {
-
-        background: #fff;
-
-        border-radius: 12px;
-
-        padding: 12px 14px;
-
-        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
-
-      }
-
-      .card-title {
-
-        font-size: 10px;
-
-        color: var(--muted);
-
-        font-weight: 500;
-
-        text-transform: uppercase;
-
-        letter-spacing: 0.03em;
-
-      }
-
-      .card-value {
-
-        font-size: 20px;
-
-        font-weight: 700;
-
+      .header-logo-float img { width: 62px; height: 62px; object-fit: contain; display: block; margin: 0 auto; }
+      .header-logo-float .logo-caption { font-size: 9px; color: var(--muted); text-align: center; margin-top: 3px; line-height: 1.3; }
+      .header-report-title {
+        font-size: 24px;
+        font-weight: 800;
         color: var(--blue);
-
-        margin-top: 6px;
-
+        line-height: 1.2;
+        margin-bottom: 6px;
       }
-
-      .card-sub {
-
-        margin-top: 2px;
-
-        font-size: 10px;
-
-        color: var(--muted);
-
-      }
-
-      .section {
-
-        margin-top: 22px;
-
-        background: #fff;
-
-        border-radius: 18px;
-
-        overflow: hidden;
-
-        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.06);
-
-        page-break-inside: avoid;
-
-      }
-
-      .section-header {
-
-        padding: 18px 22px;
-
-        background: linear-gradient(90deg, var(--blue), var(--blue2));
-
-        color: #fff;
-
-        display: flex;
-
-        justify-content: space-between;
-
-        align-items: center;
-
-      }
-
-      .section-title {
-
-        font-size: 16px;
-
+      .header-scope {
+        font-size: 13px;
         font-weight: 700;
-
-      }
-
-      .section-sub {
-
-        font-size: 12px;
-
-        opacity: 0.85;
-
-      }
-
-      .section-body {
-
-        padding: 18px 22px 22px;
-
-      }
-
-      table {
-
-        width: 100%;
-
-        border-collapse: collapse;
-
-        font-size: 12px;
-
-      }
-
-      thead th {
-
-        text-align: left;
-
-        padding: 10px 12px;
-
-        background: #F9FAFB;
-
-        border-bottom: 1px solid #E5E7EB;
-
         color: var(--text);
-
+        margin-bottom: 3px;
       }
-
-      tbody td {
-
-        padding: 10px 12px;
-
-        border-bottom: 1px solid #E5E7EB;
-
+      .header-meta-line {
+        font-size: 11px;
         color: var(--muted);
-
       }
-
-      .list {
-
-        margin: 0;
-
-        padding: 0;
-
-        list-style: none;
-
+      .header-divider {
+        border: none;
+        border-top: 2px solid var(--blue);
+        margin: 10px 0 14px;
       }
+      .header-summary {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 16px;
+      }
+      .header-summary-left { font-size: 12px; color: var(--muted); }
+      .header-kpi { text-align: right; }
+      .header-kpi-value { font-size: 28px; font-weight: 800; color: var(--blue); line-height: 1; }
+      .header-kpi-label { font-size: 10px; color: var(--muted); margin-top: 2px; }
 
-      .list li {
-
-        padding: 8px 0;
-
-        border-bottom: 1px solid #E5E7EB;
-
+      /* ── STAT CARDS ── */
+      .cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      .card {
+        background: #fff;
+        border-radius: 10px;
+        padding: 12px 14px;
+        border: 1px solid #E5E7EB;
+      }
+      .card-title {
+        font-size: 9px;
         color: var(--muted);
-
-      }
-
-      .list li:last-child { border-bottom: none; }
-
-      /* Content-views: tarjetas con texto más pequeño para que no se recorte */
-      body.type-content-views .cards {
-        grid-template-columns: repeat(4, 1fr);
-      }
-      body.type-content-views .card-value {
-        font-size: 14px;
-        font-weight: 700;
-        word-break: break-word;
-        line-height: 1.4;
-        margin-top: 6px;
-      }
-      body.type-content-views .card-title {
-        font-size: 10px;
+        font-weight: 600;
         text-transform: uppercase;
         letter-spacing: 0.05em;
-        color: #9CA3AF;
       }
-      body.type-content-views .card-sub {
-        font-size: 11px;
-        color: #6B7280;
-        margin-top: 8px;
-        font-weight: 600;
+      .card-value {
+        font-size: 22px;
+        font-weight: 800;
+        color: var(--blue);
+        margin-top: 4px;
+        line-height: 1;
       }
-
-      .meta {
-
-        display: grid;
-
-        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-
-        gap: 12px;
-
-        margin-top: 12px;
-
-      }
-
-      .meta-item {
-
-        background: #F9FAFB;
-
-        border-radius: 12px;
-
-        padding: 12px 14px;
-
-        font-size: 12px;
-
+      .card-sub {
+        margin-top: 4px;
+        font-size: 10px;
         color: var(--muted);
-
       }
+      body.type-content-views .card-value { font-size: 14px; word-break: break-word; line-height: 1.4; }
+      body.type-content-views .card-sub { font-size: 11px; font-weight: 600; }
 
-      .meta-item strong { color: var(--text); display: block; font-size: 14px; margin-top: 6px; }
-
-      .footer {
-
-        text-align: center;
-
+      /* ── SECTIONS ── */
+      .section {
         margin-top: 18px;
-
-        color: #9CA3AF;
-
-        font-size: 11px;
-
+        page-break-inside: avoid;
       }
+      .section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding-bottom: 6px;
+        border-bottom: 2px solid var(--blue);
+        margin-bottom: 0;
+      }
+      .section-title {
+        font-size: 11px;
+        font-weight: 800;
+        color: var(--blue);
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+      .section-sub {
+        font-size: 10px;
+        color: var(--muted);
+        margin-top: 2px;
+      }
+      .section-badge {
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: var(--blue);
+        color: #fff;
+        font-size: 10px;
+        font-weight: 700;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .section-body {
+        padding: 0;
+      }
+
+      /* ── TABLES ── */
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 11px;
+      }
+      thead th {
+        text-align: left;
+        padding: 9px 10px;
+        background: var(--blue);
+        color: #fff;
+        font-weight: 700;
+        font-size: 9.5px;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        white-space: nowrap;
+      }
+      tbody td {
+        padding: 9px 10px;
+        border-bottom: 1px solid #E5E7EB;
+        color: var(--muted);
+        vertical-align: middle;
+      }
+      tbody tr:last-child td { border-bottom: none; }
+      tbody tr:nth-child(even) td { background: #F9FAFB; }
+
+      .list { margin: 0; padding: 0; list-style: none; }
+      .list li { padding: 8px 0; border-bottom: 1px solid #E5E7EB; color: var(--muted); font-size: 11px; }
+      .list li:last-child { border-bottom: none; }
+
+      /* ── META GRID ── */
+      .meta {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+        gap: 10px;
+        padding: 12px 0;
+      }
+      .meta-item {
+        background: #F9FAFB;
+        border-radius: 10px;
+        padding: 10px 12px;
+        font-size: 11px;
+        color: var(--muted);
+        border: 1px solid #E5E7EB;
+      }
+      .meta-item strong { color: var(--text); display: block; font-size: 13px; margin-top: 4px; font-weight: 700; }
+
+      /* ── FOOTER ── */
+      .footer {
+        text-align: center;
+        margin-top: 24px;
+        padding-top: 10px;
+        border-top: 1px solid #E5E7EB;
+        color: #9CA3AF;
+        font-size: 10px;
+      }
+
+      /* ── TASA DE ERROR BARS ── */
+      .tasa-bar-wrap { display: flex; align-items: center; gap: 6px; }
+      .tasa-bar-track { width: 56px; height: 6px; background: #E5E7EB; border-radius: 999px; overflow: hidden; flex-shrink: 0; }
+      .tasa-bar-fill  { height: 100%; border-radius: 999px; }
+      .tasa-label { font-size: 11px; font-weight: 700; white-space: nowrap; }
+      .tasa-ok   { color: #16a34a; }
+      .tasa-warn { color: #F97316; }
+      .tasa-bad  { color: #DC2626; }
+
+      /* ── TIPO PILLS ── */
+      .tipo-pill { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 9.5px; font-weight: 700; }
+      .tipo-ejercicio    { background: #DBEAFE; color: #1D4ED8; }
+      .tipo-miniproyecto { background: #FEF3C7; color: #92400E; }
+
+      /* ── BADGE legacy ── */
+      .badge { padding: 4px 12px; border-radius: 999px; background: var(--blue); color: #fff; font-weight: 700; font-size: 11px; }
 
       .chart-grid {
 
@@ -2033,19 +1972,30 @@ const buildReportHtml = ({ type, data }) => {
 
     <div class="page">
 
+      <!-- HEADER -->
       <div class="header">
-
-        <div>
-
-          <div class="header-title">EduPath - Generación de Informes</div>
-
-          <div class="header-sub">${escapeHtml(data.subtitle || '')}</div>
-
+        <div class="header-left">
+          <div class="header-report-title">${escapeHtml(headerTitle)}</div>
+          ${data.subtitleBold ? `<div class="header-scope">${escapeHtml(data.subtitleBold)}</div>` : ''}
+          <div class="header-meta-line">EduPath &nbsp;·&nbsp; Ingeniería de Sistemas UDES &nbsp;·&nbsp; ${escapeHtml(data.subtitleMeta || data.subtitle || formatDate(new Date()))}</div>
         </div>
-
-        <div class="badge">${escapeHtml(headerTitle)}</div>
-
+        <div class="header-logo-float">
+          ${UDES_LOGO_B64
+            ? `<img src="data:image/png;base64,${UDES_LOGO_B64}" alt="UDES" />`
+            : ''}
+          <div class="logo-caption">Ing. de Sistemas<br>UDES</div>
+        </div>
       </div>
+      <hr class="header-divider" />
+      ${(data.metaLine || data.kpiValue) ? `
+      <div class="header-summary">
+        <div class="header-summary-left">${escapeHtml(data.metaLine || '')}</div>
+        ${data.kpiValue ? `
+        <div class="header-kpi">
+          <div class="header-kpi-value">${escapeHtml(data.kpiValue)}</div>
+          <div class="header-kpi-label">${escapeHtml(data.kpiLabel || '')}</div>
+        </div>` : ''}
+      </div>` : ''}
 
 
 
@@ -2105,7 +2055,11 @@ const buildReportHtml = ({ type, data }) => {
 
 
 
-      <div class="footer">Reporte generado automáticamente por EduPath</div>
+      <div class="footer">
+        Reporte generado automáticamente por <strong>EduPath</strong> &nbsp;·&nbsp;
+        Universidad de Santander (UDES) · Ingeniería de Sistemas &nbsp;·&nbsp;
+        ${new Date().getFullYear()}
+      </div>
 
     </div>
 
@@ -4389,9 +4343,9 @@ exports.generarPdfReporte = async (req, res) => {
 
     const type = (req.query.type || '').toString().toLowerCase();
 
-    if (!['student', 'date', 'activity', 'failures', 'content-views'].includes(type)) {
+    if (!['student', 'date', 'activity', 'failures', 'content-views', 'activity-detail'].includes(type)) {
 
-      return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'|'failures'|'content-views'" });
+      return res.status(400).json({ message: "type query param requerido: 'student'|'date'|'activity'|'failures'|'content-views'|'activity-detail'" });
 
     }
 
@@ -5501,9 +5455,11 @@ exports.generarPdfReporte = async (req, res) => {
 
       }
 
+      const failuresPeriodoAcademico = req.query.periodo_academico && req.query.periodo_academico !== 'all'
+        ? req.query.periodo_academico
+        : null;
 
-
-      const failuresData = await buildFailuresReportData({ estudianteId, asignaturaIds });
+      const failuresData = await buildFailuresReportData({ estudianteId, asignaturaIds, periodoAcademico: failuresPeriodoAcademico });
 
       const totalIntentos = failuresData.totals.intentos;
 
@@ -5579,70 +5535,51 @@ exports.generarPdfReporte = async (req, res) => {
 
       const shouldShowAsignaturaColumn = !isDocente || !estudianteId;
 
-      const activityColumnHeader = isDocente ? (estudianteId ? '' : '<th>Estudiantes afectados</th>') : '<th>Asignatura</th>';
+      const activityColumnHeader = isDocente ? (estudianteId ? '' : '<th>Afectados</th>') : '<th>Asignatura</th>';
 
       const emptyActivityColspan = shouldShowAsignaturaColumn ? 7 : 6;
 
-
-
-      const activityRows = itemsListados.map((item) => `
-
+      const activityRows = itemsListados.map((item) => {
+        const tasa = item.intentos > 0 ? Math.round((item.fallos / item.intentos) * 100) : 0;
+        const tasaColor = tasa >= 50 ? '#DC2626' : tasa >= 25 ? '#F97316' : '#16a34a';
+        const tasaClass = tasa >= 50 ? 'tasa-bad' : tasa >= 25 ? 'tasa-warn' : 'tasa-ok';
+        const tipoKey = (item.tipo || '').toLowerCase();
+        const tipoPillClass = tipoKey === 'ejercicio' ? 'tipo-ejercicio' : 'tipo-miniproyecto';
+        const tipoLabel = tipoKey === 'ejercicio' ? 'Ejercicio' : 'Miniproyecto';
+        return `
         <tr>
-
-          <td>${escapeHtml(item.tipo)}</td>
-
+          <td><span class="tipo-pill ${tipoPillClass}">${tipoLabel}</span></td>
           <td>${escapeHtml(item.titulo)}</td>
-
           ${shouldShowAsignaturaColumn ? `<td>${escapeHtml(isDocente ? String(item.estudiantesAfectados || 0) : (item.Asignatura_name || '-'))}</td>` : ''}
-
           <td>${item.intentos}</td>
-
           <td>${item.aciertos}</td>
-
-          <td>${item.fallos}</td>
-
-          <td>${item.aprobado ? 'Si' : 'No'}</td>
-
-        </tr>
-
-      `).join('');
-
-
+          <td style="font-weight:700;color:${item.fallos > 0 ? '#DC2626' : '#6b7280'}">${item.fallos}</td>
+          <td>
+            <div class="tasa-bar-wrap">
+              <div class="tasa-bar-track"><div class="tasa-bar-fill" style="width:${Math.min(tasa,100)}%;background:${tasaColor}"></div></div>
+              <span class="tasa-label ${tasaClass}">${tasa}%</span>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
 
       const activityTable = `
-
         <table class="report-table">
-
           <thead>
-
             <tr>
-
-              <th>Tipo</th>
-
+              <th style="width:90px">Tipo</th>
               <th>Actividad</th>
-
               ${activityColumnHeader}
-
-              <th>Intentos</th>
-
-              <th>Aciertos</th>
-
-              <th>Fallos</th>
-
-              <th>Aprobado</th>
-
+              <th style="width:56px">Intentos</th>
+              <th style="width:56px">Aciertos</th>
+              <th style="width:50px">Fallos</th>
+              <th style="width:110px">Tasa de error</th>
             </tr>
-
           </thead>
-
           <tbody>
-
             ${activityRows || `<tr><td colspan="${emptyActivityColspan}">Sin datos</td></tr>`}
-
           </tbody>
-
         </table>
-
       `;
 
 
@@ -5707,64 +5644,42 @@ exports.generarPdfReporte = async (req, res) => {
 
       const studentsListados = estudianteId ? failuresData.byStudent : failuresData.byStudent.slice(0, 20);
 
-      const studentRows = studentsListados.map((student) => `
-
+      const studentRows = studentsListados.map((student, idx) => {
+        const tasa = student.intentos > 0 ? Math.round((student.fallos / student.intentos) * 100) : 0;
+        const tasaColor = tasa >= 50 ? '#DC2626' : tasa >= 25 ? '#F97316' : '#16a34a';
+        const tasaClass = tasa >= 50 ? 'tasa-bad' : tasa >= 25 ? 'tasa-warn' : 'tasa-ok';
+        return `
         <tr>
-
-          <td>${escapeHtml(student.nombre || `Estudiante ${student.estudiante_id}`)}</td>
-
-          <td>${escapeHtml(student.email || '-')}</td>
-
+          <td style="font-weight:600;color:#1e293b">${idx + 1}. ${escapeHtml(student.nombre || `Estudiante ${student.estudiante_id}`)}</td>
+          <td style="font-size:10px">${escapeHtml(student.email || '-')}</td>
           <td>${student.intentos}</td>
-
           <td>${student.aciertos}</td>
-
-          <td>${student.fallos}</td>
-
-          <td>${student.ejercicios}</td>
-
-          <td>${student.miniproyectos}</td>
-
-        </tr>
-
-      `).join('');
-
-
+          <td style="font-weight:700;color:${student.fallos > 0 ? '#DC2626' : '#6b7280'}">${student.fallos}</td>
+          <td>
+            <div class="tasa-bar-wrap">
+              <div class="tasa-bar-track"><div class="tasa-bar-fill" style="width:${Math.min(tasa,100)}%;background:${tasaColor}"></div></div>
+              <span class="tasa-label ${tasaClass}">${tasa}%</span>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
 
       const studentTable = `
-
         <table class="report-table">
-
           <thead>
-
             <tr>
-
               <th>Estudiante</th>
-
               <th>Correo</th>
-
-              <th>Intentos</th>
-
-              <th>Aciertos</th>
-
-              <th>Fallos</th>
-
-              <th>Ejercicios</th>
-
-              <th>Miniproyectos</th>
-
+              <th style="width:56px">Intentos</th>
+              <th style="width:56px">Aciertos</th>
+              <th style="width:50px">Fallos</th>
+              <th style="width:110px">Tasa de error</th>
             </tr>
-
           </thead>
-
           <tbody>
-
-            ${studentRows || '<tr><td colspan="7">Sin datos</td></tr>'}
-
+            ${studentRows || '<tr><td colspan="6">Sin datos</td></tr>'}
           </tbody>
-
         </table>
-
       `;
 
 
@@ -5801,163 +5716,40 @@ exports.generarPdfReporte = async (req, res) => {
 
         }));
 
-      const docenteCharts = [
-
+      // Gráficas iguales a las que muestra la app (mismos datos y estilo)
+      const appCharts = [
         {
-
-          id: 'topStudentsFailuresChart',
-
-          type: 'bar',
-
-          title: 'Estudiantes con Más Fallos',
-
-          subtitle: estudianteId ? 'El estudiante filtrado dentro del grupo actual.' : 'Top estudiantes que requieren atención prioritaria.',
-
-          labels: topStudentChartRows.map((item) => item.label),
-
-          data: topStudentChartRows.map((item) => item.value),
-
-          color: '#F97316',
-
-          showLegend: false,
-
-          orientation: 'horizontal',
-
-          labelMaxLength: 26,
-
-          height: 220
-
-        },
-
-        {
-
           id: 'hitsVsFailsChart',
-
           type: 'doughnut',
-
           title: 'Aciertos vs Fallos',
-
           subtitle: 'Relación global de resultados sobre los intentos.',
-
           labels: ['Aciertos', 'Fallos'],
-
           data: [totalAciertos, totalFallos],
-
-          colors: ['#7ED6A7', '#F5A97F'],
-
+          colors: ['#7ED6A7', '#F87171'],
           showLegend: true,
-
           legendPosition: 'bottom',
-
-          height: 180
-
+          height: 200
         },
-
         {
-
-          id: 'topActivitiesFailuresChart',
-
+          id: 'comparativoPorTipoChart',
           type: 'bar',
-
-          title: 'Actividades con Más Fallos',
-
-          subtitle: estudianteId ? 'Actividades donde el estudiante presenta más dificultad.' : 'Top actividades donde la materia concentra más errores.',
-
-          labels: topActivityChartRows.map((item) => item.label),
-
-          data: topActivityChartRows.map((item) => item.value),
-
-          color: '#DC2626',
-
-          showLegend: false,
-
+          title: 'Comparativo por tipo',
+          subtitle: 'Intentos, aciertos y fallos separados por ejercicios y miniproyectos.',
           orientation: 'horizontal',
-
-          labelMaxLength: 30,
-
-          height: 220
-
-        }
-
-      ];
-
-      const defaultCharts = [
-
-        {
-
-          id: 'failuresAsignaturaChart',
-
-          type: 'bar',
-
-          title: 'Fallos por Asignatura',
-
-          subtitle: 'Comparativo compacto por materia filtrada.',
-
-          labels: AsignaturaLabels,
-
-          data: AsignaturaFallos,
-
-          color: '#F5A97F',
-
-          showLegend: false,
-
-          orientation: 'horizontal',
-
-          labelMaxLength: 26,
-
-          height: 180
-
-        },
-
-        {
-
-          id: 'hitsVsFailsChart',
-
-          type: 'doughnut',
-
-          title: 'Aciertos vs Fallos',
-
-          subtitle: 'Relación global de resultados sobre los intentos.',
-
-          labels: ['Aciertos', 'Fallos'],
-
-          data: [totalAciertos, totalFallos],
-
-          colors: ['#7ED6A7', '#F5A97F'],
-
-          showLegend: true,
-
-          legendPosition: 'bottom',
-
-          height: 180
-
-        },
-
-        {
-
-          id: 'failuresTypeChart',
-
-          type: 'doughnut',
-
-          title: 'Distribución de Fallos por Tipo',
-
-          subtitle: 'Separación entre ejercicios y miniproyectos.',
-
           labels: ['Ejercicios', 'Miniproyectos'],
-
-          data: [fallosEjercicios, fallosMinis],
-
-          colors: ['#4A90E2', '#7ED6A7'],
-
+          datasets: [
+            { label: 'Intentos',  data: [failuresData.byType.ejercicios.intentos,  failuresData.byType.miniproyectos.intentos],  color: '#93C5FD' },
+            { label: 'Aciertos',  data: [failuresData.byType.ejercicios.aciertos,  failuresData.byType.miniproyectos.aciertos],  color: '#7ED6A7' },
+            { label: 'Fallos',    data: [failuresData.byType.ejercicios.fallos,    failuresData.byType.miniproyectos.fallos],    color: '#F87171' },
+          ],
           showLegend: true,
-
           legendPosition: 'bottom',
-
-          height: 180
-
+          height: 200
         }
-
       ];
+
+      const docenteCharts = appCharts;
+      const defaultCharts = appCharts;
 
 
 
@@ -5965,72 +5757,57 @@ exports.generarPdfReporte = async (req, res) => {
 
         ...reportData,
 
+        subtitleBold: estudianteId ? 'Informe individual de estudiante' : 'Todos los estudiantes',
+
+        subtitleMeta: formatDate(new Date()),
+
+        metaLine: `${studentsListados.length} estudiante(s) · ${itemsListados.length} actividad(es) con fallos`,
+
+        kpiValue: `${tasaFallos}%`,
+
+        kpiLabel: 'Tasa de error',
+
         stats: [
 
-          { label: 'Intentos totales', value: totalIntentos, sub: estudianteId ? 'Del estudiante' : 'Agregado' },
+          { label: 'Intentos totales', value: totalIntentos, sub: estudianteId ? 'Del estudiante' : 'Total del grupo' },
 
-          { label: 'Aciertos totales', value: totalAciertos, sub: 'Intentos aprobados' },
+          { label: 'Aciertos', value: totalAciertos, sub: `${tasaAciertos}% de acierto` },
 
-          { label: 'Fallos totales', value: totalFallos, sub: 'Intentos no aprobados' },
+          { label: 'Fallos', value: totalFallos, sub: `${tasaFallos}% de error` },
 
-          { label: 'Tasa de acierto', value: `${tasaAciertos}%`, sub: 'Porcentaje de aciertos sobre intentos' }
+          { label: 'Tasa de error', value: `${tasaFallos}%`, sub: tasaFallos >= 50 ? '⚠ Alto' : tasaFallos >= 25 ? '↗ Moderado' : '✓ Bajo' }
 
         ],
 
         sections: [
 
           {
-
-            title: 'Notas del Informe',
-
-            subtitle: 'Contexto del reporte de fallos',
-
-            body: `
-
-              <div class="meta">
-
-                <div class="meta-item">Alcance<strong>${estudianteId ? 'Resumen del estudiante seleccionado' : 'Vista agregada del grupo filtrado'}</strong></div>
-
-                <div class="meta-item">Top visible<strong>${estudianteId ? 'Todas las actividades del estudiante' : 'Top 20 actividades con más fallos'}</strong></div>
-
-                <div class="meta-item">Tasa de acierto<strong>${tasaAciertos}%</strong></div>
-
-                <div class="meta-item">Tasa de fallos<strong>${tasaFallos}%</strong></div>
-
-              </div>
-
-            `
-
+            title: 'Resumen General',
+            badge: `${tasaFallos}% error`,
+            body: `<div class="meta">
+              <div class="meta-item">Alcance<strong>${estudianteId ? 'Estudiante seleccionado' : 'Grupo filtrado'}</strong></div>
+              <div class="meta-item">Intentos<strong>${totalIntentos}</strong></div>
+              <div class="meta-item">Aciertos<strong>${totalAciertos} (${tasaAciertos}%)</strong></div>
+              <div class="meta-item">Fallos<strong>${totalFallos} (${tasaFallos}%)</strong></div>
+            </div>`
           },
 
           {
-
             title: 'Resumen por Asignatura',
-
-            subtitle: 'Intentos y fallos acumulados, como se visualiza en la aplicación.',
-
+            badge: `${failuresData.byAsignatura.length} asignatura(s)`,
             body: AsignaturaTable
-
           },
 
           {
-
-            title: 'Fallos por Estudiante',
-
-            subtitle: estudianteId ? 'Resumen del estudiante' : 'Top estudiantes con mas fallos',
-
-            body: studentTable
-
-          },
-
-          {
-
-            title: estudianteId ? 'Detalle por Actividad' : 'Top actividades con más fallos',
-
-            subtitle: estudianteId ? 'Ejercicios y miniproyectos del estudiante' : 'Top 20 por fallos',
-
+            title: estudianteId ? 'Detalle de Actividades' : 'Detalle de Fallos por Actividad',
+            badge: `Top ${itemsListados.length}`,
             body: activityTable
+          },
 
+          {
+            title: estudianteId ? 'Actividades del Estudiante' : 'Estudiantes con más Fallos',
+            badge: `${studentsListados.length} estudiante(s)`,
+            body: studentTable
           }
 
         ],
@@ -6202,6 +5979,120 @@ exports.generarPdfReporte = async (req, res) => {
 
     }
 
+    // ── DETALLE DE ACTIVIDAD ESPECÍFICA ──────────────────────────────────
+    if (type === 'activity-detail') {
+
+      const actividadId = parseInt(req.query.actividad_id, 10);
+      const tipoActividad = (req.query.tipo || '').toLowerCase();
+
+      if (!actividadId || !tipoActividad) {
+        return res.status(400).json({ message: 'actividad_id y tipo son requeridos para type=activity-detail' });
+      }
+
+      const periodoAcademico = req.query.periodo_academico && req.query.periodo_academico !== 'all'
+        ? req.query.periodo_academico
+        : null;
+
+      const failuresData = await buildFailuresReportData({ estudianteId: null, asignaturaIds, periodoAcademico });
+
+      // Filtrar solo los registros de esta actividad
+      const activityItems = failuresData.items.filter(
+        i => i.tipo === tipoActividad && i.actividad_id === actividadId
+      ).sort((a, b) => b.fallos - a.fallos);
+
+      const actividadNombre = activityItems[0]?.titulo || `${tipoActividad} ${actividadId}`;
+      const asignaturaNombre = activityItems[0]?.Asignatura_name || '';
+      const tipoLabel = tipoActividad === 'ejercicio' ? 'Ejercicio' : 'Miniproyecto';
+
+      const totalIntentos = activityItems.reduce((s, i) => s + (i.intentos || 0), 0);
+      const totalAciertos = activityItems.reduce((s, i) => s + (i.aciertos || 0), 0);
+      const totalFallos   = activityItems.reduce((s, i) => s + (i.fallos   || 0), 0);
+      const tasaFallos   = totalIntentos > 0 ? Math.round((totalFallos   / totalIntentos) * 100) : 0;
+      const tasaAciertos = totalIntentos > 0 ? Math.round((totalAciertos / totalIntentos) * 100) : 0;
+
+      const studentMap = new Map(failuresData.byStudent.map(s => [String(s.estudiante_id), s]));
+
+      const studentRows = activityItems.map((item, idx) => {
+        const meta = studentMap.get(String(item.estudiante_id));
+        const nombre = meta?.nombre || item.nombre || `Estudiante ${item.estudiante_id}`;
+        const email  = meta?.email  || item.email  || '-';
+        const tasa = item.intentos > 0 ? Math.round((item.fallos / item.intentos) * 100) : 0;
+        const tasaColor = tasa >= 50 ? '#DC2626' : tasa >= 25 ? '#F97316' : '#16a34a';
+        const tasaClass = tasa >= 50 ? 'tasa-bad' : tasa >= 25 ? 'tasa-warn' : 'tasa-ok';
+        const aprobadoIcon = item.aprobado ? '✓' : '✗';
+        const aprobadoColor = item.aprobado ? '#16a34a' : '#F97316';
+        return `
+        <tr>
+          <td style="font-weight:600;color:#1e293b">${idx + 1}. ${escapeHtml(nombre)}</td>
+          <td style="font-size:10px;color:#64748b">${escapeHtml(email)}</td>
+          <td style="text-align:center">${item.intentos}</td>
+          <td style="text-align:center;color:#16a34a;font-weight:600">${item.aciertos}</td>
+          <td style="text-align:center;font-weight:700;color:${item.fallos > 0 ? '#DC2626' : '#6b7280'}">${item.fallos}</td>
+          <td>
+            <div class="tasa-bar-wrap">
+              <div class="tasa-bar-track"><div class="tasa-bar-fill" style="width:${Math.min(tasa,100)}%;background:${tasaColor}"></div></div>
+              <span class="tasa-label ${tasaClass}">${tasa}%</span>
+              <span style="font-size:11px;font-weight:700;color:${aprobadoColor};margin-left:4px">${aprobadoIcon}</span>
+            </div>
+          </td>
+        </tr>`;
+      }).join('');
+
+      const studentTable = `
+        <table class="report-table">
+          <thead>
+            <tr>
+              <th>Estudiante</th>
+              <th>Correo</th>
+              <th style="width:52px;text-align:center">Intentos</th>
+              <th style="width:52px;text-align:center">Aciertos</th>
+              <th style="width:46px;text-align:center">Fallos</th>
+              <th style="width:120px">Tasa de error</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${studentRows || '<tr><td colspan="6">Sin datos</td></tr>'}
+          </tbody>
+        </table>`;
+
+      reportData = {
+        ...reportData,
+        subtitleBold: actividadNombre,
+        subtitleMeta: `${tipoLabel}${asignaturaNombre ? ' · ' + asignaturaNombre : ''} · ${formatDate(new Date())}`,
+        metaLine: `${activityItems.length} estudiante(s) con intentos registrados`,
+        kpiValue: `${tasaFallos}%`,
+        kpiLabel: 'Tasa de error',
+        stats: [
+          { label: 'Estudiantes',      value: activityItems.length,  sub: 'Con intentos registrados' },
+          { label: 'Intentos totales', value: totalIntentos,          sub: 'Suma de todos los intentos' },
+          { label: 'Aciertos',         value: totalAciertos,          sub: `${tasaAciertos}% de acierto` },
+          { label: 'Fallos',           value: totalFallos,            sub: `${tasaFallos}% de error` },
+        ],
+        sections: [
+          {
+            title: 'Estudiantes que intentaron esta actividad',
+            badge: `${activityItems.length} estudiante(s)`,
+            body: studentTable,
+          },
+        ],
+        charts: [
+          {
+            id: 'actividadDonutChart',
+            type: 'doughnut',
+            title: 'Aciertos vs Fallos',
+            subtitle: 'Distribución de resultados en esta actividad.',
+            labels: ['Aciertos', 'Fallos'],
+            data: [totalAciertos, totalFallos],
+            colors: ['#7ED6A7', '#F87171'],
+            showLegend: true,
+            legendPosition: 'bottom',
+            height: 200,
+          },
+        ],
+      };
+
+    }
+
     const html = buildReportHtml({ type, data: reportData });
 
 
@@ -6238,7 +6129,7 @@ exports.generarPdfReporte = async (req, res) => {
 
     res.setHeader('Content-Type', 'application/pdf');
 
-    const nombreES = { student: 'estudiante', date: 'fecha', activity: 'actividad', failures: 'fallos', 'content-views': 'contenidos-vistos' };
+    const nombreES = { student: 'estudiante', date: 'fecha', activity: 'actividad', failures: 'fallos', 'content-views': 'contenidos-vistos', 'activity-detail': 'detalle-actividad' };
 
     res.setHeader('Content-Disposition', `attachment; filename="reporte_${nombreES[type] ?? type}.pdf"`);
 
