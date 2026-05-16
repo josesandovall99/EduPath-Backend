@@ -1658,6 +1658,51 @@ exports.enviarMiniproyectoProgramacion = async (req, res) => {
   }
 };
 
+// Aprobación de múltiples miniproyectos en 1 query — elimina el N+1 de SubjectContentScreen
+exports.obtenerAprobacionBulk = async (req, res) => {
+  try {
+    const { ids, estudiante_id } = req.query;
+    if (!ids || !estudiante_id) {
+      return res.status(400).json({ message: 'ids y estudiante_id son requeridos' });
+    }
+    const esId = parseInt(estudiante_id, 10);
+    if (isNaN(esId)) return res.status(400).json({ message: 'estudiante_id debe ser un número válido' });
+
+    const miniIds = String(ids).split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    if (miniIds.length === 0) return res.status(400).json({ message: 'ids debe contener al menos un id' });
+    if (miniIds.length > 50) return res.status(400).json({ message: 'Máximo 50 miniproyectos por petición' });
+
+    // Chequeamos ambas tablas en paralelo:
+    // - Evaluacion: miniproyectos regulares (estado 'APROBADO')
+    // - RespuestaEstudianteMiniproyecto: miniproyectos configurables (evaluation.aprobado en JSON)
+    const [evalsAprobadas, respuestasConfigurables] = await Promise.all([
+      sequelize.query(
+        `SELECT DISTINCT miniproyecto_id FROM evaluacion
+         WHERE estudiante_id = :esId AND miniproyecto_id = ANY(:ids) AND estado = 'APROBADO'`,
+        { replacements: { esId, ids: miniIds }, type: 'SELECT' }
+      ),
+      sequelize.query(
+        `SELECT DISTINCT miniproyecto_id FROM respuestas_estudiante_miniproyecto
+         WHERE estudiante_id = :esId AND miniproyecto_id = ANY(:ids)
+           AND (respuesta->'evaluation'->>'aprobado')::boolean = true`,
+        { replacements: { esId, ids: miniIds }, type: 'SELECT' }
+      ),
+    ]);
+
+    const aprobadosSet = new Set([
+      ...evalsAprobadas.map(r => Number(r.miniproyecto_id)),
+      ...respuestasConfigurables.map(r => Number(r.miniproyecto_id)),
+    ]);
+
+    const resultado = {};
+    miniIds.forEach(id => { resultado[id] = { completado: aprobadosSet.has(id) }; });
+    res.json(resultado);
+  } catch (error) {
+    console.error('Error en obtenerAprobacionBulk:', error);
+    res.status(500).json({ message: 'Error al obtener aprobación bulk de miniproyectos', error: error.message || error });
+  }
+};
+
 exports.obtenerProgresoConfigurable = async (req, res) => {
   try {
     const estudianteId = resolveConfigurableStudentId(req, req.query?.estudiante_id);

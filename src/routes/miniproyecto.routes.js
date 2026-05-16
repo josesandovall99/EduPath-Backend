@@ -6,6 +6,7 @@ const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 const autorizacionDocente = require('../middlewares/autorizacionDocente');
 
 router.post('/', autenticacionUsuario, autorizacionDocente, controller.create);
+router.get('/aprobacion-bulk', autenticacionUsuario, controller.obtenerAprobacionBulk);
 router.get('/:id/configurable-progress', autenticacionUsuario, controller.obtenerProgresoConfigurable);
 router.post('/:id/evaluar-configurable', autenticacionUsuario, controller.evaluarMiniproyectoConfigurable);
 router.get('/:id/ejercicios/:exerciseKey/retroalimentacion', autenticacionUsuario, controller.obtenerRetroalimentacionEjercicioConfigurable);

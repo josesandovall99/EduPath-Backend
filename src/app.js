@@ -1,4 +1,4 @@
-require('dotenv').config({ quiet: true });
+﻿require('dotenv').config({ quiet: true });
 const express = require('express');
 const cors = require('cors');
 const compression = require('compression');
@@ -142,12 +142,106 @@ const syncOptions = process.env.NODE_ENV === 'development'
     ? { alter: true }
     : { force: false };
 
+// Crea (o actualiza) las funciones SQL de performance en PostgreSQL.
+// Se ejecuta en cada arranque con CREATE OR REPLACE — es idempotente y no toca datos.
+async function inicializarFuncionesSQL() {
+    const fnAsignatura = `
+CREATE OR REPLACE FUNCTION calcular_progreso_asignatura(
+  p_asignatura_id INTEGER,
+  p_estudiante_id INTEGER,
+  p_periodo       TEXT DEFAULT NULL
+)
+RETURNS JSONB LANGUAGE sql STABLE AS $fn$
+WITH
+  asig AS (SELECT id, nombre FROM asignaturas WHERE id = p_asignatura_id AND estado = true LIMIT 1),
+  est  AS (SELECT id, periodo_academico FROM estudiantes WHERE id = p_estudiante_id LIMIT 1),
+  p_eff AS (SELECT COALESCE(p_periodo,(SELECT periodo_academico FROM est)) AS v),
+  mini AS (
+    SELECT
+      COUNT(DISTINCT m.id)                                          AS total,
+      COUNT(DISTINCT e1.id) FILTER (WHERE e1.estado='APROBADO')    AS aprobados,
+      COUNT(DISTINCT e2.id) FILTER (WHERE e2.estado='REPROBADO')   AS desaprobados
+    FROM miniproyecto m
+    LEFT JOIN evaluacion e1 ON e1.miniproyecto_id=m.id AND e1.estudiante_id=p_estudiante_id AND e1.estado='APROBADO'   AND (p_periodo IS NULL OR e1.periodo_academico=p_periodo)
+    LEFT JOIN evaluacion e2 ON e2.miniproyecto_id=m.id AND e2.estudiante_id=p_estudiante_id AND e2.estado='REPROBADO'  AND (p_periodo IS NULL OR e2.periodo_academico=p_periodo)
+    WHERE m.asignatura_id=p_asignatura_id),
+  t   AS (SELECT id,nombre,orden FROM temas WHERE asignatura_id=p_asignatura_id AND estado=true ORDER BY orden ASC,id ASC),
+  ct  AS (SELECT c.id,c.tema_id FROM contenidos c WHERE c.tema_id IN (SELECT id FROM t) AND c.estado=true),
+  st  AS (SELECT id,tema_id FROM subtemas WHERE tema_id IN (SELECT id FROM t) AND estado=true),
+  seq AS (SELECT DISTINCT ct2.id,ct2.tema_id FROM ct ct2 WHERE EXISTS(SELECT 1 FROM secuencia_contenidos sc WHERE sc.estado=true AND (sc.contenido_origen_id=ct2.id OR sc.contenido_destino_id=ct2.id))),
+  c_ej AS (SELECT c.id AS contenido_id,st2.tema_id FROM contenidos c JOIN st st2 ON c.subtema_id=st2.id WHERE c.estado=true),
+  ej  AS (SELECT e.id AS ej_id,cj.tema_id FROM ejercicios e JOIN c_ej cj ON e.contenido_id=cj.contenido_id),
+  prog_all AS (SELECT DISTINCT p.contenido_id,p.periodo_academico FROM progreso p WHERE p.estudiante_id=p_estudiante_id AND p.contenido_id IN (SELECT id FROM seq) AND p.completado=true AND p.estado='Visualizado'),
+  prog_fil AS (SELECT DISTINCT contenido_id FROM prog_all WHERE p_periodo IS NULL OR periodo_academico=p_periodo),
+  resp AS (SELECT r.ejercicio_id,r.estado FROM respuestas_estudiante_ejercicio r WHERE r.estudiante_id=p_estudiante_id AND r.ejercicio_id IN (SELECT ej_id FROM ej) AND r.estado IN ('ENVIADO','APROBADO') AND ((SELECT v FROM p_eff) IS NULL OR r.periodo_academico=(SELECT v FROM p_eff))),
+  ts  AS (
+    SELECT t2.id,t2.nombre,t2.orden,
+      COUNT(DISTINCT s.id)                                                       AS total_contenidos,
+      COUNT(DISTINCT pf.contenido_id)                                            AS cont_vistos,
+      COUNT(DISTINCT e2.ej_id)                                                   AS total_ejercicios,
+      COUNT(DISTINCT r2.ejercicio_id) FILTER (WHERE r2.estado='APROBADO')       AS ej_aprobados,
+      COUNT(DISTINCT r2.ejercicio_id)                                            AS ej_completados
+    FROM t t2
+    LEFT JOIN seq      s  ON s.tema_id      =t2.id
+    LEFT JOIN prog_fil pf ON pf.contenido_id=s.id
+    LEFT JOIN ej       e2 ON e2.tema_id     =t2.id
+    LEFT JOIN resp     r2 ON r2.ejercicio_id=e2.ej_id
+    GROUP BY t2.id,t2.nombre,t2.orden ORDER BY t2.orden ASC,t2.id ASC),
+  glob AS (SELECT COALESCE(SUM(total_contenidos),0) AS tc,COALESCE(SUM(cont_vistos),0) AS cv,COALESCE(SUM(total_ejercicios),0) AS te,COALESCE(SUM(ej_completados),0) AS ec FROM ts)
+SELECT jsonb_build_object(
+  '_asignatura_found',(SELECT id FROM asig) IS NOT NULL,
+  '_estudiante_found',(SELECT id FROM est)  IS NOT NULL,
+  'Asignatura',(SELECT jsonb_build_object('id',id,'nombre',nombre) FROM asig),
+  'estudiante_id',p_estudiante_id,
+  'miniproyectos',(SELECT jsonb_build_object('total',total,'aprobados',aprobados,'desaprobados',desaprobados) FROM mini),
+  'temas',jsonb_build_object(
+    'total',(SELECT COUNT(*) FROM t),
+    'completados',(SELECT COUNT(*) FROM ts WHERE (total_contenidos+total_ejercicios)>0 AND (cont_vistos+ej_aprobados)=(total_contenidos+total_ejercicios)),
+    'pendientes',(SELECT COUNT(*) FROM ts WHERE NOT((total_contenidos+total_ejercicios)>0 AND (cont_vistos+ej_aprobados)=(total_contenidos+total_ejercicios))),
+    'siguiente',(SELECT nombre FROM ts WHERE NOT((total_contenidos+total_ejercicios)>0 AND (cont_vistos+ej_aprobados)=(total_contenidos+total_ejercicios)) ORDER BY orden ASC,id ASC LIMIT 1),
+    'detalle',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',id,'nombre',nombre,'totalContenidos',total_contenidos,'contenidosVistos',cont_vistos,'totalEjercicios',total_ejercicios,'ejerciciosAprobados',ej_aprobados,'completado',(total_contenidos+total_ejercicios)>0 AND (cont_vistos+ej_aprobados)=(total_contenidos+total_ejercicios)) ORDER BY orden ASC,id ASC) FROM ts),'[]'::jsonb)),
+  'progreso',(SELECT CASE WHEN tc>0 AND te>0 THEN jsonb_build_object('contenidos',jsonb_build_object('total',tc,'completados',cv,'porcentaje',ROUND((cv*100.0/tc)::numeric)),'ejercicios',jsonb_build_object('total',te,'completados',ec,'porcentaje',ROUND((ec*100.0/te)::numeric))) WHEN tc>0 THEN jsonb_build_object('contenidos',jsonb_build_object('total',tc,'completados',cv,'porcentaje',ROUND((cv*100.0/tc)::numeric))) WHEN te>0 THEN jsonb_build_object('ejercicios',jsonb_build_object('total',te,'completados',ec,'porcentaje',ROUND((ec*100.0/te)::numeric))) ELSE '{}'::jsonb END FROM glob),
+  'resumen',(SELECT jsonb_build_object('totalItems',tc+te,'itemsCompletados',cv+ec,'porcentajeTotalAsignatura',CASE WHEN (tc+te)>0 THEN ROUND(((cv+ec)*100.0/(tc+te))::numeric) ELSE 0 END,'estado',CASE WHEN (tc+te)=0 THEN 'Iniciado' WHEN (cv+ec)=(tc+te) THEN 'Completado' WHEN (cv+ec)>=(tc+te)/2.0 THEN 'En progreso' ELSE 'Iniciado' END) FROM glob),
+  'periodos_activos',COALESCE((SELECT jsonb_agg(DISTINCT periodo_academico ORDER BY periodo_academico) FROM prog_all WHERE periodo_academico IS NOT NULL),'[]'::jsonb));
+$fn$;`;
+
+    const fnSubtema = `
+CREATE OR REPLACE FUNCTION calcular_progreso_subtemas_bulk(
+  p_subtema_ids   INTEGER[],
+  p_estudiante_id INTEGER
+)
+RETURNS JSONB LANGUAGE sql STABLE AS $fn$
+WITH
+  subs AS (SELECT id FROM subtemas WHERE id=ANY(p_subtema_ids) AND estado=true),
+  cs   AS (SELECT c.id AS contenido_id,c.subtema_id FROM contenidos c WHERE c.subtema_id=ANY(p_subtema_ids) AND c.estado=true),
+  seq  AS (SELECT DISTINCT cs2.contenido_id,cs2.subtema_id FROM cs cs2 WHERE EXISTS(SELECT 1 FROM secuencia_contenidos sc WHERE sc.estado=true AND (sc.contenido_origen_id=cs2.contenido_id OR sc.contenido_destino_id=cs2.contenido_id))),
+  prog AS (SELECT DISTINCT p.contenido_id FROM progreso p JOIN seq s ON p.contenido_id=s.contenido_id WHERE p.estudiante_id=p_estudiante_id AND p.completado=true AND p.estado='Visualizado'),
+  stats AS (
+    SELECT s.id,COUNT(DISTINCT seq2.contenido_id) AS total,COUNT(DISTINCT pr.contenido_id) AS vistos
+    FROM subs s
+    LEFT JOIN seq  seq2 ON seq2.subtema_id   =s.id
+    LEFT JOIN prog pr   ON pr.contenido_id   =seq2.contenido_id
+    GROUP BY s.id)
+SELECT COALESCE(jsonb_object_agg(id::text,jsonb_build_object('resumen',jsonb_build_object('totalItems',total,'itemsCompletados',vistos,'porcentajeTotalSubtema',CASE WHEN total>0 THEN ROUND((vistos*100.0/total)::numeric) ELSE 0 END,'estado',CASE WHEN total=0 THEN 'Iniciado' WHEN vistos=total THEN 'Completado' WHEN vistos>=total/2.0 THEN 'En progreso' ELSE 'Iniciado' END))),'{}') FROM stats;
+$fn$;`;
+
+    try {
+        await db.sequelize.query(fnAsignatura);
+        await db.sequelize.query(fnSubtema);
+        console.log('Funciones SQL de performance inicializadas');
+    } catch (err) {
+        console.error('Error al inicializar funciones SQL:', err.message);
+    }
+}
+
 db.sequelize.sync(syncOptions)
     .then(async () => {
         console.log('Base de datos sincronizada con exito');
-        
+
+        await inicializarFuncionesSQL();
+
         console.log('RAG legacy global deshabilitado. Se usa únicamente /chatbots/:id');
-        
+
         app.listen(PORT, () => {
             console.log(`Servidor corriendo en http://localhost:${PORT}`);
         });

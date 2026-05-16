@@ -1,4 +1,36 @@
 const { SecuenciaContenido, Contenido, Subtema, Tema, sequelize } = require('../models');
+
+// Contenidos de todos los subtemas de un tema en 2 queries paralelas.
+// Reemplaza los N fetches individuales de TheoryContentView — dispara al montar con temaId.
+exports.getContenidosBulkPorTema = async (req, res) => {
+  try {
+    const tId = parseInt(req.params.temaId, 10);
+    if (isNaN(tId)) return res.status(400).json({ message: 'temaId inválido' });
+
+    const [contenidos, secuencias] = await Promise.all([
+      sequelize.query(
+        `SELECT c.id, c.subtema_id, c.titulo, c.tipo, c.descripcion, c.url, c.estado, c.visualizado
+         FROM contenidos c
+         JOIN subtemas s ON s.id = c.subtema_id AND s.tema_id = :tId AND s.estado = true
+         WHERE c.estado = true`,
+        { replacements: { tId }, type: 'SELECT' }
+      ),
+      sequelize.query(
+        `SELECT sc.contenido_origen_id, sc.contenido_destino_id
+         FROM secuencia_contenidos sc
+         JOIN contenidos c ON c.id = sc.contenido_origen_id AND c.estado = true
+         JOIN subtemas   s ON s.id = c.subtema_id AND s.tema_id = :tId AND s.estado = true
+         WHERE sc.estado = true`,
+        { replacements: { tId }, type: 'SELECT' }
+      ),
+    ]);
+
+    res.json({ contenidos, secuencias });
+  } catch (error) {
+    console.error('Error en getContenidosBulkPorTema:', error);
+    res.status(500).json({ message: 'Error al obtener contenidos bulk por tema', error: error.message });
+  }
+};
 const { Op } = require('sequelize');
 const {
   ensureDocenteAsignaturaAccess,

@@ -1,5 +1,46 @@
 const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstudianteEjercicio, Evaluacion, Tema, Estudiante } = require('../models');
 const evaluacionController = require('./evaluacion.controller');
+
+// Ejercicios de una asignatura con completado incluido — 1 JOIN reemplaza 4 rondas secuenciales.
+// Dispara al montar TheoryContentView junto con Phase 1 (parallel con subtemas/progreso).
+exports.getEjerciciosConCompletado = async (req, res) => {
+  try {
+    const { asignatura_id, estudiante_id } = req.query;
+    if (!asignatura_id || !estudiante_id) {
+      return res.status(400).json({ message: 'asignatura_id y estudiante_id son requeridos' });
+    }
+    const aId  = parseInt(asignatura_id, 10);
+    const esId = parseInt(estudiante_id, 10);
+    if (isNaN(aId) || isNaN(esId)) {
+      return res.status(400).json({ message: 'asignatura_id y estudiante_id deben ser números válidos' });
+    }
+
+    const [ejercicios] = await sequelize.query(
+      `SELECT e.id, e.contenido_id, e.tipo_ejercicio, e.puntos, e.resultado_ejercicio, e.configuracion,
+              a.titulo, a.descripcion, a.tipo_actividad_id,
+              CASE WHEN ev.ejercicio_id IS NOT NULL THEN true ELSE false END AS completado
+       FROM ejercicios e
+       JOIN actividad   a  ON a.id  = e.id
+       JOIN contenidos  c  ON c.id  = e.contenido_id
+       JOIN temas       t  ON t.id  = c.tema_id
+       LEFT JOIN evaluacion ev
+         ON ev.ejercicio_id    = e.id
+        AND ev.estudiante_id   = :esId
+        AND ev.estado          = 'Aprobado'
+        AND ev.periodo_academico = (SELECT periodo_academico FROM estudiantes WHERE id = :esId LIMIT 1)
+       WHERE t.asignatura_id = :aId
+         AND t.estado   = true
+         AND c.estado   = true
+         AND a.estado   = true`,
+      { replacements: { aId, esId } }
+    );
+
+    res.json(ejercicios);
+  } catch (error) {
+    console.error('Error en getEjerciciosConCompletado:', error);
+    res.status(500).json({ message: 'Error al obtener ejercicios con completado', error: error.message });
+  }
+};
 const { normalizarConfiguracionCompilador, validarConfiguracionCompilador } = require('../utils/compilerExercise');
 // Bloqueos en memoria por envío en curso (clave: estudianteId:ejercicioId)
 const submissionLocks = new Map();

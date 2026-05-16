@@ -4,6 +4,9 @@ const ejercicioController = require('../controllers/ejercicio.controller');
 const autenticacionUsuario = require('../middlewares/autenticacionUsuario');
 const autorizacionDocente = require('../middlewares/autorizacionDocente');
 
+// Ejercicios con estado de aprobación — endpoint optimizado para TheoryContentView
+router.get('/con-completado', autenticacionUsuario, ejercicioController.getEjerciciosConCompletado);
+
 // CRUD básico
 router.post('/', autenticacionUsuario, autorizacionDocente, ejercicioController.createEjercicio);
 router.get('/', autenticacionUsuario, ejercicioController.getEjercicios);

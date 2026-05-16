@@ -12,6 +12,8 @@ router.get('/', autenticacionUsuario, secuenciaContenidoController.getSecuencias
 
 // Obtener contenidos ordenados por secuencia de un subtema (lectura: estudiante necesita esto)
 router.get('/subtema/:subtemaId/ordenados', autenticacionUsuario, secuenciaContenidoController.getContenidosOrdenadosPorSecuencia);
+// Todos los contenidos de todos los subtemas de un tema — 1 round trip para TheoryContentView
+router.get('/tema/:temaId/contenidos-bulk', autenticacionUsuario, secuenciaContenidoController.getContenidosBulkPorTema);
 
 // Obtener el contexto de creación de secuencias para un subtema (solo docente/admin)
 router.get('/subtema/:subtemaId/contexto-creacion', autenticacionUsuario, requiereAdminODocente, secuenciaContenidoController.getSecuenciaContenidoCreationContext);

@@ -1,4 +1,4 @@
-const { Asignatura: AsignaturaModel, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido, Persona, Actividad } = require('../models');
+﻿const { sequelize, Asignatura: AsignaturaModel, Estudiante, Tema, Subtema, Contenido, Ejercicio, Evaluacion, Miniproyecto, Progreso, RespuestaEstudianteMiniproyecto, RespuestaEstudianteEjercicio, SecuenciaContenido, Persona, Actividad } = require('../models');
 
 const { Op } = require('sequelize');
 
@@ -3869,200 +3869,103 @@ exports.delete = async (req, res) => {
 
 
 
-// Obtener progreso de un estudiante por asignatura (para la barra de progreso)
+// Progreso de múltiples subtemas en 1 round trip — elimina el for-loop N×4 rondas de TheoryContentView
+exports.obtenerProgresoBulkPorSubtema = async (req, res) => {
+  try {
+    const { subtema_ids, estudiante_id } = req.query;
+    if (!subtema_ids || !estudiante_id) {
+      return res.status(400).json({ message: 'subtema_ids y estudiante_id son requeridos' });
+    }
+    const esId = parseInt(estudiante_id, 10);
+    if (isNaN(esId)) return res.status(400).json({ message: 'estudiante_id debe ser un número válido' });
 
+    const ids = String(subtema_ids).split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    if (ids.length === 0) return res.status(400).json({ message: 'subtema_ids debe contener al menos un id' });
+    if (ids.length > 100) return res.status(400).json({ message: 'Máximo 100 subtemas por petición' });
+
+    const [rows] = await sequelize.query(
+      'SELECT calcular_progreso_subtemas_bulk(:ids::integer[], :esId) AS r',
+      { replacements: { ids: `{${ids.join(',')}}`, esId } }
+    );
+    res.json(rows[0]?.r ?? {});
+  } catch (error) {
+    console.error('Error en obtenerProgresoBulkPorSubtema:', error);
+    res.status(500).json({ message: 'Error al obtener progreso bulk por subtema', error: error.message || error });
+  }
+};
+
+// Helper privado — delega todo el computo a la funcion SQL server-side (1 round trip).
+// Antes eran 6 rondas de queries ORM (~1800-2300 ms); ahora es 1 llamada (~180-350 ms).
+async function _calcularProgresoAsignatura(aId, esId, periodo) {
+  const [rows] = await sequelize.query(
+    'SELECT calcular_progreso_asignatura(:aId, :esId, :periodo) AS r',
+    { replacements: { aId, esId, periodo: periodo || null } }
+  );
+  const resultado = rows[0]?.r;
+  if (!resultado || !resultado._asignatura_found) {
+    const e = new Error('Asignatura no encontrada'); e.statusCode = 404; throw e;
+  }
+  if (!resultado._estudiante_found) {
+    const e = new Error('Estudiante no encontrado'); e.statusCode = 404; throw e;
+  }
+  delete resultado._asignatura_found;
+  delete resultado._estudiante_found;
+  return resultado;
+}
+
+// Obtener progreso de un estudiante por asignatura (para la barra de progreso)
 exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
   try {
     const { asignatura_id, estudiante_id, periodo } = req.query;
-
     if (!asignatura_id || !estudiante_id) {
       return res.status(400).json({ message: 'asignatura_id y estudiante_id son requeridos como parámetros de query' });
     }
-
     const aId  = parseInt(asignatura_id, 10);
     const esId = parseInt(estudiante_id, 10);
-
     if (isNaN(aId) || isNaN(esId)) {
       return res.status(400).json({ message: 'asignatura_id y estudiante_id deben ser números válidos' });
     }
-
-    // Si se pasa ?periodo=2026-A filtra evaluaciones y contenidos de ese periodo específico (para el informe de cohortes)
-    const periodoWhere = periodo ? { periodo_academico: periodo } : {};
-
-    // Ronda 1 — validación + conteos + temas, todo en paralelo (solo necesitan aId/esId)
-    const [Asignatura, estudiante, totalMiniproyectos, miniproyectosAprobados, miniproyectosDesaprobados, temas] = await Promise.all([
-      AsignaturaModel.findOne({ where: { id: aId, estado: true } }),
-      Estudiante.findByPk(esId, { attributes: ['id', 'periodo_academico'] }),
-      Miniproyecto.count({ where: { asignatura_id: aId } }),
-      Evaluacion.count({
-        where: { estudiante_id: esId, estado: 'APROBADO', miniproyecto_id: { [Op.ne]: null }, ...periodoWhere },
-        include: [{ model: Miniproyecto, where: { asignatura_id: aId }, required: true }],
-      }),
-      Evaluacion.count({
-        where: { estudiante_id: esId, estado: 'REPROBADO', miniproyecto_id: { [Op.ne]: null }, ...periodoWhere },
-        include: [{ model: Miniproyecto, where: { asignatura_id: aId }, required: true }],
-      }),
-      Tema.findAll({
-        where: { asignatura_id: aId, estado: true },
-        attributes: ['id', 'nombre', 'orden'],
-        order: [['orden', 'ASC'], ['id', 'ASC']],
-      }),
-    ]);
-
-    if (!Asignatura) return res.status(404).json({ message: 'Asignatura no encontrada' });
-    if (!estudiante) return res.status(404).json({ message: 'Estudiante no encontrado' });
-
-    const temaIds = temas.map(t => t.id);
-    if (temaIds.length === 0) {
-      return res.json({
-        Asignatura: { id: Asignatura.id, nombre: Asignatura.nombre },
-        estudiante_id: esId,
-        progreso: {},
-        miniproyectos: { total: totalMiniproyectos, aprobados: miniproyectosAprobados, desaprobados: miniproyectosDesaprobados },
-        temas: { total: 0, completados: 0, pendientes: 0, siguiente: 'Sin temas registrados', detalle: [] },
-        resumen: { totalItems: 0, itemsCompletados: 0, porcentajeTotalAsignatura: 0, estado: 'Iniciado' },
-      });
-    }
-
-    // Ronda 3 — contenidos y subtemas en paralelo
-    const [contenidosDelArea, subtemas] = await Promise.all([
-      Contenido.findAll({ where: { tema_id: { [Op.in]: temaIds }, estado: true }, attributes: ['id', 'tema_id'] }),
-      Subtema.findAll({ where: { tema_id: { [Op.in]: temaIds }, estado: true }, attributes: ['id', 'tema_id'] }),
-    ]);
-
-    const contenidoIdsDelArea = contenidosDelArea.map(c => c.id);
-    const subtemaIds = subtemas.map(s => s.id);
-
-    // Ronda 4 — secuencias y contenidos para ejercicios en paralelo
-    const [secuencias, contenidosParaEj] = await Promise.all([
-      contenidoIdsDelArea.length > 0
-        ? SecuenciaContenido.findAll({
-            where: { estado: true, [Op.or]: [{ contenido_origen_id: { [Op.in]: contenidoIdsDelArea } }, { contenido_destino_id: { [Op.in]: contenidoIdsDelArea } }] },
-            attributes: ['contenido_origen_id', 'contenido_destino_id'],
-          })
-        : Promise.resolve([]),
-      subtemaIds.length > 0
-        ? Contenido.findAll({ where: { subtema_id: { [Op.in]: subtemaIds }, estado: true }, attributes: ['id'] })
-        : Promise.resolve([]),
-    ]);
-
-    const contenidoIdsEnSecuencia = new Set();
-    secuencias.forEach(s => {
-      if (contenidoIdsDelArea.includes(s.contenido_origen_id)) contenidoIdsEnSecuencia.add(s.contenido_origen_id);
-      if (contenidoIdsDelArea.includes(s.contenido_destino_id)) contenidoIdsEnSecuencia.add(s.contenido_destino_id);
-    });
-    const contenidoIds = [...contenidoIdsEnSecuencia];
-    const contenidoIdsParaEj = contenidosParaEj.map(c => c.id);
-
-    // Ronda 5 — progreso, ejercicios y respuestas en paralelo
-    // Siempre traemos periodo_academico para poder calcular periodos_activos y filtrar en JS
-    const [progresoRows, ejercicios] = await Promise.all([
-      contenidoIds.length > 0
-        ? Progreso.findAll({
-            where: { estudiante_id: esId, contenido_id: { [Op.in]: contenidoIds }, completado: true, estado: 'Visualizado' },
-            attributes: ['contenido_id', 'periodo_academico'],
-          })
-        : Promise.resolve([]),
-      contenidoIdsParaEj.length > 0
-        ? Ejercicio.findAll({ where: { contenido_id: { [Op.in]: contenidoIdsParaEj } }, attributes: ['id', 'contenido_id'] })
-        : Promise.resolve([]),
-    ]);
-
-    // Periodos distintos en los que el estudiante tuvo actividad de contenidos en esta asignatura
-    const periodosActivos = [...new Set(progresoRows.map(r => r.periodo_academico).filter(Boolean))];
-
-    // Si se solicitó un periodo específico, filtrar contenidos de ese periodo; si no, usar todos
-    const progresoFiltrados = periodo
-      ? progresoRows.filter(r => r.periodo_academico === periodo)
-      : progresoRows;
-
-    // Usamos Set.size para contar contenidos ÚNICOS visualizados (evita doble conteo si hay
-    // registros de múltiples periodos para el mismo contenido cuando no se filtra por periodo)
-    const visualizadosSet = new Set(progresoFiltrados.map(r => Number(r.contenido_id)));
-    const ejercicioIds = ejercicios.map(e => e.id);
-    const totalEjercicios = ejercicioIds.length;
-    const contenidosVisualizados = visualizadosSet.size;
-    const totalContenidos = contenidoIds.length;
-
-    // Ronda 6 — respuestas de ejercicios (filtradas por el periodo solicitado o el periodo actual del estudiante)
-    const periodoEstudiante = periodo || estudiante.periodo_academico;
-    const respuestasRows = ejercicioIds.length > 0
-      ? await RespuestaEstudianteEjercicio.findAll({
-          where: { estudiante_id: esId, ejercicio_id: { [Op.in]: ejercicioIds }, estado: { [Op.in]: ['ENVIADO', 'APROBADO'] }, ...(periodoEstudiante ? { periodo_academico: periodoEstudiante } : {}) },
-          attributes: ['ejercicio_id', 'estado'],
-        })
-      : [];
-
-    const ejerciciosAprobadosSet = new Set(respuestasRows.filter(r => r.estado === 'APROBADO').map(r => Number(r.ejercicio_id)));
-    const ejerciciosCompletados = respuestasRows.length;
-
-    // Cálculo del porcentaje global
-    let totalItems = 0;
-    let itemsCompletados = 0;
-    if (totalContenidos > 0) { totalItems += totalContenidos; itemsCompletados += contenidosVisualizados; }
-    if (totalEjercicios > 0) { totalItems += totalEjercicios; itemsCompletados += ejerciciosCompletados; }
-    const porcentajeProgreso = totalItems > 0 ? Math.round((itemsCompletados / totalItems) * 100) : 0;
-
-    // Mapa tema → contenidos y ejercicios (en JS, sin más queries)
-    const contenidoToTema = new Map(contenidosDelArea.filter(c => contenidoIdsEnSecuencia.has(c.id)).map(c => [Number(c.id), Number(c.tema_id)]));
-    const contenidosPorTemaMap = new Map();
-    for (const [cId, tId] of contenidoToTema) {
-      if (!contenidosPorTemaMap.has(tId)) contenidosPorTemaMap.set(tId, []);
-      contenidosPorTemaMap.get(tId).push(cId);
-    }
-
-    const ejerciciosPorTemaMap = new Map();
-    for (const ej of ejercicios) {
-      const tId = contenidoToTema.get(Number(ej.contenido_id));
-      if (!tId) continue;
-      if (!ejerciciosPorTemaMap.has(tId)) ejerciciosPorTemaMap.set(tId, []);
-      ejerciciosPorTemaMap.get(tId).push(Number(ej.id));
-    }
-
-    let temasCompletados = 0;
-    let siguienteTemaNombre = null;
-    const temasDetalle = temas.map(t => {
-      const cIds = contenidosPorTemaMap.get(Number(t.id)) || [];
-      const eIds = ejerciciosPorTemaMap.get(Number(t.id)) || [];
-      const vistos   = cIds.filter(id => visualizadosSet.has(id)).length;
-      const aprobados = eIds.filter(id => ejerciciosAprobadosSet.has(id)).length;
-      const totalTotal = cIds.length + eIds.length;
-      const completado = totalTotal > 0 && (vistos + aprobados) === totalTotal;
-      if (completado) temasCompletados++;
-      else if (!siguienteTemaNombre) siguienteTemaNombre = t.nombre;
-      return { id: t.id, nombre: t.nombre, totalContenidos: cIds.length, contenidosVistos: vistos, totalEjercicios: eIds.length, ejerciciosAprobados: aprobados, completado };
-    });
-
-    const progresoDetallado = {};
-    if (totalContenidos > 0) progresoDetallado.contenidos = { total: totalContenidos, completados: contenidosVisualizados, porcentaje: Math.round((contenidosVisualizados / totalContenidos) * 100) };
-    if (totalEjercicios > 0) progresoDetallado.ejercicios = { total: totalEjercicios, completados: ejerciciosCompletados, porcentaje: Math.round((ejerciciosCompletados / totalEjercicios) * 100) };
-
-    res.json({
-      Asignatura: { id: Asignatura.id, nombre: Asignatura.nombre },
-      estudiante_id: esId,
-      progreso: progresoDetallado,
-      miniproyectos: { total: totalMiniproyectos, aprobados: miniproyectosAprobados, desaprobados: miniproyectosDesaprobados },
-      temas: {
-        total: temas.length,
-        completados: temasCompletados,
-        pendientes: temas.length - temasCompletados,
-        siguiente: siguienteTemaNombre || (temas.length > 0 ? 'Todos los temas completados' : 'Sin temas registrados'),
-        detalle: temasDetalle,
-      },
-      resumen: {
-        totalItems,
-        itemsCompletados,
-        porcentajeTotalAsignatura: porcentajeProgreso,
-        estado: porcentajeProgreso === 100 ? 'Completado' : porcentajeProgreso >= 50 ? 'En progreso' : 'Iniciado',
-      },
-      // Lista de periodos académicos en los que el estudiante tiene actividad de contenidos en esta asignatura
-      // Útil para el informe de cohortes: permite saber si el estudiante debe aparecer en más de un cohorte
-      periodos_activos: periodosActivos,
-    });
-
+    const resultado = await _calcularProgresoAsignatura(aId, esId, periodo);
+    res.json(resultado);
   } catch (error) {
+    if (error.statusCode) return res.status(error.statusCode).json({ message: error.message });
     console.error('Error en obtenerProgresoEstudiantePorAsignatura:', error);
     res.status(500).json({ message: 'Error al obtener progreso del estudiante por asignatura', error: error.message || error });
+  }
+};
+
+// Obtener progreso de múltiples asignaturas en una sola petición — elimina el N+1 HTTP del Dashboard
+exports.obtenerProgresoBulkPorAsignatura = async (req, res) => {
+  try {
+    const { estudiante_id, asignatura_ids, periodo } = req.query;
+    if (!estudiante_id || !asignatura_ids) {
+      return res.status(400).json({ message: 'estudiante_id y asignatura_ids son requeridos' });
+    }
+    const esId = parseInt(estudiante_id, 10);
+    if (isNaN(esId)) {
+      return res.status(400).json({ message: 'estudiante_id debe ser un número válido' });
+    }
+    const ids = String(asignatura_ids).split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n));
+    if (ids.length === 0) {
+      return res.status(400).json({ message: 'asignatura_ids debe contener al menos un id numérico' });
+    }
+    if (ids.length > 50) {
+      return res.status(400).json({ message: 'Máximo 50 asignaturas por petición' });
+    }
+    const resultados = await Promise.all(
+      ids.map(aId =>
+        _calcularProgresoAsignatura(aId, esId, periodo).catch(err => ({
+          error: err.message,
+          statusCode: err.statusCode || 500,
+        }))
+      )
+    );
+    const respuesta = {};
+    ids.forEach((aId, i) => { respuesta[aId] = resultados[i]; });
+    res.json(respuesta);
+  } catch (error) {
+    console.error('Error en obtenerProgresoBulkPorAsignatura:', error);
+    res.status(500).json({ message: 'Error al obtener progreso bulk por asignatura', error: error.message || error });
   }
 };
 
@@ -6968,4 +6871,3 @@ exports.obtenerSiguienteContenido = async (req, res) => {
   }
 
 };
-

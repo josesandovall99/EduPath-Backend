@@ -12,6 +12,8 @@ router.get('/contenidos-mas-vistos', autenticacionUsuario, requiereAdminODocente
 router.get('/ranking-visualizaciones', autenticacionUsuario, requiereAdminODocente, controller.obtenerRankingVisualizaciones);
 router.get('/reporte-fallos', autenticacionUsuario, requiereAdminODocente, controller.obtenerReporteFallos);
 router.get('/reporte-pdf', autenticacionUsuario, requiereAdminODocente, controller.generarPdfReporte);
+router.get('/bulk-por-asignatura', autenticacionUsuario, controller.obtenerProgresoBulkPorAsignatura);
+router.get('/bulk-por-subtema', autenticacionUsuario, controller.obtenerProgresoBulkPorSubtema);
 router.get('/por-asignatura', autenticacionUsuario, controller.obtenerProgresoEstudiantePorAsignatura);
 router.get('/por-tema', autenticacionUsuario, controller.obtenerProgresoEstudiantePorTema);
 router.get('/por-subtema', autenticacionUsuario, controller.obtenerProgresoEstudiantePorSubtema);
