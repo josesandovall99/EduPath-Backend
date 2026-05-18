@@ -2,7 +2,6 @@ const { sequelize, Ejercicio, Actividad, Contenido, TipoActividad, RespuestaEstu
 const evaluacionController = require('./evaluacion.controller');
 
 // Ejercicios de una asignatura con completado incluido — 1 JOIN reemplaza 4 rondas secuenciales.
-// Dispara al montar TheoryContentView junto con Phase 1 (parallel con subtemas/progreso).
 exports.getEjerciciosConCompletado = async (req, res) => {
   try {
     const { asignatura_id, estudiante_id } = req.query;
@@ -37,7 +36,6 @@ exports.getEjerciciosConCompletado = async (req, res) => {
 
     res.json(ejercicios);
   } catch (error) {
-    console.error('Error en getEjerciciosConCompletado:', error);
     res.status(500).json({ message: 'Error al obtener ejercicios con completado', error: error.message });
   }
 };
@@ -71,7 +69,6 @@ exports.createEjercicio = async (req, res) => {
   try {
     const { actividad, ejercicio } = req.body;
 
-    // Validar contenido
     const contenidoExistente = await Contenido.findByPk(ejercicio.contenido_id, {
       include: [{ model: Tema, attributes: ['asignatura_id'] }]
     });
@@ -93,7 +90,6 @@ exports.createEjercicio = async (req, res) => {
       }
     }
 
-    // Validar tipo_actividad_id
     if (!actividad || !actividad.tipo_actividad_id) {
       await t.rollback();
       return res.status(400).json({ message: "tipo_actividad_id es requerido en actividad" });
@@ -104,10 +100,8 @@ exports.createEjercicio = async (req, res) => {
       return res.status(400).json({ message: "El tipo_actividad_id especificado no existe" });
     }
 
-    // Crear la actividad primero
     const nuevaActividad = await Actividad.create(actividad, { transaction: t });
 
-    // Crear el ejercicio usando el mismo id de la actividad
     // Validar tipo_ejercicio
     const TIPOS_PERMITIDOS = ['Compilador', 'Diagramas UML', 'Preguntas', 'Opción única', 'Ordenar', 'Relacionar', 'Simulación GP'];
     const tipo = ejercicio.tipo_ejercicio || 'Compilador';
@@ -209,7 +203,6 @@ exports.createEjercicio = async (req, res) => {
       { transaction: t }
     );
 
-    // Confirmar transacción
     await t.commit();
 
     res.status(201).json({
@@ -586,7 +579,6 @@ exports.resolverEjercicio = async (req, res) => {
       return res.status(404).json({ message: 'Ejercicio no encontrado' });
     }
 
-    // Rama por tipo de ejercicio
     if (ejercicio.tipo_ejercicio === 'Compilador') {
       // Compatibilidad: comparación simple por texto si usan este endpoint
       const normalizarTexto = (texto) =>
@@ -616,7 +608,6 @@ exports.resolverEjercicio = async (req, res) => {
       const diagramPayload = diagram || (respuestaBody && respuestaBody.diagram);
       const cfg = ejercicio.configuracion || {};
 
-      // Validaciones mínimas de entrada y reglas configuradas por el administrador
       if (!diagramPayload) {
         return res.status(400).json({ message: 'El campo "diagram" es requerido para resolver ejercicios UML.' });
       }
@@ -846,10 +837,8 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       return evaluacionController.evaluarCompilador(req, res);
     }
 
-    // Normalizar respuesta para evaluación
     const respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
 
-    // Evaluar usando la misma lógica de resolver
     let esCorrecta = false;
     let puntosObtenidos = 0;
     let detalle = undefined;
@@ -871,7 +860,6 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       detalle = { errors: result.errors, warnings: result.warnings };
     } else if (ejercicio.tipo_ejercicio === 'Opción única') {
-      // Config: { enunciado, opciones: string[], respuestaCorrecta: string }
       const cfg = ejercicio.configuracion || { tipo: 'opcion-unica', opciones: [], respuestaCorrecta: '' };
       const norm = (t) => (t || '').toString().trim();
       const recibido = norm(respuestaPayload?.opcion ?? respuestaPayload?.respuesta ?? '');
@@ -880,7 +868,6 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       retroalimentacion = esCorrecta ? '¡Correcto!' : 'Respuesta incorrecta.';
     } else if (ejercicio.tipo_ejercicio === 'Ordenar') {
-      // Config: { enunciado, items: string[] } en orden correcto
       const cfg = ejercicio.configuracion || { tipo: 'ordenar', items: [] };
       const orden = respuestaPayload?.orden || [];
       const normArr = (arr) => (arr || []).map(x => (x || '').toString().trim());
@@ -888,18 +875,15 @@ exports.enviarRespuestaEjercicio = async (req, res) => {
       puntosObtenidos = esCorrecta ? ejercicio.puntos : 0;
       retroalimentacion = esCorrecta ? 'Orden correcto.' : 'El orden no es correcto.';
     } else if (ejercicio.tipo_ejercicio === 'Relacionar') {
-      // Config: { enunciado, pares: [{ concepto, definicion }] }
       const cfg = ejercicio.configuracion || { tipo: 'relacionar', pares: [] };
       const conceptos = (cfg.pares || []).map(p => p.concepto);
       const definiciones = (cfg.pares || []).map(p => p.definicion);
       let ok = true;
       if (Array.isArray(respuestaPayload?.parejas)) {
-        // Parejas de índices: correcto si conceptoIndex === definicionIndex para cada par
         for (const pr of respuestaPayload.parejas) {
           if (pr.conceptoIndex !== pr.definicionIndex) { ok = false; break; }
         }
       } else if (respuestaPayload?.matches) {
-        // matches: { concepto: definicion }
         for (const [c, d] of Object.entries(respuestaPayload.matches)) {
           const idx = conceptos.findIndex(x => x === c);
           if (idx < 0 || definiciones[idx] !== d) { ok = false; break; }

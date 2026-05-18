@@ -10,8 +10,7 @@ const getClientIp = (req) => {
 
 const createRateLimiter = ({ windowMs, max, message }) => {
   return (req, res, next) => {
-    // In local development we avoid blocking normal testing flows.
-    // Set ENFORCE_RATE_LIMIT_DEV=true to test limiter behavior manually.
+    // En dev se omite el límite; activar con ENFORCE_RATE_LIMIT_DEV=true para probar manualmente.
     if (process.env.NODE_ENV !== 'production' && process.env.ENFORCE_RATE_LIMIT_DEV !== 'true') {
       return next();
     }

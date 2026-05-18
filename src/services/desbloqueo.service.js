@@ -1,4 +1,4 @@
-const { Contenido, Subtema, Tema, Progreso, Asignatura, SecuenciaContenido } = require('../models');
+﻿const { Contenido, Subtema, Tema, Progreso, Asignatura, SecuenciaContenido } = require('../models');
 
 const { obtenerSubtemasOrdenadosPorSecuenciaParaTema } = require('../utils/subtemaOrdenSecuencia');
 
@@ -148,7 +148,6 @@ exports.verificarContenidoDesbloqueado = async (estudianteId, contenidoId) => {
 
   } catch (error) {
 
-    console.error('Error en verificarContenidoDesbloqueado:', error);
 
     return { desbloqueado: false, razon: 'Error al verificar', error: error.message };
 
@@ -218,7 +217,6 @@ exports.verificarSubtemaCompleto = async (estudianteId, subtemaId) => {
 
   } catch (error) {
 
-    console.error('Error en verificarSubtemaCompleto:', error);
 
     return { completo: false, totalContenidos: 0, contenidosCompletados: 0, error: error.message };
 
@@ -294,7 +292,6 @@ exports.verificarTemaCompleto = async (estudianteId, temaId) => {
 
   } catch (error) {
 
-    console.error('Error en verificarTemaCompleto:', error);
 
     return { completo: false, totalSubtemas: 0, subtemasCompletados: 0, error: error.message };
 
@@ -356,7 +353,6 @@ exports.obtenerEstadoContenidosTema = async (estudianteId, temaId) => {
       };
     });
   } catch (error) {
-    console.error('Error en obtenerEstadoContenidosTema:', error);
     throw error;
   }
 };
@@ -420,7 +416,6 @@ exports.obtenerEstadoSubtemasTema = async (estudianteId, temaId) => {
       };
     });
   } catch (error) {
-    console.error('Error en obtenerEstadoSubtemasTema:', error);
     throw error;
   }
 };
@@ -505,7 +500,6 @@ exports.obtenerEstadoTemasAsignatura = async (estudianteId, asignaturaId) => {
       };
     });
   } catch (error) {
-    console.error('Error en obtenerEstadoTemasAsignatura:', error);
     throw error;
   }
 };
@@ -536,7 +530,6 @@ exports.obtenerSiguienteContenido = async (estudianteId, temaId) => {
 
   } catch (error) {
 
-    console.error('Error en obtenerSiguienteContenido:', error);
 
     throw error;
 

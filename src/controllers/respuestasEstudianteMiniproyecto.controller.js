@@ -1,4 +1,4 @@
-const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto, Evaluacion } = require("../models");
+﻿const { RespuestaEstudianteMiniproyecto, Estudiante, Miniproyecto, Evaluacion } = require("../models");
 const { getConceptCoverageFromGroup, normalizeManagementMiniproyectoPayload } = require('../utils/miniproyectoRubric');
 
 const getAuthenticatedStudentId = (req) => {
@@ -1340,7 +1340,6 @@ const verificarMiniproyectoCompletado = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error en verificarMiniproyectoCompletado:', error);
     res.status(500).json({
       message: "Error al verificar estado del miniproyecto",
       error: error.message || error

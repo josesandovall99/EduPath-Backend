@@ -1,4 +1,4 @@
-const sequelize = require('../config/database');
+﻿const sequelize = require('../config/database');
 const { Op } = require('sequelize');
 const fsPromises = require('fs').promises;
 const path = require('path');
@@ -369,7 +369,6 @@ exports.resolveActiveChatbot = async (req, res) => {
       strict_mode: !allowFallback,
     });
   } catch (error) {
-    console.error('[chatbots] resolveActiveChatbot', error.message, error.parent?.detail || '');
     return res.status(500).json({
       mensaje: 'Error al resolver chatbot',
       error: error.message,
@@ -434,7 +433,6 @@ exports.createChatbot = async (req, res) => {
 
     return res.status(201).json(serializeChatbot(created));
   } catch (error) {
-    console.error('[chatbots] createChatbot', error.message, error.parent?.detail || '');
     return res.status(500).json({
       mensaje: 'Error al crear chatbot',
       error: error.message,
@@ -457,7 +455,6 @@ exports.getChatbots = async (req, res) => {
 
     return res.json(chatbots.map(serializeChatbot));
   } catch (error) {
-    console.error('[chatbots] getChatbots', error.message, error.parent?.detail || '');
     return res.status(500).json({
       mensaje: 'Error al obtener chatbots',
       error: error.message,
@@ -790,9 +787,7 @@ exports.chatWithManagedChatbot = async (req, res) => {
         source_pdf: m.metadata?.source_pdf || m.metadata?.source || 'desconocido',
         chatbot_documento_id: m.metadata?.chatbot_documento_id ?? null,
       }));
-      console.log(`[RAG DEBUG] chatbot=${chatbot.id} question="${question.slice(0, 80)}" topK=${effectiveTopK} chunks=${retrievalDebug.chunksLoaded} matches=${JSON.stringify(brief)}`);
     } else {
-      console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
     }
     if (!result.success && typeof result.error === 'string' && result.error.toLowerCase().includes('timeout')) {
       return res.status(504).json(result);
@@ -855,9 +850,7 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
         source_pdf: m.metadata?.source_pdf || m.metadata?.source || 'desconocido',
         chatbot_documento_id: m.metadata?.chatbot_documento_id ?? null,
       }));
-      console.log(`[RAG DEBUG] chatbot=${chatbot.id} question="${question.slice(0, 80)}" topK=${effectiveTopK} chunks=${retrievalDebug.chunksLoaded} matches=${JSON.stringify(brief)}`);
     } else {
-      console.warn(`[RAG DEBUG] chatbot=${chatbot.id} retrieval_error=${retrievalDebug?.error || 'sin_detalle'}`);
     }
 
     // Si el modelo devolvió fallback o no generó nada, aplicar guardrail extractivo.
@@ -881,7 +874,7 @@ exports.chatWithManagedChatbotStream = async (req, res) => {
   }
 };
 
-// Helpers to detect and coerce plain text into a reasonable Markdown form.
+// Utilidades para detectar y convertir texto plano a Markdown.
 function looksLikeMarkdown(text) {
   if (!text || typeof text !== 'string') return false;
   if (text.includes('\n')) return true;
@@ -895,13 +888,9 @@ function forceMarkdown(text) {
   if (!text || typeof text !== 'string') return text;
   let t = text.trim();
 
-  // Insert newlines before inline numeric list markers
   t = t.replace(/\s+(?=\d+\.\s+)/g, '\n');
-
-  // Bold common headings
   t = t.replace(/(^|\n)\s*(Objetivo|Contexto|Prioridades|Prioridad|Resumen|Resultado)\s*:\s*/gi, (m, p1, p2) => `\n**${p2.trim()}**: `);
 
-  // If still single-line, split into sentences and make numbered list
   if (!t.includes('\n')) {
     const parts = t.split(/\.\s+/).map(s => s.trim()).filter(Boolean);
     if (parts.length > 1) {
@@ -915,16 +904,9 @@ function forceMarkdown(text) {
 function transformStreamingChunk(chunk) {
   if (!chunk || typeof chunk !== 'string') return chunk;
 
-  // Strip common fenced code markers for markdown (```markdown or ```)
   let c = chunk.replace(/```\s*markdown\s*/gi, '').replace(/```/g, '');
-
-  // Remove leading accidental 'markdown -' or 'markdown:' prefixes
   c = c.replace(/^\s*markdown\s*[-:\s]+/i, '');
-
-  // If the chunk contains inline numbered items like "1. ... 2. ...", insert newlines
   c = c.replace(/\s+(?=\d+\.\s+)/g, '\n');
-
-  // Normalize leading list markers that might be joined: ensure a space after dash
   c = c.replace(/(^|\n)\s*-\s*/g, '\n- ');
 
   return c;

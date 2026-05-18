@@ -59,7 +59,7 @@ app.use(cors(corsOptions));
 app.use(compression({ level: 6 }));
 
 app.use((req, res, next) => {
-    // Baseline OWASP-recommended security headers for API responses.
+    // Cabeceras de seguridad base recomendadas por OWASP para respuestas de API.
     res.set('X-Content-Type-Options', 'nosniff');
     res.set('X-Frame-Options', 'DENY');
     res.set('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -92,7 +92,6 @@ app.use(express.urlencoded({ limit: '5mb', extended: true }));
 // 1. Ruta del Compilador (Prioridad)
 const respuestasEjercicioRouter = require('./routes/respuestasEstudianteEjercicio.routes');
 app.use('/respuestasEstudianteEjercicio', respuestasEjercicioRouter);
-console.log('Ruta /respuestasEstudianteEjercicio registrada');
 
 // 2. Rutas Académicas y Usuarios
 app.use('/asignaturas', require('./routes/asignatura.routes'));
@@ -239,8 +238,6 @@ db.sequelize.sync(syncOptions)
         console.log('Base de datos sincronizada con exito');
 
         await inicializarFuncionesSQL();
-
-        console.log('RAG legacy global deshabilitado. Se usa únicamente /chatbots/:id');
 
         app.listen(PORT, () => {
             console.log(`Servidor corriendo en http://localhost:${PORT}`);

@@ -1,8 +1,5 @@
 const { RespuestaEstudianteEjercicio, Estudiante, Ejercicio, Evaluacion } = require("../models");
 
-/* ============================================================
-   1. CREAR RESPUESTA (POST)
-============================================================ */
 const crearRespuestaEjercicio = async (req, res) => {
     try {
         const { respuesta, estudiante_id, ejercicio_id, estado } = req.body;
@@ -19,12 +16,8 @@ const crearRespuestaEjercicio = async (req, res) => {
         const estudiante = await Estudiante.findByPk(estudiante_id);
         const periodo_academico = estudiante?.periodo_academico || "2026-A";
 
-        // Normalizar respuesta: admitir string/objeto/arreglo
-        let respuestaPayload = respuesta;
-        if (typeof respuesta === 'string') {
-            respuestaPayload = { texto: respuesta };
-        }
-        // Nota: si a futuro se reciben archivos, se pueden anexar en respuestaPayload.archivos
+        // Normalizar respuesta: admitir string, objeto o arreglo
+        let respuestaPayload = typeof respuesta === 'string' ? { texto: respuesta } : respuesta;
 
         // Un registro por estudiante+ejercicio+periodo; cada periodo inicia desde cero
         const existente = await RespuestaEstudianteEjercicio.findOne({
@@ -61,19 +54,10 @@ const crearRespuestaEjercicio = async (req, res) => {
             mensaje: 'Intento creado correctamente'
         });
     } catch (error) {
-        console.error("Error en crearRespuesta:", error.message);
         res.status(500).json({ error: "Error al crear la respuesta", detalle: error.message });
     }
 };
 
-/* ============================================================
-   2. OBTENER RESULTADO (GET)
-============================================================ */
-// Ya no hay integración con Judge0 en este módulo según el diagrama
-
-/* ============================================================
-   3. CRUD ESTÁNDAR (Faltaban estas definiciones)
-============================================================ */
 const obtenerRespuestasEjercicio = async (req, res) => {
     try {
         const respuestas = await RespuestaEstudianteEjercicio.findAll({
@@ -130,7 +114,6 @@ const eliminarRespuestaEjercicio = async (req, res) => {
     }
 };
 
-// Verificar si un ejercicio está completado/aprobado por un estudiante
 const verificarEjercicioCompletado = async (req, res) => {
     try {
         const { ejercicio_id, estudiante_id } = req.query;
@@ -141,22 +124,18 @@ const verificarEjercicioCompletado = async (req, res) => {
             });
         }
 
-        // Convertir a números
         const eId = parseInt(ejercicio_id, 10);
         const esId = parseInt(estudiante_id, 10);
 
-        // Validar que sean números válidos
         if (isNaN(eId) || isNaN(esId)) {
             return res.status(400).json({
                 message: "ejercicio_id y estudiante_id deben ser números válidos"
             });
         }
 
-        // Buscar periodo del estudiante
         const estudianteObj = await Estudiante.findByPk(esId, { attributes: ['id', 'periodo_academico'] });
         const periodoAcademico = estudianteObj?.periodo_academico || null;
 
-        // Buscar evaluación aprobada para este estudiante y ejercicio en el período actual
         const evalWhere = { estudiante_id: esId, ejercicio_id: eId, estado: 'Aprobado' };
         if (periodoAcademico) evalWhere.periodo_academico = periodoAcademico;
         const evaluacion = await Evaluacion.findOne({ where: evalWhere });
@@ -173,7 +152,6 @@ const verificarEjercicioCompletado = async (req, res) => {
             });
         }
 
-        // Si no hay evaluación aprobada, retornar que no está completado
         res.json({
             completado: false,
             ejercicio_id: eId,
@@ -183,7 +161,6 @@ const verificarEjercicioCompletado = async (req, res) => {
         });
 
     } catch (error) {
-        console.error('Error en verificarEjercicioCompletado:', error);
         res.status(500).json({
             message: "Error al verificar estado del ejercicio",
             error: error.message || error
@@ -191,9 +168,6 @@ const verificarEjercicioCompletado = async (req, res) => {
     }
 };
 
-/* ============================================================
-   EXPORTACIONES
-============================================================ */
 module.exports = {
     crearRespuestaEjercicio,
     obtenerRespuestasEjercicio,

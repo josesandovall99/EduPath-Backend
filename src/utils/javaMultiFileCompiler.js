@@ -1,9 +1,5 @@
-/**
- * Merges three Java source files (Main, Modelo, ConsolaIO) into a single compilable
- * source file for submission to Judge0. Only Main keeps its `public` modifier;
- * ConsolaIO and Modelo are downgraded to package-private so Java allows them in
- * a single file named Main.java.
- */
+// Fusiona tres archivos Java (Main, Modelo, ConsolaIO) en un único fuente compilable para Judge0.
+// Solo Main conserva `public`; Modelo y ConsolaIO pasan a package-private para permitir una sola clase pública.
 
 function extractImportsAndBody(code) {
   const lines = (code || '').split('\n');
@@ -23,21 +19,16 @@ function extractImportsAndBody(code) {
 }
 
 function removePublicFromClassDecl(code) {
-  // Only removes `public` from top-level class/interface/enum declarations.
-  // Does NOT touch `public` inside methods or fields.
+  // Solo elimina `public` de declaraciones de clase/interfaz/enum en nivel superior.
   return code.replace(/^(\s*)public\s+(class|interface|enum)\s+/gm, '$1$2 ');
 }
 
-/**
- * Merges Main.java, Modelo (e.g. SeguridadBancaria.java), and ConsolaIO.java into
- * one source string. Returns the merged source ready for Judge0 submission.
- */
 function mergeMvcFiles(mainCode, modeloCode, consolaIOCode) {
   const main = extractImportsAndBody(mainCode || '');
   const modelo = extractImportsAndBody(removePublicFromClassDecl(modeloCode || ''));
   const consolaIO = extractImportsAndBody(removePublicFromClassDecl(consolaIOCode || ''));
 
-  // Deduplicate imports (preserve order: consolaIO first, then modelo, then main)
+  // Deduplicar imports (orden: consolaIO primero, luego modelo, luego main)
   const seen = new Set();
   const allImports = [];
   for (const imp of [...consolaIO.imports, ...modelo.imports, ...main.imports]) {

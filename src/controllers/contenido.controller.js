@@ -294,18 +294,7 @@ async function resolveContenidoScope(req) {
   return { asignaturaId, temaId, subtemaId };
 }
 
-/**
- * Función auxiliar para manejar la redirección automática cuando un contenido es eliminado o inactivado
- * 
- * Lógica:
- * - Si el contenido está en medio de una secuencia (A → B → C), crea A → C
- * - Si el contenido es solo origen o solo destino, elimina la secuencia
- * - Valida que no se creen ciclos
- * - Valida que la nueva relación no exista antes de crearla
- * 
- * @param {number} contenidoId - ID del contenido que se elimina/inactiva
- * @returns {Object} Información sobre las secuencias redirigidas y eliminadas
- */
+// Al inactivar un contenido B en cadena A→B→C, crea A→C y elimina las secuencias que lo involucran.
 async function handleSecuenciaRedirecccion(contenidoId) {
   const resultado = {
     secuenciasEliminadas: [],
@@ -339,7 +328,6 @@ async function handleSecuenciaRedirecccion(contenidoId) {
             continue;
           }
 
-          // Verificar que la nueva relación no exista ya
           const relacionExistente = await SecuenciaContenido.findOne({
             where: {
               contenido_origen_id,
@@ -354,7 +342,6 @@ async function handleSecuenciaRedirecccion(contenidoId) {
             continue;
           }
 
-          // Crear la nueva secuencia
           const nuevaSecuencia = await SecuenciaContenido.create({
             contenido_origen_id,
             contenido_destino_id,
@@ -401,7 +388,6 @@ async function handleSecuenciaRedirecccion(contenidoId) {
   }
 }
 
-// Crear un contenido con validación de tema_id y subtema_id
 exports.createContenido = async (req, res) => {
   try {
     const validation = await validateContenidoPayload(req, req.body);
@@ -409,7 +395,6 @@ exports.createContenido = async (req, res) => {
       return res.status(validation.error.status).json({ message: validation.error.message });
     }
 
-    // Crear el contenido
     const nuevoContenido = await Contenido.create(validation.payload);
 
     res.status(201).json(nuevoContenido);
@@ -534,10 +519,7 @@ exports.deleteContenido = async (req, res) => {
       });
     }
 
-    // Manejar la redirección automática de secuencias
     const resultadoRedirecccion = await handleSecuenciaRedirecccion(req.params.id);
-
-    // Inhabilitar el contenido
     await contenido.update({ estado: false });
 
     res.json({
@@ -554,7 +536,6 @@ exports.getContenidosPorSubtema = async (req, res) => {
   try {
     const { subtemaId } = req.params;
 
-    // Validar que el subtema exista
     const subtema = await Subtema.findByPk(subtemaId);
     if (!subtema) {
       return res.status(404).json({ message: "Subtema no encontrado" });
@@ -571,7 +552,6 @@ exports.getContenidosPorSubtema = async (req, res) => {
       }
     }
 
-    // Buscar contenidos asociados al subtema
     const contenidos = await Contenido.findAll({
       where: {
         subtema_id: subtemaId,
@@ -585,8 +565,7 @@ exports.getContenidosPorSubtema = async (req, res) => {
   }
 };
 
-// Toggle del estado de un contenido (inactivo/activo) con redirección automática de secuencias
-// NOTA: Este método se activa cuando el modelo Contenido tenga un campo 'estado'
+// Toggle del estado de un contenido con redirección automática de secuencias
 exports.toggleEstadoContenido = async (req, res) => {
   try {
     const contenido = await Contenido.findByPk(req.params.id);
@@ -608,7 +587,6 @@ exports.toggleEstadoContenido = async (req, res) => {
         redirecccion: resultadoRedirecccion
       });
     } else {
-      // Si se reactiva, simplemente cambiar el estado sin afectar secuencias
       await contenido.update({ estado: true });
 
       return res.json({
@@ -663,7 +641,6 @@ exports.getContenidosPorasignaturaNombre = async (req, res) => {
   try {
     const { nombreAsignatura } = req.params;
 
-    // Buscar el asignatura por nombre
     const asignatura = await AsignaturaModel.findOne({
       where: {
         nombre: nombreAsignatura,
@@ -678,7 +655,6 @@ exports.getContenidosPorasignaturaNombre = async (req, res) => {
       return res.status(403).json({ message: "Acceso denegado: asignatura fuera de tu alcance" });
     }
 
-    // Buscar temas de esa asignatura
     const temas = await Tema.findAll({ where: { asignatura_id: asignatura.id, estado: true } });
     const temaIds = temas.map(t => t.id);
 
@@ -757,7 +733,6 @@ exports.marcarContenidoVisualizado = async (req, res) => {
       });
     }
 
-    // Verificar que el contenido existe
     const contenido = await Contenido.findByPk(contenido_id);
     if (!contenido) {
       return res.status(404).json({
@@ -771,7 +746,6 @@ exports.marcarContenidoVisualizado = async (req, res) => {
       });
     }
 
-    // Verificar que el estudiante existe
     const estudiante = await Estudiante.findByPk(estudiante_id);
     if (!estudiante) {
       return res.status(404).json({
@@ -779,12 +753,9 @@ exports.marcarContenidoVisualizado = async (req, res) => {
       });
     }
 
-    // Marcar el contenido como visualizado
     await contenido.update({ visualizado: true });
 
-    // Buscar o crear el registro de progreso para este estudiante y contenido
-    // Se incluye periodo_academico en el where para que cada periodo genere un registro propio
-    // (el historial de periodos anteriores se conserva y la vista del estudiante lo sigue mostrando como visto)
+    // Cada periodo genera su propio registro de progreso; el historial de periodos anteriores se conserva.
     const periodoActual = estudiante.periodo_academico || '2026-A';
     const [progreso, created] = await Progreso.findOrCreate({
       where: {
@@ -848,18 +819,15 @@ exports.obtenerEstadoVisualizacion = async (req, res) => {
       });
     }
 
-    // Convertir a números
     const cId = parseInt(contenido_id, 10);
     const eId = parseInt(estudiante_id, 10);
 
-    // Validar que sean números válidos
     if (isNaN(cId) || isNaN(eId)) {
       return res.status(400).json({
         message: "contenido_id y estudiante_id deben ser números válidos"
       });
     }
 
-    // Buscar el registro de progreso
     const progreso = await Progreso.findOne({
       where: {
         estudiante_id: eId,
@@ -867,7 +835,6 @@ exports.obtenerEstadoVisualizacion = async (req, res) => {
       }
     });
 
-    // Si no existe registro de progreso, retornar que no ha sido visualizado
     if (!progreso) {
       return res.json({
         visualizado: false,
@@ -892,7 +859,6 @@ exports.obtenerEstadoVisualizacion = async (req, res) => {
     });
 
   } catch (error) {
-    console.error('Error en obtenerEstadoVisualizacion:', error);
     res.status(500).json({
       message: "Error al obtener estado de visualización",
       error: error.message || error

@@ -1,4 +1,4 @@
-const { SecuenciaSubtema, Subtema, Tema, sequelize } = require('../models');
+﻿const { SecuenciaSubtema, Subtema, Tema, sequelize } = require('../models');
 const { obtenerSubtemasOrdenadosPorSecuenciaParaTema } = require('../utils/subtemaOrdenSecuencia');
 const { Op } = require('sequelize');
 const {
@@ -11,23 +11,7 @@ const {
   handleDocenteScopeError
 } = require('../utils/docenteScope');
 
-/**
- * Función auxiliar para validar la integridad de una secuencia de subtema
- * 
- * Validaciones realizadas:
- * 1. Existencia de ambos subtemas
- * 2. Evitar relación consigo mismo (A → A)
- * 3. Evitar duplicados exactos (A → B ya existe)
- * 4. Evitar relaciones inversas directas (B → A existe)
- * 5. Evitar múltiples salidas desde un subtema
- * 6. Evitar múltiples entradas hacia un subtema
- * 7. Evitar ciclos indirectos (A → B → ... → A)
- * 
- * @param {number} subtema_origen_id - ID del subtema origen
- * @param {number} subtema_destino_id - ID del subtema destino
- * @param {number} excludeSecuenciaId - ID de secuencia a excluir (para updates)
- * @returns {Object} { valido: boolean, error: string, detalles: Object }
- */
+// Valida integridad de la secuencia: existencia, sin ciclos, sin duplicados, sin múltiples salidas/entradas.
 async function validarSecuenciaSubtema(
   subtema_origen_id,
   subtema_destino_id,
@@ -248,7 +232,6 @@ async function validarSecuenciaSubtema(
   } catch (error) {
     resultado.valido = false;
     resultado.error = `Error en validación: ${error.message}`;
-    console.error(`[ERROR VALIDACION] ${error.message}`);
     return resultado;
   }
 }
@@ -334,7 +317,6 @@ return res.status(201).json({
       detallesSubtemas: validacion.detalles
     });
   } catch (error) {
-    console.error(`[CREATE] Error: ${error.message}`);
     handleDocenteScopeError(res, error, 'Error al crear secuencia');
   }
 };
@@ -349,7 +331,6 @@ exports.getSubtemasOrdenadosPorSecuencia = async (req, res) => {
     const ordenado = await obtenerSubtemasOrdenadosPorSecuenciaParaTema(temaId);
     res.json(ordenado);
   } catch (error) {
-    console.error("Error al obtener subtemas ordenados:", error);
     handleDocenteScopeError(res, error, 'Error al obtener subtemas ordenados');
   }
 };
@@ -390,7 +371,6 @@ exports.getSecuenciasSubtema = async (req, res) => {
     });
     res.json(secuencias);
   } catch (error) {
-    console.error(error);
     handleDocenteScopeError(res, error, 'Error al obtener las secuencias de subtema');
   }
 };
@@ -422,7 +402,6 @@ exports.getSecuenciaSubtemaById = async (req, res) => {
 
     res.json(secuencia);
   } catch (error) {
-    console.error(error);
     handleDocenteScopeError(res, error, 'Error al obtener la secuencia de subtema');
   }
 };
@@ -487,7 +466,6 @@ exports.updateSecuenciaSubtema = async (req, res) => {
     const newOriginContext = await resolveSubtemaAsignatura(nuevoOrigen);
     ensureDocenteAsignaturaAccess(req, newOriginContext.asignaturaId);
 
-    console.log(`[UPDATE] ID ${secuencia.id}: (${secuencia.subtema_origen_id}→${secuencia.subtema_destino_id}) a (${nuevoOrigen}→${nuevoDestino})`);
 
     const origenAnterior = Number(secuencia.subtema_origen_id);
     const destinoAnterior = Number(secuencia.subtema_destino_id);
@@ -576,7 +554,6 @@ return res.json({
       secuencia: actualizada
     });
   } catch (error) {
-    console.error(`[UPDATE] Error: ${error.message}`);
     handleDocenteScopeError(res, error, 'Error al actualizar secuencia');
   }
 };
@@ -692,7 +669,6 @@ exports.reorderSequences = async (req, res) => {
       secuencias: secuenciasGuardadas
     });
   } catch (error) {
-    console.error("Error al reordenar secuencias:", error);
     handleDocenteScopeError(res, error, 'Error al reordenar las secuencias de subtema');
   }
 };
@@ -734,7 +710,6 @@ exports.deleteSecuenciaSubtema = async (req, res) => {
       eliminada: secuencia.id
     });
   } catch (error) {
-    console.error("Error al eliminar secuencia:", error);
     handleDocenteScopeError(res, error, 'Error al eliminar la secuencia de subtema');
   }
 };

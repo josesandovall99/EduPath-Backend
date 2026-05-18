@@ -338,8 +338,6 @@ exports.getAsignaturas = async (req, res) => {
       where.estado = true;
     }
     
-    // Admin ve todas las asignaturas
-    // Docente ve solo su asignatura
     if (req.tipoUsuario === "DOCENTE") {
       const allowedasignaturaIds = Array.isArray(req.docenteAsignaturaIds)
         ? req.docenteAsignaturaIds.map((id) => Number(id)).filter((id) => Number.isFinite(id))
@@ -351,8 +349,6 @@ exports.getAsignaturas = async (req, res) => {
         where.id = req.docenteAsignaturaId;
       }
     }
-    // Administrador no tiene restricción
-    // Otros tipos de usuario (estudiante) tampoco tienen restricción en GET
 
     const asignaturas = await AsignaturaModel.findAll({ where });
     res.json(asignaturas.map(serializeAsignaturaResponse));
@@ -518,12 +514,7 @@ exports.toggleEstadoAsignatura = async (req, res) => {
   }
 };
 
-/**
- * GET /asignaturas/admin/stats
- * Devuelve contadores macro para el panel del administrador usando COUNT()
- * directos en lugar de cargar todos los registros. Reduce el tiempo de
- * respuesta de ~800 ms a < 50 ms en tablas con miles de filas.
- */
+// Contadores macro para el panel admin — usa COUNT() directo, evita cargar todos los registros.
 exports.getAdminStats = async (req, res) => {
   try {
     const { Estudiante, Persona } = db;

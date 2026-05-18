@@ -35,10 +35,9 @@ const loginEstudiante = async (req, res) => {
 
     const token = buildAccessToken(estudiante.persona);
 
-    // Enviamos el estado de primer_ingreso al frontend
     res.json({
       mensaje: 'Bienvenido',
-      primerIngreso: estudiante.persona.primer_ingreso, // <--- Clave aquí
+      primerIngreso: estudiante.persona.primer_ingreso,
       token,
       estudiante: {
         id: estudiante.id,
@@ -79,35 +78,21 @@ const cambiarContraseñaPrimerIngreso = async (req, res) => {
       return res.status(403).json({ mensaje: 'Usuario inhabilitado' });
     }
 
-    // 1. Encriptar la nueva clave
     const salt = await bcrypt.genSalt(10);
     persona.contraseña = await bcrypt.hash(nuevaContraseña, salt);
-
-    // 2. Forzar el cambio del flag
-    // Usamos la asignación directa antes del save
-    persona.set('primer_ingreso', false); 
-
-    // 3. Guardar cambios
+    persona.set('primer_ingreso', false);
     await persona.save();
 
-    res.json({ 
+    res.json({
       mensaje: "Contraseña actualizada y flag de primer ingreso desactivado",
-      datosActualizados: {
-        id: persona.id,
-        primer_ingreso: persona.primer_ingreso // Debería devolver false en la respuesta
-      }
+      datosActualizados: { id: persona.id, primer_ingreso: persona.primer_ingreso }
     });
   } catch (error) {
-    console.error("Error en update:", error);
     res.status(500).json({ mensaje: "Error interno", error: error.message });
   }
 };
 
-/* =========================
-   LOGIN ADMINISTRADOR
-   Nota: se devuelve `primerIngreso` pero no se fuerza cambio
-   de contraseña en este login (según requerimiento).
-========================= */
+// Login administrador
 const loginAdministrador = async (req, res) => {
   try {
     const { codigoAcceso, contraseña } = req.body;
@@ -144,11 +129,7 @@ const loginAdministrador = async (req, res) => {
   }
 };
 
-/* =========================
-   LOGIN DOCENTE
-   Nota: se devuelve `primerIngreso` pero no se fuerza cambio
-   de contraseña en este login (según requerimiento).
-========================= */
+// Login docente
 const loginDocente = async (req, res) => {
   try {
     const { codigoAcceso, contraseña } = req.body;

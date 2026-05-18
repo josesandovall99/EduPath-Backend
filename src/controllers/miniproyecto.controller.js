@@ -1,4 +1,4 @@
-const db = require('../models');
+﻿const db = require('../models');
 const {
   Actividad,
   Miniproyecto,
@@ -1698,7 +1698,6 @@ exports.obtenerAprobacionBulk = async (req, res) => {
     miniIds.forEach(id => { resultado[id] = { completado: aprobadosSet.has(id) }; });
     res.json(resultado);
   } catch (error) {
-    console.error('Error en obtenerAprobacionBulk:', error);
     res.status(500).json({ message: 'Error al obtener aprobación bulk de miniproyectos', error: error.message || error });
   }
 };

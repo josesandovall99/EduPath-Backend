@@ -1,7 +1,6 @@
-const { SecuenciaContenido, Contenido, Subtema, Tema, sequelize } = require('../models');
+﻿const { SecuenciaContenido, Contenido, Subtema, Tema, sequelize } = require('../models');
 
 // Contenidos de todos los subtemas de un tema en 2 queries paralelas.
-// Reemplaza los N fetches individuales de TheoryContentView — dispara al montar con temaId.
 exports.getContenidosBulkPorTema = async (req, res) => {
   try {
     const tId = parseInt(req.params.temaId, 10);
@@ -27,7 +26,6 @@ exports.getContenidosBulkPorTema = async (req, res) => {
 
     res.json({ contenidos, secuencias });
   } catch (error) {
-    console.error('Error en getContenidosBulkPorTema:', error);
     res.status(500).json({ message: 'Error al obtener contenidos bulk por tema', error: error.message });
   }
 };
@@ -142,25 +140,7 @@ function buildCreationContextFromGraph(graph, requestedOriginId = null) {
   };
 }
 
-/**
- * Función auxiliar para validar la integridad de una secuencia de contenido
- * 
- * Validaciones realizadas:
- * 1. Existencia de ambos contenidos
- * 2. Evitar relación consigo mismo (A → A)
- * 3. Evitar duplicados exactos (A → B ya existe)
- * 4. Evitar relaciones inversas directas (B → A existe)
- * 5. Evitar múltiples salidas desde un contenido
- * 6. Evitar múltiples entradas hacia un contenido
- * 7. Evitar ciclos indirectos (A → B → ... → A)
- * 8. Validar pertenencia al mismo subtema (opcional)
- * 
- * @param {number} contenido_origen_id - ID del contenido origen
- * @param {number} contenido_destino_id - ID del contenido destino
- * @param {number} excludeSecuenciaId - ID de secuencia a excluir (para updates)
- * @param {boolean} validarSubtema - Si debe validar mismo subtema
- * @returns {Object} { valido: boolean, error: string, detalles: Object }
- */
+// Valida integridad de la secuencia: existencia, sin ciclos, sin duplicados, sin múltiples salidas/entradas, mismo subtema.
 async function validarSecuenciaContenido(
   contenido_origen_id,
   contenido_destino_id,
@@ -381,7 +361,6 @@ async function validarSecuenciaContenido(
   } catch (error) {
     resultado.valido = false;
     resultado.error = `Error en validación: ${error.message}`;
-    console.error(`[ERROR VALIDACION] ${error.message}`);
     return resultado;
   }
 }
@@ -468,7 +447,6 @@ return res.status(201).json({
       detallesContenidos: validacion.detalles
     });
   } catch (error) {
-    console.error(`[CREATE] Error: ${error.message}`);
     handleDocenteScopeError(res, error, 'Error al crear secuencia');
   }
 };
@@ -544,7 +522,6 @@ exports.getContenidosOrdenadosPorSecuencia = async (req, res) => {
 
     res.json(ordenado);
   } catch (error) {
-    console.error("Error al obtener contenidos ordenados:", error);
     handleDocenteScopeError(res, error, 'Error al obtener contenidos ordenados');
   }
 };
@@ -570,7 +547,6 @@ exports.getSecuenciaContenidoCreationContext = async (req, res) => {
 
     res.json(context);
   } catch (error) {
-    console.error(error);
     handleDocenteScopeError(res, error, 'Error al obtener el contexto de creación de secuencias');
   }
 };
@@ -616,7 +592,6 @@ exports.getSecuenciasContenido = async (req, res) => {
     });
     res.json(secuencias);
   } catch (error) {
-    console.error(error);
     handleDocenteScopeError(res, error, 'Error al obtener las secuencias de contenido');
   }
 };
@@ -648,7 +623,6 @@ exports.getSecuenciaContenidoById = async (req, res) => {
 
     res.json(secuencia);
   } catch (error) {
-    console.error(error);
     handleDocenteScopeError(res, error, 'Error al obtener la secuencia de contenido');
   }
 };
@@ -713,7 +687,6 @@ exports.updateSecuenciaContenido = async (req, res) => {
     const newOriginContext = await resolveContenidoAsignatura(nuevoOrigen);
     ensureDocenteAsignaturaAccess(req, newOriginContext.asignaturaId);
 
-    console.log(`[UPDATE] ID ${secuencia.id}: (${secuencia.contenido_origen_id}→${secuencia.contenido_destino_id}) a (${nuevoOrigen}→${nuevoDestino})`);
 
     const origenAnterior = Number(secuencia.contenido_origen_id);
     const destinoAnterior = Number(secuencia.contenido_destino_id);
@@ -803,7 +776,6 @@ return res.json({
       secuencia: actualizada
     });
   } catch (error) {
-    console.error(`[UPDATE] Error: ${error.message}`);
     handleDocenteScopeError(res, error, 'Error al actualizar secuencia');
   }
 };
@@ -925,7 +897,6 @@ exports.reorderSequences = async (req, res) => {
       secuencias: secuenciasGuardadas
     });
   } catch (error) {
-    console.error("Error al reordenar secuencias:", error);
     handleDocenteScopeError(res, error, 'Error al reordenar las secuencias de contenido');
   }
 };
@@ -970,7 +941,6 @@ exports.deleteSecuenciaContenido = async (req, res) => {
       eliminada: secuencia.id
     });
   } catch (error) {
-    console.error("Error al eliminar secuencia:", error);
     handleDocenteScopeError(res, error, 'Error al eliminar la secuencia de contenido');
   }
 };

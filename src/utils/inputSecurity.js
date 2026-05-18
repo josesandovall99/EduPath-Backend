@@ -19,7 +19,7 @@ const sanitizePlainText = (value) => {
 const sanitizeRichText = (value) => {
   if (!isNonEmptyString(value)) return '';
 
-  // Remove script tags and inline event handlers.
+  // Eliminar etiquetas script y manejadores de eventos inline.
   return value
     .replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
     .replace(/on\w+\s*=\s*"[^"]*"/gi, '')

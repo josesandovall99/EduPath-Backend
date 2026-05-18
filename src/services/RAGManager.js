@@ -115,7 +115,6 @@ class OllamaHTTPClient {
         const payload = this._buildPayload(prompt, false, options);
 
         try {
-            console.log(`Enviando prompt a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | timeout ms: ${this.generateTimeoutMs}`);
             const requestStart = nowMs();
             const res = await fetch(url, {
                 method: 'POST',
@@ -133,7 +132,6 @@ class OllamaHTTPClient {
             }
 
             const json = await res.json();
-            console.log(`Ollama respondió vía ${endpoint}`);
             logTiming('Generación LLM total', generationStart);
             return json.response || json.choices?.[0]?.text || json.output || JSON.stringify(json);
         } catch (lastError) {
@@ -154,10 +152,8 @@ class OllamaHTTPClient {
         const payload = this._buildPayload(prompt, true, options);
 
         try {
-            console.log(`Enviando prompt streaming a Ollama | endpoint: ${endpoint} | model: ${payload.model} | prompt chars: ${prompt.length} | start timeout ms: ${this.streamStartTimeoutMs}`);
             const requestStart = nowMs();
-            // Use an AbortController with a timeout only for the initial request start.
-            // Once the response headers arrive, clear the timeout so streaming isn't aborted mid-response.
+            // Timeout solo para el inicio de la respuesta; se cancela al llegar los headers para no cortar el stream.
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), this.streamStartTimeoutMs);
             const res = await fetch(url, {
@@ -203,11 +199,7 @@ class OllamaHTTPClient {
                             const parsed = JSON.parse(trimmed);
                             const chunk = parsed.response || '';
                             if (chunk) {
-                                // Some LLM streaming endpoints return the entire partial
-                                // answer repeatedly (cumulative). To avoid duplicating
-                                // previously-sent text on the client, compute the delta
-                                // relative to the answer we already have and send only
-                                // the new suffix.
+                                // Algunos endpoints devuelven la respuesta acumulada; enviamos solo el delta nuevo.
                                 let delta = chunk;
                                 if (chunk.startsWith(answer)) {
                                     delta = chunk.slice(answer.length);
@@ -471,10 +463,6 @@ Responde en Markdown, con frases claras y directas.`);
             .replace('{context}', context)
             .replace('{question}', question);
         logTiming('Construcción de prompt', promptStart);
-        console.log(`Contexto chars: ${context.length} | Prompt chars: ${finalPrompt.length} | topK: ${safeTopK}`);
-        const contextPreview = context.slice(0, 240).replace(/\s+/g, ' ');
-        console.log(`[RAG CONTEXT PREVIEW] ${contextPreview}`);
-
         return { success: true, finalPrompt, safeTopK, retrievalDebug };
     }
 

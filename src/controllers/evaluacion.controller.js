@@ -85,7 +85,6 @@ async function guardarIntentoYEvaluacion({ estudiante_id, ejercicio_id, codigo, 
       });
     }
 
-    // Registrar/actualizar Evaluacion (guardar calificación y estado)
     const payloadEval = {
       calificacion: resultadoEvaluacion?.aprobado ? (puntosEjercicio || 0) : 0,
       retroalimentacion: resultadoEvaluacion?.resumen || '',
@@ -104,7 +103,6 @@ async function guardarIntentoYEvaluacion({ estudiante_id, ejercicio_id, codigo, 
 
     return true;
   } catch (err) {
-    console.error('guardarIntentoYEvaluacion error:', err && err.message);
     return null;
   }
 }
@@ -184,7 +182,6 @@ exports.findAll = async (req, res) => {
   }
 };
 
-// ESTAS SON LAS QUE FALTABAN:
 exports.findOne = async (req, res) => {
   try {
     const data = await Evaluacion.findByPk(req.params.id, {
@@ -625,7 +622,6 @@ exports.evaluarCompilador = async (req, res) => {
       const stdinManual = req.body?.stdin_manual;
       if (typeof stdinManual === 'string') {
         const { ejecutarCasoPruebaMvc } = require('../services/evaluadorCasosPrueba');
-        // Exportamos la función interna — ver nota en evaluadorCasosPrueba.js
         const ejecucion = await evaluadorCasos.ejecutarMvcLibre(codigoFusionado, stdinManual);
         return res.status(200).json({
           modo: 'ejecucion_libre',
@@ -659,7 +655,6 @@ exports.evaluarCompilador = async (req, res) => {
       const resultadoEvaluacion = await evaluadorCasos.evaluarCasosPruebaMvc(codigoFusionado, casosPrueba);
       const aprobado = resultadoEvaluacion.aprobado;
 
-      // Guardar intento y registro de evaluacion si viene estudiante_id
       if (estudiante_id) {
         await guardarIntentoYEvaluacion({
           estudiante_id,
@@ -720,7 +715,6 @@ exports.evaluarCompilador = async (req, res) => {
       const resultadoMvc = await evaluadorCasos.evaluarCasosPruebaMvc(codigoOriginal, casosPrueba);
       const aprobadoMvc = resultadoMvc.aprobado;
 
-      // Guardar intento y registro de evaluacion si viene estudiante_id
       if (estudiante_id) {
         await guardarIntentoYEvaluacion({
           estudiante_id,
@@ -969,18 +963,6 @@ exports.ejecutarCompilador = async (req, res) => {
     const codigoOriginal = obtenerCodigoCompilador(req.body);
 
     if (!ejercicio_id || isNaN(lenguajeIdNum) || !codigoOriginal) {
-      if (process.env.NODE_ENV !== 'production') {
-        try {
-          console.log('ejecutarCompilador: payload insuficiente', {
-            ejercicio_id,
-            lenguaje_id_sent: req.body?.lenguaje_id,
-            lenguajeIdNum,
-            codigoOriginalPreview: (typeof codigoOriginal === 'string' && codigoOriginal.length > 0) ? codigoOriginal.slice(0, 200) : codigoOriginal,
-            body: req.body
-          });
-        } catch (logErr) {
-}
-      }
       return res.status(400).json({ message: 'Faltan campos: ejercicio_id, lenguaje_id, codigo' });
     }
 
@@ -999,7 +981,6 @@ exports.ejecutarCompilador = async (req, res) => {
       const resultadoMvc = await evaluadorCasos.evaluarCasosPruebaMvc(codigoOriginal, casosPrueba);
       const aprobadoMvc = resultadoMvc.aprobado;
 
-      // Guardar intento y registro de evaluacion si viene estudiante_id
       if (req.body?.estudiante_id) {
         await guardarIntentoYEvaluacion({
           estudiante_id: req.body.estudiante_id,

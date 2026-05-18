@@ -26,7 +26,6 @@ const crearEstudiante = async (req, res) => {
       return res.status(400).json({ mensaje: 'Datos invalidos para crear estudiante' });
     }
 
-    // Encriptar contraseña
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(contraseña, salt);
 
@@ -400,16 +399,12 @@ const personasParaCorreo = [];
 
   } catch (error) {
     await transaction.rollback();
-    console.error(error);
     res.status(500).json({
       message: "Error al importar estudiantes",
       error: error.message,
     });
   }
 };
-
-
-
 
 /* =========================
    EXPORTS

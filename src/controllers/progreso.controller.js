@@ -3206,7 +3206,6 @@ exports.obtenerResumenGeneralEstudiantes = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerResumenGeneralEstudiantes:', error);
 
     res.status(500).json({ message: 'Error al obtener resumen general de estudiantes', error: error.message || error });
 
@@ -3255,7 +3254,6 @@ exports.obtenerResumenGeneralDocente = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerResumenGeneralDocente:', error);
 
     res.status(500).json({ message: 'Error al obtener resumen de progreso para docente', error: error.message || error });
 
@@ -3425,7 +3423,6 @@ exports.obtenerProgresoEstudiantePorTema = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerProgresoEstudiantePorTema:', error);
 
     res.status(500).json({ message: 'Error al obtener progreso del estudiante por tema', error: error.message || error });
 
@@ -3579,7 +3576,6 @@ exports.obtenerProgresoEstudiantePorSubtema = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerProgresoEstudiantePorSubtema:', error);
 
     res.status(500).json({ message: 'Error al obtener progreso del estudiante por subtema', error: error.message || error });
 
@@ -3823,7 +3819,6 @@ exports.obtenerResumenUnidadEstudiante = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerResumenUnidadEstudiante:', error);
 
     res.status(500).json({ message: 'Error al obtener resumen de unidad para el estudiante', error: error.message || error });
 
@@ -3869,7 +3864,7 @@ exports.delete = async (req, res) => {
 
 
 
-// Progreso de múltiples subtemas en 1 round trip — elimina el for-loop N×4 rondas de TheoryContentView
+// Progreso de múltiples subtemas en 1 round trip — evita N consultas secuenciales.
 exports.obtenerProgresoBulkPorSubtema = async (req, res) => {
   try {
     const { subtema_ids, estudiante_id } = req.query;
@@ -3889,7 +3884,6 @@ exports.obtenerProgresoBulkPorSubtema = async (req, res) => {
     );
     res.json(rows[0]?.r ?? {});
   } catch (error) {
-    console.error('Error en obtenerProgresoBulkPorSubtema:', error);
     res.status(500).json({ message: 'Error al obtener progreso bulk por subtema', error: error.message || error });
   }
 };
@@ -3929,7 +3923,6 @@ exports.obtenerProgresoEstudiantePorAsignatura = async (req, res) => {
     res.json(resultado);
   } catch (error) {
     if (error.statusCode) return res.status(error.statusCode).json({ message: error.message });
-    console.error('Error en obtenerProgresoEstudiantePorAsignatura:', error);
     res.status(500).json({ message: 'Error al obtener progreso del estudiante por asignatura', error: error.message || error });
   }
 };
@@ -3964,7 +3957,6 @@ exports.obtenerProgresoBulkPorAsignatura = async (req, res) => {
     ids.forEach((aId, i) => { respuesta[aId] = resultados[i]; });
     res.json(respuesta);
   } catch (error) {
-    console.error('Error en obtenerProgresoBulkPorAsignatura:', error);
     res.status(500).json({ message: 'Error al obtener progreso bulk por asignatura', error: error.message || error });
   }
 };
@@ -3990,7 +3982,6 @@ exports.obtenerPeriodosPorEstudiante = async (req, res) => {
 
     res.json(result);
   } catch (error) {
-    console.error('Error en obtenerPeriodosPorEstudiante:', error);
     res.status(500).json({ message: 'Error al obtener periodos por estudiante', error: error.message });
   }
 };
@@ -4116,7 +4107,6 @@ exports.getCalificacionEstimada = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en getCalificacionEstimada:', error);
 
     res.status(500).json({ message: 'Error al obtener calificación estimada', error: error.message || error });
 
@@ -4164,7 +4154,6 @@ exports.obtenerReporteFallos = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerReporteFallos:', error);
 
     res.status(500).json({ message: 'Error al generar reporte de fallos', error: error.message || error });
 
@@ -4222,7 +4211,6 @@ exports.obtenerReporteFallosDocente = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerReporteFallosDocente:', error);
 
     res.status(500).json({ message: 'Error al generar reporte de fallos para docente', error: error.message || error });
 
@@ -6040,7 +6028,6 @@ exports.generarPdfReporte = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en generarPdfReporte:', error);
 
     res.status(500).json({ message: 'Error al generar PDF', error: error.message || error });
 
@@ -6108,7 +6095,6 @@ exports.verificarContenidoDesbloqueado = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en verificarContenidoDesbloqueado:', error);
 
     res.status(500).json({ 
 
@@ -6178,7 +6164,6 @@ exports.verificarSubtemaCompleto = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en verificarSubtemaCompleto:', error);
 
     res.status(500).json({ 
 
@@ -6248,7 +6233,6 @@ exports.verificarTemaCompleto = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en verificarTemaCompleto:', error);
 
     res.status(500).json({ 
 
@@ -6326,7 +6310,6 @@ exports.obtenerEstadoContenidosTema = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerEstadoContenidosTema:', error);
 
     res.status(500).json({ 
 
@@ -6404,7 +6387,6 @@ exports.obtenerEstadoSubtemasTema = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerEstadoSubtemasTema:', error);
 
     res.status(500).json({ 
 
@@ -6482,7 +6464,6 @@ exports.obtenerEstadoTemasAsignatura = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerEstadoTemasAsignatura:', error);
 
     res.status(500).json({ 
 
@@ -6604,7 +6585,6 @@ exports.obtenerRankingVisualizaciones = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerRankingVisualizaciones:', error);
 
     res.status(500).json({ message: 'Error al obtener ranking de visualizaciones', error: error.message || error });
 
@@ -6774,7 +6754,6 @@ exports.obtenerContenidosMasVistosPorArea = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerContenidosMasVistosPorArea:', error);
 
     res.status(500).json({ message: 'Error al obtener contenidos más vistos por área', error: error.message || error });
 
@@ -6858,7 +6837,6 @@ exports.obtenerSiguienteContenido = async (req, res) => {
 
   } catch (error) {
 
-    console.error('❌ Error en obtenerSiguienteContenido:', error);
 
     res.status(500).json({ 
 

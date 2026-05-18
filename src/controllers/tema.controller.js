@@ -64,7 +64,6 @@ exports.createTema = async (req, res) => {
 
     res.status(201).json(nuevoTema);
   } catch (error) {
-    console.error('[createTema]', error);
     const name = error && error.name;
     if (name === 'SequelizeValidationError' || name === 'SequelizeUniqueConstraintError') {
       return res.status(400).json({ message: safeErrMessage(error) });
@@ -80,14 +79,12 @@ exports.getTemas = async (req, res) => {
     if (!canViewInactiveTemas(req)) {
       where.estado = true;
     }
-    // Solo docentes están limitados a su asignatura
     if (req.tipoUsuario === "DOCENTE") {
       const allowedasignaturaIds = getAllowedasignaturaIds(req);
       if (allowedasignaturaIds.length > 0) {
         where.asignatura_id = allowedasignaturaIds;
       }
     }
-    // Admin y otros usuarios ven todos
 
     const temas = await Tema.findAll({ where });
     res.json(temas);
@@ -100,14 +97,12 @@ exports.getTemas = async (req, res) => {
 exports.getTemaById = async (req, res) => {
   try {
     let tema = null;
-    // Solo docentes están limitados a su asignatura
     if (req.tipoUsuario === "DOCENTE") {
       const allowedasignaturaIds = getAllowedasignaturaIds(req);
       tema = await Tema.findOne({
         where: { id: req.params.id, asignatura_id: allowedasignaturaIds }
       });
     } else {
-      // Admin y otros usuarios ven cualquier tema
       const where = { id: req.params.id };
       if (!canViewInactiveTemas(req)) {
         where.estado = true;
@@ -139,7 +134,6 @@ exports.updateTema = async (req, res) => {
       }
     }
 
-    // Si se envía un asignatura_id, validar que exista
     if (req.body.asignatura_id) {
       const AsignaturaExistente = await AsignaturaModel.findByPk(req.body.asignatura_id);
       if (!AsignaturaExistente) {
@@ -227,7 +221,6 @@ exports.getTemasByAsignatura = async (req, res) => {
       }
     }
 
-    // Validar que el asignatura exista
     const AsignaturaExistente = await AsignaturaModel.findByPk(asignaturaIdNumerico);
     if (!AsignaturaExistente) {
       return res.status(404).json({ message: "Asignatura no encontrada" });
@@ -249,7 +242,6 @@ exports.reordenarTemas = async (req, res) => {
       return res.status(400).json({ message: "Debe proporcionar un array de IDs válido" });
     }
 
-    // Actualizar el orden de cada tema
     const promesas = orden.map((id, index) => {
       return Tema.update(
         { orden: index + 1 },

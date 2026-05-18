@@ -55,11 +55,9 @@ const crearAdministrador = async (req, res) => {
     const codigoAcceso = await generarCodigoAdmin(transaction);
     const passwordPlano = generarPassword();
 
-    // Encriptar contraseña antes de crear persona
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(passwordPlano, salt);
 
-    // 1️⃣ Crear Persona
     const persona = await Persona.create(
       {
         nombre: sanitizePlainText(nombre),
@@ -71,7 +69,6 @@ const crearAdministrador = async (req, res) => {
       { transaction }
     );
 
-    // 2️⃣ Crear Administrador
     const administrador = await Administrador.create(
       {
         persona_id: persona.id,
@@ -209,7 +206,6 @@ const actualizarAdministrador = async (req, res) => {
 
     const { nombre, email, codigoAcceso, contraseña } = req.body;
 
-    // 1️⃣ Actualizar Persona (hashear contraseña si es enviada)
     const personaUpdate = {
       ...(nombre !== undefined && { nombre: sanitizePlainText(nombre) }),
       ...(email !== undefined && { email: email.trim().toLowerCase() }),
