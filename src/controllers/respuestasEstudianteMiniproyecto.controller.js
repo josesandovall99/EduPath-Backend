@@ -47,8 +47,19 @@ const normalizeText = (text = '') => text
   .toLowerCase();
 
 const MANAGEMENT_JUSTIFICATION_KEYWORDS = {
-  schedule: ['supuesto', 'supuestos', 'duracion', 'duraciones', 'semanas', 'dias', 'fase', 'fases', 'prioridad', 'orden', 'dependencia'],
-  costs: ['supuesto', 'supuestos', 'tarifa', 'tarifas', 'licencia', 'licencias', 'equipo', 'personal', 'proveedor', 'cotizacion', 'mercado', 'infraestructura', 'porcentaje', 'imprevistos', 'utilidad']
+  schedule: [
+    'supuesto', 'supuestos', 'duracion', 'duraciones', 'semanas', 'dias', 'fase', 'fases',
+    'prioridad', 'orden', 'dependencia', 'iteracion', 'sprint', 'milestone', 'hito', 'etapa',
+    'paralelo', 'secuencial', 'critica', 'ruta critica', 'consecutivo', 'anterior', 'posterior',
+    'entregable', 'plazo', 'tiempo estimado', 'meses'
+  ],
+  costs: [
+    'supuesto', 'supuestos', 'tarifa', 'tarifas', 'licencia', 'licencias', 'equipo', 'personal',
+    'proveedor', 'cotizacion', 'mercado', 'infraestructura', 'porcentaje', 'imprevistos', 'utilidad',
+    'programador', 'desarrollador', 'analista', 'servidor', 'nube', 'cloud', 'hosting', 'base de datos',
+    'suscripcion', 'mensual', 'anual', 'dominio', 'soporte', 'mantenimiento', 'hora', 'horas',
+    'salario', 'honorario', 'inversion', 'presupuesto', 'estimacion', 'valor'
+  ]
 };
 
 const buildCriteriaFromExpected = (expected = '') => {
@@ -529,27 +540,98 @@ const tryParseJson = (value) => {
 };
 
 const SEMANTIC_CONCEPT_GROUPS = [
-  { id: 'stakeholder_student', aliases: ['estudiante', 'alumno', 'aprendiz'] },
-  { id: 'stakeholder_teacher', aliases: ['docente', 'profesor', 'instructor', 'maestro'] },
-  { id: 'stakeholder_admin', aliases: ['administrador', 'admin', 'personal administrativo'] },
+  // Stakeholders
+  { id: 'stakeholder_student', aliases: ['estudiante', 'alumno', 'aprendiz', 'educando'] },
+  { id: 'stakeholder_teacher', aliases: ['docente', 'profesor', 'instructor', 'maestro', 'catedratico'] },
+  { id: 'stakeholder_admin', aliases: ['administrador', 'admin', 'personal administrativo', 'gestion administrativa'] },
   { id: 'stakeholder_coordinator', aliases: ['coordinador', 'coordinador academico', 'director de programa', 'jefe de programa'] },
-  { id: 'stakeholder_client', aliases: ['cliente', 'patrocinador', 'interesado principal'] },
-  { id: 'stakeholder_end_user', aliases: ['usuario final', 'usuario', 'consumidor del sistema'] },
-  { id: 'functional_register', aliases: ['registrar', 'registro', 'crear', 'inscribir', 'matricular', 'guardar'] },
-  { id: 'functional_consult', aliases: ['consultar', 'ver', 'visualizar', 'listar', 'buscar'] },
-  { id: 'functional_reports', aliases: ['reporte', 'reportes', 'generar reporte', 'estadistica', 'informe'] },
-  { id: 'functional_assign', aliases: ['asignar', 'programar', 'relacionar', 'asociar'] },
-  { id: 'functional_auth', aliases: ['autenticar', 'iniciar sesion', 'login', 'acceso por rol', 'validar usuario'] },
-  { id: 'nfr_security', aliases: ['seguridad', 'autenticacion', 'credenciales', 'cifrado', 'encriptado', 'autorizacion', 'acceso seguro'] },
-  { id: 'nfr_performance', aliases: ['rendimiento', 'performance', 'tiempo de respuesta', 'rapidez', 'menos de 3 segundos', 'menos de 3 seg', 'respuesta en menos'] },
-  { id: 'nfr_availability', aliases: ['disponibilidad', 'alta disponibilidad', '99%', 'siempre disponible', 'uptime'] },
-  { id: 'nfr_multidevice', aliases: ['movil', 'desktop', 'computador', 'celular', 'tablet', 'dispositivos', 'multiplataforma', 'responsive'] },
+  { id: 'stakeholder_client', aliases: ['cliente', 'patrocinador', 'interesado principal', 'financiador'] },
+  { id: 'stakeholder_end_user', aliases: ['usuario final', 'usuario', 'consumidor del sistema', 'beneficiario'] },
+  { id: 'stakeholder_provider', aliases: ['proveedor', 'suministrador', 'vendedor', 'tercero', 'aliado'] },
+  { id: 'stakeholder_manager', aliases: ['directivo', 'gerente', 'director general', 'jefe de proyecto', 'lider del proyecto'] },
+  { id: 'stakeholder_operator', aliases: ['operador', 'operario', 'tecnico', 'trabajador', 'funcionario'] },
+  // Funcionales
+  { id: 'functional_register', aliases: ['registrar', 'registro', 'crear', 'inscribir', 'matricular', 'guardar', 'agregar', 'capturar'] },
+  { id: 'functional_consult', aliases: ['consultar', 'ver', 'visualizar', 'listar', 'buscar', 'mostrar', 'obtener'] },
+  { id: 'functional_reports', aliases: ['reporte', 'reportes', 'generar reporte', 'estadistica', 'informe', 'tablero'] },
+  { id: 'functional_assign', aliases: ['asignar', 'programar', 'relacionar', 'asociar', 'vincular', 'designar'] },
+  { id: 'functional_auth', aliases: ['autenticar', 'iniciar sesion', 'login', 'acceso por rol', 'validar usuario', 'identificar usuario'] },
+  { id: 'functional_delete', aliases: ['eliminar', 'borrar', 'quitar', 'dar de baja', 'remover', 'suprimir', 'anular'] },
+  { id: 'functional_update', aliases: ['actualizar', 'editar', 'modificar', 'cambiar', 'corregir', 'ajustar'] },
+  { id: 'functional_export', aliases: ['exportar', 'descargar', 'generar archivo', 'imprimir', 'extraer'] },
+  { id: 'functional_filter', aliases: ['filtrar', 'seleccionar', 'clasificar', 'ordenar resultados', 'busqueda avanzada'] },
+  { id: 'functional_notify', aliases: ['notificar', 'alertar', 'avisar', 'enviar correo', 'mensaje automatico', 'correo electronico'] },
+  { id: 'functional_calculate', aliases: ['calcular', 'computar', 'procesar', 'estimar', 'calcular automaticamente'] },
+  { id: 'functional_validate', aliases: ['validar', 'verificar', 'comprobar', 'revisar', 'confirmar'] },
+  // No funcionales
+  { id: 'nfr_security', aliases: ['seguridad', 'autenticacion', 'credenciales', 'cifrado', 'encriptado', 'autorizacion', 'acceso seguro', 'control de acceso'] },
+  { id: 'nfr_performance', aliases: ['rendimiento', 'performance', 'tiempo de respuesta', 'rapidez', 'menos de 3 segundos', 'menos de 3 seg', 'velocidad del sistema', 'eficiencia'] },
+  { id: 'nfr_availability', aliases: ['disponibilidad', 'alta disponibilidad', '99%', 'siempre disponible', 'uptime', 'sin interrupciones'] },
+  { id: 'nfr_multidevice', aliases: ['movil', 'desktop', 'computador', 'celular', 'tablet', 'dispositivos', 'multiplataforma', 'responsive', 'adaptable'] },
   { id: 'nfr_privacy', aliases: ['privacidad', 'proteccion de datos', 'datos personales', 'informacion personal', 'confidencialidad', 'habeas data'] },
-  { id: 'scope_notifications', aliases: ['notificaciones', 'correo', 'sms', 'mensajes', 'alertas'] },
-  { id: 'scope_admin_panel', aliases: ['panel de administracion', 'panel administrativo', 'dashboard', 'reportes administrativos'] },
-  { id: 'scope_enrollment', aliases: ['matricula', 'matriculas', 'inscripcion', 'inscripciones'] },
-  { id: 'cost_human', aliases: ['humano', 'personal', 'analista', 'desarrollador', 'ingeniero'] },
-  { id: 'cost_material', aliases: ['material', 'licencia', 'infraestructura', 'servicio externo', 'software'] }
+  { id: 'nfr_usability', aliases: ['usabilidad', 'facilidad de uso', 'amigable', 'intuitivo', 'accesible', 'experiencia de usuario', 'ux'] },
+  { id: 'nfr_scalability', aliases: ['escalabilidad', 'escalar', 'crecimiento del sistema', 'capacidad de expansion', 'mayor carga'] },
+  { id: 'nfr_maintainability', aliases: ['mantenibilidad', 'mantenimiento', 'soporte tecnico', 'facilidad de cambios', 'actualizaciones'] },
+  { id: 'nfr_reliability', aliases: ['confiabilidad', 'confiable', 'robusto', 'tolerante a fallos', 'estable', 'sin errores'] },
+  // Alcance / scope
+  { id: 'scope_notifications', aliases: ['notificaciones', 'correo', 'sms', 'mensajes', 'alertas', 'correo electronico'] },
+  { id: 'scope_admin_panel', aliases: ['panel de administracion', 'panel administrativo', 'dashboard', 'reportes administrativos', 'modulo admin'] },
+  { id: 'scope_enrollment', aliases: ['matricula', 'matriculas', 'inscripcion', 'inscripciones', 'registro de estudiantes'] },
+  // Fases del cronograma
+  { id: 'schedule_analysis', aliases: ['analisis', 'levantamiento', 'diagnostico', 'relevamiento', 'elicitacion', 'recopilacion de requisitos'] },
+  { id: 'schedule_design', aliases: ['diseno', 'disenio', 'arquitectura', 'modelado', 'prototipo', 'diseno del sistema'] },
+  { id: 'schedule_development', aliases: ['desarrollo', 'implementacion', 'programacion', 'codificacion', 'construccion', 'sprint de desarrollo'] },
+  { id: 'schedule_testing', aliases: ['pruebas', 'testing', 'calidad', 'qa', 'control de calidad', 'validacion final', 'test'] },
+  { id: 'schedule_deployment', aliases: ['despliegue', 'puesta en produccion', 'lanzamiento', 'deploy', 'entrega final', 'puesta en marcha'] },
+  { id: 'schedule_training', aliases: ['capacitacion', 'entrenamiento', 'formacion', 'induccion', 'adiestramiento'] },
+  // Costos y recursos
+  { id: 'cost_human', aliases: ['humano', 'personal', 'analista', 'desarrollador', 'ingeniero', 'programador', 'recurso humano', 'talento'] },
+  { id: 'cost_material', aliases: ['material', 'licencia', 'infraestructura', 'servicio externo', 'software', 'equipo'] },
+  { id: 'cost_server', aliases: ['servidor', 'hosting', 'alojamiento', 'vps', 'nube', 'cloud', 'servicio en la nube'] },
+  { id: 'cost_license', aliases: ['licencia', 'licencias de software', 'suscripcion', 'plan de servicio', 'membresia'] },
+  { id: 'cost_support', aliases: ['soporte', 'mantenimiento', 'servicio postventa', 'soporte tecnico'] },
+
+  // --- Stakeholders específicos miniproyecto Análisis (EcoMarket) ---
+  { id: 'ecomarket_employee', aliases: ['empleado', 'empleado de registro', 'trabajador', 'operario', 'cajero', 'encargado de pedidos', 'personal de la empresa'] },
+  { id: 'ecomarket_delivery', aliases: ['personal de entregas', 'repartidor', 'domiciliario', 'mensajero', 'conductor', 'transportador', 'personal delivery', 'delivery'] },
+  { id: 'ecomarket_client', aliases: ['cliente', 'comprador', 'consumidor', 'persona que hace pedidos', 'usuario del sistema'] },
+  { id: 'ecomarket_admin', aliases: ['administrador', 'administrador del negocio', 'dueno del negocio', 'jefe', 'gerente', 'encargado'] },
+
+  // --- Funcionales específicos miniproyecto Análisis (EcoMarket) ---
+  { id: 'ecomarket_register_client', aliases: ['registrar clientes', 'registrar nuevo cliente', 'crear cliente', 'agregar cliente', 'registro de clientes'] },
+  { id: 'ecomarket_manage_orders', aliases: ['gestionar pedidos', 'crear pedidos', 'registrar pedido', 'hacer pedido', 'gestion de pedidos', 'crear orden'] },
+  { id: 'ecomarket_view_orders', aliases: ['ver pedidos', 'consultar pedidos', 'listar pedidos', 'visualizar pedidos', 'mostrar pedidos', 'listado de pedidos'] },
+  { id: 'ecomarket_update_status', aliases: ['actualizar estado', 'cambiar estado', 'modificar estado', 'estado del pedido', 'pendiente', 'en proceso', 'entregado', 'actualizar orden'] },
+  { id: 'ecomarket_search_orders', aliases: ['buscar pedidos', 'filtrar pedidos', 'buscar por cliente', 'buscar por fecha', 'filtrar por cliente', 'filtrar por fecha'] },
+
+  // --- NFR específicos miniproyecto Análisis (EcoMarket) ---
+  { id: 'ecomarket_speed', aliases: ['menos de 2 segundos', 'responder rapido', 'consultas rapidas', 'sistema rapido', 'tiempo de respuesta 2 segundos', 'respuesta rapida'] },
+  { id: 'ecomarket_mobile', aliases: ['dispositivos moviles', 'celular', 'telefono', 'funcionar desde el celular', 'compatible con celular', 'movil', 'responsive'] },
+  { id: 'ecomarket_security', aliases: ['datos seguros', 'proteger datos', 'cifrar datos', 'datos protegidos', 'seguridad de datos', 'datos de clientes seguros'] },
+  { id: 'ecomarket_usability', aliases: ['facil de usar', 'intuitivo', 'interfaz sencilla', 'amigable', 'facil para empleados', 'no requiere conocimientos tecnicos'] },
+  { id: 'ecomarket_availability', aliases: ['disponible todo el tiempo', 'horario de trabajo', 'jornada laboral', 'siempre disponible', 'disponible durante el dia'] },
+
+  // --- Entregables/alcance específicos miniproyecto Análisis (EcoMarket) ---
+  { id: 'ecomarket_module_clients', aliases: ['modulo de registro de clientes', 'modulo de clientes', 'registro de clientes', 'gestion de clientes'] },
+  { id: 'ecomarket_module_orders', aliases: ['modulo de gestion de pedidos', 'modulo de pedidos', 'gestion de pedidos', 'sistema de pedidos'] },
+  { id: 'ecomarket_module_status', aliases: ['modulo de control de estados', 'control de estados', 'seguimiento de pedidos', 'modulo de seguimiento'] },
+
+  // --- Objetivos/entregables específicos miniproyecto ATC (CACATUMBO) ---
+  { id: 'cacatumbo_farmer', aliases: ['agricultor', 'agricultor asociado', 'productor', 'campesino', 'asociado', 'cacaotero', 'cultivador', 'cooperativista', 'socio'] },
+  { id: 'cacatumbo_harvest', aliases: ['entrega de cacao', 'cosecha', 'entrega de cosecha', 'registro de entrega', 'produccion de cacao', 'cacao entregado', 'kilos de cacao'] },
+  { id: 'cacatumbo_payment', aliases: ['pago automatico', 'calculo de pago', 'liquidacion', 'calcular pago', 'calculo automatico', 'pago por kilo', 'remuneracion'] },
+  { id: 'cacatumbo_report', aliases: ['reporte de produccion', 'informe de produccion', 'reporte por agricultor', 'informe por periodo', 'estadisticas de produccion', 'reportes para la federacion'] },
+  { id: 'cacatumbo_module_farmers', aliases: ['modulo de registro de agricultores', 'modulo de agricultores', 'registro de asociados', 'registro de productores'] },
+  { id: 'cacatumbo_module_deliveries', aliases: ['modulo de entregas y pagos', 'modulo de entregas', 'gestion de entregas', 'entregas y pagos', 'registro de cosechas'] },
+  { id: 'cacatumbo_module_reports', aliases: ['modulo de reportes', 'modulo de informes', 'generacion de reportes', 'reportes del sistema'] },
+  { id: 'cacatumbo_manual', aliases: ['manual de usuario', 'guia de uso', 'documentacion del sistema', 'guia del usuario', 'manual de uso', 'capacitacion'] },
+  { id: 'cacatumbo_price', aliases: ['precio por kilo', 'precio por kilogramo', 'valor del kilo', 'tarifa del cacao', 'precio vigente', 'precio actualizable'] },
+
+  // --- Hitos/cronograma específicos miniproyecto ATC (CACATUMBO) ---
+  { id: 'cacatumbo_phase_analysis', aliases: ['analisis de requerimientos', 'levantamiento de informacion', 'reunion inicial', 'fase de analisis', 'recopilacion de requisitos', 'analisis del sistema'] },
+  { id: 'cacatumbo_phase_design', aliases: ['diseno del sistema', 'diseno de la solucion', 'arquitectura del sistema', 'fase de diseno', 'prototipo'] },
+  { id: 'cacatumbo_phase_dev', aliases: ['desarrollo', 'construccion', 'programacion', 'implementacion', 'fase de desarrollo', 'codificacion', 'sprint de desarrollo'] },
+  { id: 'cacatumbo_phase_testing', aliases: ['pruebas y cierre', 'pruebas del sistema', 'testing', 'control de calidad', 'validacion', 'fase de pruebas', 'pruebas finales'] }
 ];
 
 const getSemanticConceptIds = (text = '') => {
